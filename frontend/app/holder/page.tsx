@@ -134,6 +134,31 @@ function CredCard({
   );
 }
 
+// ── Skeleton card ─────────────────────────────────────────────────────────────
+
+function SkeletonCard() {
+  return (
+    <div className="card" style={{ padding: "1rem 1.25rem" }}>
+      <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+            <div className="skeleton" style={{ width: "160px", height: "0.9rem", borderRadius: "var(--radius-xs)" }} />
+            <div className="skeleton" style={{ width: "80px", height: "0.7rem", borderRadius: "var(--radius-xs)" }} />
+          </div>
+          <div style={{ marginTop: "0.35rem" }}>
+            <div className="skeleton" style={{ width: "240px", height: "0.75rem", borderRadius: "var(--radius-xs)" }} />
+          </div>
+        </div>
+        <div className="row" style={{ gap: "0.4rem", flexShrink: 0 }}>
+          <div className="skeleton" style={{ width: "50px", height: "1.5rem", borderRadius: "999px" }} />
+          <div className="skeleton" style={{ width: "120px", height: "1.5rem", borderRadius: "var(--radius-sm)" }} />
+          <div className="skeleton" style={{ width: "30px", height: "1.5rem", borderRadius: "var(--radius-sm)" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Section header ────────────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -168,10 +193,17 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export default function HolderPage() {
   const { address } = useWallet();
   const [creds, setCreds] = useState<Credential[]>([]);
+  const [loading, setLoading] = useState(true);
   const [proving, setProving] = useState<Credential | null>(null);
   const [importing, setImporting] = useState(false);
 
-  useEffect(() => setCreds(loadCredentials()), []);
+  useEffect(() => {
+    // Ensure skeleton renders first by deferring credential load.
+    Promise.resolve().then(() => {
+      setCreds(loadCredentials());
+      setLoading(false);
+    });
+  }, []);
 
   const unproved = creds.filter((c) => proofStatus(c) !== "proved");
   const proved   = creds.filter((c) => proofStatus(c) === "proved");
@@ -188,7 +220,13 @@ export default function HolderPage() {
 
       <ConfigBanner />
 
-      {proving ? (
+      {loading ? (
+        <div className="stack reveal" style={{ gap: "1.5rem" }}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      ) : proving ? (
         <ProofFlow
           cred={proving}
           holder={address}

@@ -755,6 +755,17 @@ textarea:focus {
   }
 }
 
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-soft) 0%, var(--border-strong) 50%, var(--bg-soft) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
 
   *,
