@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { normalizeIssueRouteBody, ValidationError } from "../../../lib/schemas";
 // Resolved by webpack at build time — avoids process.cwd() which is unreliable
 // in Next.js server routes (can return "/" depending on how the server starts).
 import commitCircuit from "../../../public/circuits/commit.json";
@@ -310,21 +311,7 @@ async function buildCredential({ type, holder, issuerId, issuerName, expiry, att
 }
 
 export async function POST(req: NextRequest) {
-  let body: {
-    credential_types?: string[];
-    // Legacy single-type shape — still accepted for backward compatibility.
-    type?: string;
-    holder?: string;
-    issuerId?: string;
-    issuerName?: string;
-    expiry?: string;
-    attributes?: Record<string, string>;
-    attribute?: string;
-    claimParams?: ClaimParams;
-    // Set by the frontend after the user returns from Persona's hosted flow.
-    persona_inquiry_id?: string;
-    returnUrl?: string;
-  };
+  let body: unknown;
 
   try {
     body = await req.json();
@@ -332,39 +319,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const {
-    holder,
-    issuerId,
-    issuerName = "StellarCred Authority",
-    expiry = "90 days",
-    claimParams,
-    persona_inquiry_id: personaInquiryId,
-    returnUrl,
-  } = body;
+  try {
+    const normalized = normalizeIssueRouteBody(body);
+    const {
+      wallet: holder,
+      credentialTypes,
+      issuerId,
+      issuerName = "StellarCred Authority",
+      expiry = "90 days",
+      claimParams,
+      personaInquiryId,
+      returnUrl,
+      attributes,
+    } = normalized;
 
-  // Normalize to the multi-claim shape. Legacy callers send { type, attribute };
-  // map that single attribute onto the right key in `attributes`.
-  const credentialTypes = body.credential_types ?? (body.type ? [body.type] : []);
-  const attributes: Record<string, string> = { ...(body.attributes ?? {}) };
-  if (body.attribute !== undefined && body.type) {
-    if (body.type === "age") attributes.date_of_birth ??= body.attribute;
-    else if (body.type === "income") attributes.income ??= body.attribute;
-    else if (body.type === "jurisdiction") attributes.country_code ??= body.attribute;
-  }
-
-  if (credentialTypes.length === 0) {
-    return NextResponse.json({ error: "credential_types must contain at least one type" }, { status: 400 });
-  }
-  const invalid = credentialTypes.find((t) => !VALID_TYPES.includes(t));
-  if (invalid) {
-    return NextResponse.json({ error: `Invalid credential type: ${invalid}` }, { status: 400 });
-  }
-  if (!holder) {
-    return NextResponse.json({ error: "holder address is required" }, { status: 400 });
-  }
-  if (!issuerId) {
-    return NextResponse.json({ error: "issuerId is required" }, { status: 400 });
-  }
+    if (credentialTypes.length === 0) {
+      return NextResponse.json({ error: "credential_types must contain at least one type" }, { status: 400 });
+    }
+    const invalid = credentialTypes.find((t) => !VALID_TYPES.includes(t));
+    if (invalid) {
+      return NextResponse.json({ error: `Invalid credential type: ${invalid}` }, { status: 400 });
+    }
+    if (!holder) {
+      return NextResponse.json({ error: "holder address is required" }, { status: 400 });
+    }
+    if (!issuerId) {
+      return NextResponse.json({ error: "issuerId is required" }, { status: 400 });
+    }
 
   // ---------------------------------------------------------------------------
   // Identity verification via Persona
@@ -432,17 +413,23 @@ export async function POST(req: NextRequest) {
     attributes.balance = String(plaid.balance ?? 0);
   }
 
-  try {
-    // De-duplicate types so the same claim isn't issued twice in one call.
-    const uniqueTypes = Array.from(new Set(credentialTypes));
-    const credentials = [];
-    for (const type of uniqueTypes) {
-      credentials.push(
-        await buildCredential({ type, holder, issuerId, issuerName, expiry, attributes, claimParams }),
-      );
+    try {
+      // De-duplicate types so the same claim isn't issued twice in one call.
+      const uniqueTypes = Array.from(new Set(credentialTypes));
+      const credentials = [];
+      for (const type of uniqueTypes) {
+        credentials.push(
+          await buildCredential({ type, holder, issuerId, issuerName, expiry, attributes, claimParams }),
+        );
+      }
+      return NextResponse.json({ credentials });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 500 });
     }
-    return NextResponse.json({ credentials });
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ error: "Invalid request", details: error.details }, { status: 400 });
+    }
+    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
