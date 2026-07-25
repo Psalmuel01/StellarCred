@@ -104,8 +104,8 @@ fn test_wrong_signature() {
         salt,
         sig,
         commitment,
-        stellarcred_circuit_lib::test_helpers::issuer_x(),
-        stellarcred_circuit_lib::test_helpers::issuer_y(),
+        dep::stellarcred_circuit_lib::test_helpers::issuer_x(),
+        dep::stellarcred_circuit_lib::test_helpers::issuer_y(),
         current_date,
         threshold_years,
     );

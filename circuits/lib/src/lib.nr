@@ -15,7 +15,7 @@ pub fn assert_threshold(value: u64, threshold: u64) {
 }
 
 // Common test data
-pub mod test_helpers {
+mod test_helpers {
     pub fn issuer_x() -> [u8; 32] {
         [62, 72, 233, 139, 1, 120, 194, 91, 166, 62, 68, 43, 79, 232, 156, 91, 89, 165, 40, 83, 125, 90, 232, 8, 228, 119, 17, 59, 196, 72, 32, 251]
     }

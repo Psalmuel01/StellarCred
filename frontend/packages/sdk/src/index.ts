@@ -89,7 +89,7 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
-import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+import { Client as ProofRegistryClient } from "proof-registry";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
 let _sdk: Promise<StellarSDK> | null = null;
@@ -101,7 +101,6 @@ function getSdk(): Promise<StellarSDK> {
 async function getClient(): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
   if (!registryId) return null;
-  const { rpc } = await getSdk();
   return new ProofRegistryClient({
     networkPassphrase,
     contractId: registryId,
