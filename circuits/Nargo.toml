@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "accreditation_proof",
+    "age_proof",
+    "funds_proof",
+    "income_proof",
+    "jurisdiction_proof",
+    "kyc_proof",
+    "lib"
+]

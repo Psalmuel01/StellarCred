@@ -1,9 +1,8 @@
 [package]
-name = "kyc_proof"
-type = "bin"
+name = "stellarcred_circuit_lib"
+type = "lib"
 authors = [""]
 compiler_version = ">=1.0.0"
 
 [dependencies]
 poseidon = { tag = "v0.2.0", git = "https://github.com/noir-lang/poseidon" }
-stellarcred_circuit_lib = { path = "../lib" }
