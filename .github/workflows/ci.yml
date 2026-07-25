@@ -34,6 +34,21 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  circuits:
+    name: Noir circuit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Noir
+        uses: noir-lang/setup-noir@v1
+        with:
+          version: '1.0.0-beta.9'
+
+      - name: Run tests
+        working-directory: circuits
+        run: nargo test --workspace
+
   frontend:
     name: Frontend typecheck & build
     runs-on: ubuntu-latest
