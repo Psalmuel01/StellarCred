@@ -20,6 +20,8 @@ fn main(
     issuer_x: pub [u8; 32],
     issuer_y: pub [u8; 32],
     restricted: pub [u64; RESTRICTED_LEN],
+    context_id: pub Field,
+    nullifier: pub Field,
 ) {
     assert(Poseidon2::hash([country_code as Field, salt], 2) == commitment);
     let z: [u8; 32] = commitment.to_be_bytes();
@@ -27,4 +29,5 @@ fn main(
     for i in 0..RESTRICTED_LEN {
         assert(country_code != restricted[i]);
     }
+    assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
 }
