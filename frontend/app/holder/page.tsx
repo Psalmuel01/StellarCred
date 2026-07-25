@@ -134,31 +134,6 @@ function CredCard({
   );
 }
 
-// ── Skeleton card ─────────────────────────────────────────────────────────────
-
-function SkeletonCard() {
-  return (
-    <div className="card" style={{ padding: "1rem 1.25rem" }}>
-      <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-            <div className="skeleton" style={{ width: "160px", height: "0.9rem", borderRadius: "var(--radius-xs)" }} />
-            <div className="skeleton" style={{ width: "80px", height: "0.7rem", borderRadius: "var(--radius-xs)" }} />
-          </div>
-          <div style={{ marginTop: "0.35rem" }}>
-            <div className="skeleton" style={{ width: "240px", height: "0.75rem", borderRadius: "var(--radius-xs)" }} />
-          </div>
-        </div>
-        <div className="row" style={{ gap: "0.4rem", flexShrink: 0 }}>
-          <div className="skeleton" style={{ width: "50px", height: "1.5rem", borderRadius: "999px" }} />
-          <div className="skeleton" style={{ width: "120px", height: "1.5rem", borderRadius: "var(--radius-sm)" }} />
-          <div className="skeleton" style={{ width: "30px", height: "1.5rem", borderRadius: "var(--radius-sm)" }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Section header ────────────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -188,14 +163,34 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── Skeleton card ────────────────────────────────────────────────────────────
+
+function SkeletonCard() {
+  return (
+    <div className="card" style={{ padding: "1rem 1.25rem" }}>
+      <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="skeleton" style={{ height: "0.9rem", width: "55%", marginBottom: "0.5rem" }} />
+          <div className="skeleton" style={{ height: "0.75rem", width: "75%" }} />
+        </div>
+        <div className="row" style={{ gap: "0.4rem", flexShrink: 0 }}>
+          <div className="skeleton" style={{ height: "1.4rem", width: "3rem", borderRadius: "999px" }} />
+          <div className="skeleton" style={{ height: "1.9rem", width: "6.5rem", borderRadius: "var(--radius-sm)" }} />
+          <div className="skeleton" style={{ height: "1.5rem", width: "1.5rem", borderRadius: "var(--radius-xs)" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Holder page ───────────────────────────────────────────────────────────────
 
 export default function HolderPage() {
   const { address } = useWallet();
   const [creds, setCreds] = useState<Credential[]>([]);
-  const [loading, setLoading] = useState(true);
   const [proving, setProving] = useState<Credential | null>(null);
   const [importing, setImporting] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Ensure skeleton renders first by deferring credential load.
@@ -220,13 +215,7 @@ export default function HolderPage() {
 
       <ConfigBanner />
 
-      {loading ? (
-        <div className="stack reveal" style={{ gap: "1.5rem" }}>
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-      ) : proving ? (
+      {proving ? (
         <ProofFlow
           cred={proving}
           holder={address}
@@ -236,8 +225,18 @@ export default function HolderPage() {
       ) : (
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
 
+          {/* ── Skeleton loader ── */}
+          {loading && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Loading credentials</SectionLabel>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+          )}
+
           {/* ── Empty state ── */}
-          {creds.length === 0 && !importing && (
+          {!loading && creds.length === 0 && !importing && (
             <div
               className="card"
               style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
@@ -256,7 +255,7 @@ export default function HolderPage() {
           )}
 
           {/* ── Credentials to prove ── */}
-          {unproved.length > 0 && (
+          {!loading && unproved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>Ready to prove</SectionLabel>
               {unproved.map((c) => (
@@ -272,7 +271,7 @@ export default function HolderPage() {
           )}
 
           {/* ── Already proved ── */}
-          {proved.length > 0 && (
+          {!loading && proved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>On-chain · active proofs</SectionLabel>
               {proved.map((c) => (
@@ -287,13 +286,13 @@ export default function HolderPage() {
             </div>
           )}
 
-          {!address && creds.length > 0 && (
+          {!loading && !address && creds.length > 0 && (
             <p className="faint" style={{ fontSize: "0.8125rem" }}>
               Connect a wallet to generate and submit proofs.
             </p>
           )}
 
-          {importing ? (
+          {!loading && (importing ? (
             <ImportPanel
               onImport={(c) => { setCreds(saveCredential(c)); setImporting(false); }}
               onCancel={() => setImporting(false)}
@@ -307,7 +306,7 @@ export default function HolderPage() {
               <IconPlus size={14} />
               Import credential JSON
             </button>
-          )}
+          ))}
         </div>
       )}
     </>
