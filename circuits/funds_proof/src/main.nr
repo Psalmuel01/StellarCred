@@ -17,9 +17,12 @@ fn main(
     issuer_x: pub [u8; 32],
     issuer_y: pub [u8; 32],
     threshold: pub u64,
+    context_id: pub Field,
+    nullifier: pub Field,
 ) {
     assert(Poseidon2::hash([balance as Field, salt], 2) == commitment);
     let z: [u8; 32] = commitment.to_be_bytes();
     assert(verify_signature(issuer_x, issuer_y, sig, z));
     assert(balance >= threshold);
+    assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
 }

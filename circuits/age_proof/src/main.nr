@@ -18,6 +18,8 @@ fn main(
     issuer_y: pub [u8; 32],
     current_date: pub u64,
     threshold_years: pub u64,
+    context_id: pub Field,
+    nullifier: pub Field,
 ) {
     assert(Poseidon2::hash([date_of_birth as Field, salt], 2) == commitment);
     let z: [u8; 32] = commitment.to_be_bytes();
@@ -25,4 +27,5 @@ fn main(
     assert(current_date >= date_of_birth);
     let age_years = (current_date - date_of_birth) / 365;
     assert(age_years >= threshold_years);
+    assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
 }
