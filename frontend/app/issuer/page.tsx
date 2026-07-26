@@ -25,6 +25,7 @@ const DEFAULT_ATTR: Record<CredentialType, string> = {
   income: "250000",
   jurisdiction: "566",
   funds: "50000",
+  accreditation: "1500000",
 };
 
 const COUNTRIES = [
@@ -63,6 +64,8 @@ export default function IssuerPage() {
       const attributes: Record<string, string> = {};
       if (type === "age") attributes.date_of_birth = attribute;
       else if (type === "income") attributes.income = attribute;
+      else if (type === "funds") attributes.balance = attribute;
+      else if (type === "accreditation") attributes.net_worth = attribute;
       else if (type === "jurisdiction") attributes.country_code = attribute;
 
       const res = await fetch("/api/issue", {

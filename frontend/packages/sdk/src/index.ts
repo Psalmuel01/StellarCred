@@ -60,12 +60,49 @@ export function configure(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// Types and Errors
 // ---------------------------------------------------------------------------
 
+/** Error thrown when watchClaim times out. */
+export class TimeoutError extends Error {
+  constructor(message = "Timeout waiting for claim") {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+
 /** The credential types StellarCred supports. Matches the contract Symbols. */
-export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds"] as const;
+export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds", "accreditation"] as const;
 export type ClaimType = (typeof CLAIM_TYPES)[number];
+
+/**
+ * Options accepted by {@link hasClaim} and {@link getClaims}.
+ *
+ * Currently only threshold-based claims use this; binary claims (e.g. `kyc`)
+ * ignore the option. The on-chain `check_claim` enforces that the stored
+ * threshold is at least `minThreshold`, so a proof generated with a higher
+ * threshold always satisfies a lower `minThreshold`.
+ */
+export interface ClaimOptions {
+  /**
+   * Minimum acceptable threshold for parameterised claims:
+   *   - `age`         → minimum age in years
+   *   - `income`      → minimum annual income (whole units)
+   *   - `funds`       → minimum liquid balance (whole units)
+   *   - `accreditation` → minimum net-worth / income requirement (whole units)
+   * Ignored for binary claims (`kyc`, `jurisdiction`).
+   */
+  minThreshold?: number;
+  /**
+   * Restrict which issuer(s) a proof must come from — e.g. accept `kyc` only
+   * from Persona or Jumio, not a self-attested issuer. Pass the issuers'
+   * Stellar addresses. Omit (or leave `undefined`) to accept a proof from any
+   * registered issuer, matching the on-chain `check_claim`/`is_verified`
+   * `trusted_issuers: None` default. An empty array rejects every issuer.
+   */
+  trustedIssuers?: string[];
+}
 
 export interface Claim {
   /** Credential type — one of CLAIM_TYPES. */
@@ -80,6 +117,8 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
+import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+
 type StellarSDK = typeof import("@stellar/stellar-sdk");
 let _sdk: Promise<StellarSDK> | null = null;
 function getSdk(): Promise<StellarSDK> {
@@ -87,70 +126,60 @@ function getSdk(): Promise<StellarSDK> {
   return _sdk;
 }
 
-async function simulate<T>(wallet: string, op: unknown): Promise<T | null> {
+async function getClient(): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
   if (!registryId) return null;
-
-  const { rpc, TransactionBuilder, BASE_FEE, scValToNative } = await getSdk();
-  const server = new rpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith("http://") });
-
-  let account;
-  try {
-    account = await server.getAccount(wallet);
-  } catch {
-    return null;
-  }
-
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .addOperation(op as any)
-    .setTimeout(30)
-    .build();
-
-  const sim = await server.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(sim) || !sim.result) return null;
-  return scValToNative(sim.result.retval) as T;
+  const { rpc } = await getSdk();
+  return new ProofRegistryClient({
+    networkPassphrase,
+    contractId: registryId,
+    rpcUrl,
+    allowHttp: rpcUrl.startsWith("http://"),
+  });
 }
 
 async function readIsVerified(
   wallet: string,
   claimType: string,
+  trustedIssuers?: string[],
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
-  const { registryId } = _config;
-  if (!registryId) return null;
+  const client = await getClient();
+  if (!client) return null;
 
-  const { Contract, Address, nativeToScVal } = await getSdk();
-  const contract = new Contract(registryId);
-  const op = contract.call(
-    "is_verified",
-    Address.fromString(wallet).toScVal(),
-    nativeToScVal(claimType, { type: "symbol" }),
-  );
-
-  const result = await simulate<[boolean, bigint | number, bigint | number]>(wallet, op);
-  if (!result) return null;
-  const [valid, verifiedAt, expiry] = result;
-  return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
+  try {
+    const { result } = await client.is_verified({
+      holder: wallet,
+      credential_type: claimType,
+      trusted_issuers: trustedIssuers,
+    });
+    if (!result) return null;
+    const [valid, verifiedAt, expiry] = result;
+    return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
+  } catch {
+    return null;
+  }
 }
 
 async function readCheckClaim(
   wallet: string,
   claimType: string,
   minThreshold: number,
+  trustedIssuers?: string[],
 ): Promise<boolean> {
-  const { registryId } = _config;
-  if (!registryId) return false;
+  const client = await getClient();
+  if (!client) return false;
 
-  const { Contract, Address, nativeToScVal } = await getSdk();
-  const contract = new Contract(registryId);
-  const op = contract.call(
-    "check_claim",
-    Address.fromString(wallet).toScVal(),
-    nativeToScVal(claimType, { type: "symbol" }),
-    nativeToScVal(BigInt(minThreshold), { type: "u64" }),
-  );
-
-  return (await simulate<boolean>(wallet, op)) ?? false;
+  try {
+    const { result } = await client.check_claim({
+      holder: wallet,
+      credential_type: claimType,
+      min_threshold: BigInt(minThreshold),
+      trusted_issuers: trustedIssuers,
+    });
+    return result ?? false;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,16 +207,22 @@ async function readCheckClaim(
  * @example
  * // Age gate — require age ≥ 21
  * const ok = await hasClaim("G1ABC…", "age", { minThreshold: 21 });
+ *
+ * @example
+ * // Only accept KYC from specific issuers, e.g. Persona or Jumio
+ * const ok = await hasClaim("G1ABC…", "kyc", {
+ *   trustedIssuers: ["G...PERSONA_ISSUER", "G...JUMIO_ISSUER"],
+ * });
  */
 export async function hasClaim(
   wallet: string,
   claimType: string,
-  opts?: { minThreshold?: number },
+  opts?: ClaimOptions,
 ): Promise<boolean> {
   if (opts?.minThreshold !== undefined) {
-    return readCheckClaim(wallet, claimType, opts.minThreshold);
+    return readCheckClaim(wallet, claimType, opts.minThreshold, opts.trustedIssuers);
   }
-  const r = await readIsVerified(wallet, claimType);
+  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
   return !!r && r.valid;
 }
 
@@ -253,9 +288,120 @@ export function buildVerifyUrl(options: {
   return url.toString();
 }
 
+/**
+ * Options for `watchClaim`.
+ */
+export interface WatchClaimOptions {
+  /** How often to poll in milliseconds (default: 3000) */
+  pollMs?: number;
+  /** How long to wait before timing out in milliseconds (default: 120000) */
+  timeoutMs?: number;
+  /** For parameterised claims (e.g. age, funds), minimum threshold to require */
+  minThreshold?: number;
+}
+
+export interface WatchClaimCallbackOptions extends WatchClaimOptions {
+  /** Callback fired whenever the verification status changes from false to true or vice-versa */
+  onChange: (verified: boolean) => void;
+}
+
+/**
+ * Polls for a claim to become verified.
+ * 
+ * In Promise form (without `onChange`), it resolves `true` when the claim is verified,
+ * or rejects with `TimeoutError` after `timeoutMs`.
+ */
+export function watchClaim(
+  wallet: string,
+  claimType: string,
+  opts?: WatchClaimOptions,
+): Promise<boolean>;
+
+/**
+ * Polls for a claim to become verified.
+ * 
+ * In Callback form (with `onChange`), it fires the callback whenever the status changes
+ * (e.g. from false to true). Returns a `stop` function to cancel polling.
+ */
+export function watchClaim(
+  wallet: string,
+  claimType: string,
+  opts: WatchClaimCallbackOptions,
+): () => void;
+
+export function watchClaim(
+  wallet: string,
+  claimType: string,
+  opts?: WatchClaimOptions | WatchClaimCallbackOptions,
+): Promise<boolean> | (() => void) {
+  const pollMs = opts?.pollMs ?? 3000;
+  const timeoutMs = opts?.timeoutMs ?? 120000;
+  const minThreshold = opts?.minThreshold;
+  const onChange = (opts as WatchClaimCallbackOptions)?.onChange;
+
+  let intervalId: ReturnType<typeof setInterval>;
+  let timeoutId: ReturnType<typeof setTimeout>;
+  let isStopped = false;
+  let lastState = false;
+  // Ensure we don't have overlapping polls if `hasClaim` is slow
+  let isPolling = false;
+
+  const stop = () => {
+    isStopped = true;
+    clearInterval(intervalId);
+    clearTimeout(timeoutId);
+  };
+
+  if (onChange) {
+    const poll = async () => {
+      if (isStopped || isPolling) return;
+      isPolling = true;
+      try {
+        const verified = await hasClaim(wallet, claimType, { minThreshold });
+        if (isStopped) return;
+        if (verified !== lastState) {
+          lastState = verified;
+          onChange(verified);
+        }
+      } finally {
+        isPolling = false;
+      }
+    };
+
+    intervalId = setInterval(poll, pollMs);
+    timeoutId = setTimeout(stop, timeoutMs);
+    poll(); // Initial check
+    return stop;
+  } else {
+    return new Promise((resolve, reject) => {
+      const poll = async () => {
+        if (isStopped || isPolling) return;
+        isPolling = true;
+        try {
+          const verified = await hasClaim(wallet, claimType, { minThreshold });
+          if (isStopped) return;
+          if (verified) {
+            stop();
+            resolve(true);
+          }
+        } finally {
+          isPolling = false;
+        }
+      };
+
+      intervalId = setInterval(poll, pollMs);
+      timeoutId = setTimeout(() => {
+        stop();
+        reject(new TimeoutError());
+      }, timeoutMs);
+      poll(); // Initial check
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
 
-export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, CLAIM_TYPES };
+export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, watchClaim, CLAIM_TYPES, TimeoutError };
 export default StellarCred;

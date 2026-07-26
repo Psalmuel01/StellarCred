@@ -61,6 +61,7 @@ const CLAIMS: [string, string, string][] = [
   ["income", "Income ≥ threshold", "Financial data provider"],
   ["jurisdiction", "Country not restricted", "KYC provider"],
   ["funds", "Balance ≥ threshold", "Plaid / bank attestation"],
+  ["accreditation", "Net worth ≥ threshold", "Financial institution"],
 ];
 
 const ADDRESSES: [string, string][] = [
@@ -247,15 +248,25 @@ const verified = await StellarCred.hasClaim(wallet, "kyc");`}</Code>
           Prefer Soroban? Call ProofRegistry from your own contract — no SDK
           required. Use <span className="mono">is_verified</span> for binary claims
           and <span className="mono">check_claim</span> for threshold enforcement.
+          Both take a trailing <span className="mono">trusted_issuers</span>{" "}
+          parameter — pass <span className="mono">None</span> to accept a proof
+          from any registered issuer (unchanged default), or{" "}
+          <span className="mono">Some(vec![...])</span> to restrict a claim to
+          specific issuers, e.g. accepting KYC only from Persona or Jumio.
         </p>
-        <Code>{`// Binary claim (kyc, jurisdiction)
+        <Code>{`// Binary claim (kyc, jurisdiction) — any registered issuer accepted
 let registry = ProofRegistryClient::new(&env, &registry_id);
-let (verified, _, _) = registry.is_verified(&holder, &symbol_short!("kyc"));
+let (verified, _, _) = registry.is_verified(&holder, &symbol_short!("kyc"), &None);
 require!(verified, Error::KycRequired);
 
 // Parameterised claim — enforce minimum threshold on-chain
-let eligible = registry.check_claim(&holder, &symbol_short!("funds"), &Some(50_000u64));
-require!(eligible, Error::InsufficientFunds);`}</Code>
+let eligible = registry.check_claim(&holder, &symbol_short!("funds"), &Some(50_000u64), &None);
+require!(eligible, Error::InsufficientFunds);
+
+// Restrict which issuer(s) a claim must come from
+let trusted = vec![&env, persona_issuer.clone(), jumio_issuer.clone()];
+let kyc_ok = registry.check_claim(&holder, &symbol_short!("kyc"), &None, &Some(trusted));
+require!(kyc_ok, Error::KycRequired);`}</Code>
       </Section>
 
       <div style={{ height: "4rem" }} />
