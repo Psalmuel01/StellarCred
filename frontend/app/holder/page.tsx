@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -67,6 +68,7 @@ function CredCard({
   onRemove: () => void;
 }) {
   const status = proofStatus(c);
+  const t = useTranslations("holder");
 
   return (
     <div className="card" style={{ padding: "1rem 1.25rem" }}>
@@ -83,7 +85,7 @@ function CredCard({
               <>
                 {" · "}
                 <span style={{ color: "var(--accent)", opacity: 0.75 }}>
-                  expires in {daysRemaining(c)}d
+                  {t("expiresIn", { days: daysRemaining(c) })}
                 </span>
                 {c.provedTxHash && (
                   <>
@@ -101,28 +103,28 @@ function CredCard({
               </>
             )}
             {status === "expired" && (
-              <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
+              <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>{t("expired")}</span></>
             )}
           </div>
         </div>
 
         {/* right: badges + button + trash */}
         <div className="row" style={{ gap: "0.4rem", flexShrink: 0 }}>
-          <Badge variant="verified" dot={false}>Held</Badge>
-          {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
+          <Badge variant="verified" dot={false}>{t("held")}</Badge>
+          {status === "proved" && <Badge variant="verified" dot={false}>{t("onChain")}</Badge>}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address}
-            title={!address ? "Connect a wallet first" : undefined}
+            title={!address ? t("connectWalletToProve") : undefined}
             onClick={onProve}
           >
-            {status === "proved"  ? "Re-prove" :
-             status === "expired" ? "Re-prove" :
-                                    "Generate proof"}
+            {status === "proved"  ? t("reprove") :
+             status === "expired" ? t("reprove") :
+                                    t("generateProof")}
           </button>
           <button
             className="btn btn-ghost btn-sm"
-            title="Remove"
+            title={t("remove")}
             onClick={onRemove}
             style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
           >
@@ -170,6 +172,7 @@ export default function HolderPage() {
   const [creds, setCreds] = useState<Credential[]>([]);
   const [proving, setProving] = useState<Credential | null>(null);
   const [importing, setImporting] = useState(false);
+  const t = useTranslations("holder");
 
   useEffect(() => setCreds(loadCredentials()), []);
 
@@ -180,8 +183,8 @@ export default function HolderPage() {
     <>
       <div className="between" style={{ marginBottom: "2.5rem" }}>
         <div>
-          <span className="eyebrow">Holder</span>
-          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Your credentials</h1>
+          <span className="eyebrow">{t("eyebrow")}</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
         </div>
         <WalletButton />
       </div>
@@ -205,13 +208,12 @@ export default function HolderPage() {
               style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
             >
               <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
-              <h3 style={{ margin: "1rem 0 0.4rem" }}>No credentials yet</h3>
+              <h3 style={{ margin: "1rem 0 0.4rem" }}>{t("emptyTitle")}</h3>
               <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 340, margin: "0 auto 1.5rem" }}>
-                Get a credential from a trusted issuer, then generate a
-                zero-knowledge proof to verify it on-chain.
+                {t("emptyBody")}
               </p>
               <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
-                Get a credential
+                {t("emptyCta")}
                 <IconArrowRight size={14} />
               </a>
             </div>
@@ -220,7 +222,7 @@ export default function HolderPage() {
           {/* ── Credentials to prove ── */}
           {unproved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>Ready to prove</SectionLabel>
+              <SectionLabel>{t("sectionReady")}</SectionLabel>
               {unproved.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -236,7 +238,7 @@ export default function HolderPage() {
           {/* ── Already proved ── */}
           {proved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>On-chain · active proofs</SectionLabel>
+              <SectionLabel>{t("sectionOnChain")}</SectionLabel>
               {proved.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -251,7 +253,7 @@ export default function HolderPage() {
 
           {!address && creds.length > 0 && (
             <p className="faint" style={{ fontSize: "0.8125rem" }}>
-              Connect a wallet to generate and submit proofs.
+              {t("connectWalletToProve")}
             </p>
           )}
 
@@ -267,7 +269,7 @@ export default function HolderPage() {
               onClick={() => setImporting(true)}
             >
               <IconPlus size={14} />
-              Import credential JSON
+              {t("importJson")}
             </button>
           )}
         </div>
@@ -281,6 +283,7 @@ export default function HolderPage() {
 function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void; onCancel: () => void }) {
   const [json, setJson] = useState("");
   const [error, setError] = useState("");
+  const t = useTranslations("holder");
 
   function onAdd() {
     try { onImport(parseCredential(json)); }
@@ -289,18 +292,18 @@ function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void
 
   return (
     <div className="card reveal">
-      <span className="eyebrow">Import credential</span>
+      <span className="eyebrow">{t("importTitle")}</span>
       <textarea
         rows={5}
-        placeholder='{"type":"kyc","commitment":"0x…", …}'
+        placeholder={t("importPlaceholder")}
         value={json}
         onChange={(e) => setJson(e.target.value)}
         style={{ marginTop: "0.75rem" }}
       />
       {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginTop: "0.5rem" }}>{error}</p>}
       <div className="row" style={{ marginTop: "1rem", gap: "0.6rem" }}>
-        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={!json.trim()}>Add credential</button>
-        <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={!json.trim()}>{t("addCredential")}</button>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>{t("cancel")}</button>
       </div>
     </div>
   );
@@ -326,9 +329,9 @@ function ProofFlow({
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  // elapsed time for the proving stage
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const t = useTranslations("holder");
 
   useEffect(() => {
     let cancelled = false;
@@ -400,14 +403,14 @@ function ProofFlow({
     <div className="reveal" style={{ maxWidth: 520, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         <IconArrowLeft size={14} />
-        All credentials
+        {t("allCredentials")}
       </button>
 
       <div className="card" style={{ padding: "1.75rem" }}>
         {/* credential header */}
         <div style={{ marginBottom: "1.5rem" }}>
           <span className="eyebrow" style={{ marginBottom: "0.5rem", display: "block" }}>
-            Proving
+            {t("proving")}
           </span>
           <h2 style={{ marginBottom: "0.25rem" }}>{cred.title}</h2>
           <span className="mono faint" style={{ fontSize: "0.8rem" }}>{cred.claim}</span>
@@ -417,21 +420,21 @@ function ProofFlow({
         <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
           <ProofStep
             icon={<IconServer size={14} stroke={1.8} />}
-            title="Compute witness"
-            subtitle="Poseidon2 · secp256k1 · server-side Noir execution"
+            title={t("proofFlowWitnessTitle")}
+            subtitle={t("proofFlowWitnessSubtitle")}
             state={
               stage === "witness"  ? "active" :
               stage === "error"    ? "idle"   : "done"
             }
             detail={
-              stage === "witness" ? <AnimatedDots text="Running circuit on server" /> : null
+              stage === "witness" ? <AnimatedDots text={t("proofRunningCircuit")} /> : null
             }
           />
 
           <ProofStep
             icon={<IconCpu size={14} stroke={1.8} />}
-            title="UltraHonk proof"
-            subtitle="BN254 · keccak transcript · browser WASM"
+            title={t("proofFlowProvingTitle")}
+            subtitle={t("proofFlowProvingSubtitle")}
             state={
               stage === "proving"  ? "active" :
               proofDone            ? "done"   : "idle"
@@ -442,14 +445,14 @@ function ProofFlow({
                   <ProvingBar />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                      Generating proof in browser…
+                      {t("proofGenerating")}
                     </span>
                     <span className="mono" style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
                       {elapsed}s
                     </span>
                   </div>
                   <span style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
-                    First run loads the WASM prover (~5–15 s)
+                    {t("proofFirstRun")}
                   </span>
                 </div>
               ) : proofDone && proof ? (
@@ -467,8 +470,8 @@ function ProofFlow({
 
           <ProofStep
             icon={<IconCloudUpload size={14} stroke={1.8} />}
-            title="Submit to Stellar"
-            subtitle="ProofRegistry.submit_proof · Freighter signature"
+            title={t("proofFlowSubmitTitle")}
+            subtitle={t("proofFlowSubmitSubtitle")}
             state={
               stage === "submitting" ? "active" :
               submitDone             ? "done"   : "idle"
@@ -476,7 +479,7 @@ function ProofFlow({
             last
             detail={
               stage === "submitting" ? (
-                <AnimatedDots text="Writing to ProofRegistry" style={{ marginTop: "0.35rem" }} />
+                <AnimatedDots text={t("proofWriting")} style={{ marginTop: "0.35rem" }} />
               ) : submitDone ? (
                 <div
                   className="row"
@@ -506,7 +509,7 @@ function ProofFlow({
             style={{ marginTop: "1.5rem", width: "100%" }}
             onClick={onSubmit}
           >
-            Submit to Stellar
+            {t("submitToStellar")}
             <IconArrowRight size={15} />
           </button>
         )}
@@ -523,7 +526,7 @@ function ProofFlow({
           >
             <div className="row" style={{ gap: "0.5rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.875rem" }}>
               <IconAlertTriangle size={15} />
-              {error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
+              {error.code !== null ? t("contractError", { code: error.code }) : t("couldNotComplete")}
             </div>
             <div style={{ fontSize: "0.8125rem", marginTop: "0.45rem", lineHeight: 1.65, color: "var(--text)" }}>
               {error.friendly}
@@ -535,7 +538,7 @@ function ProofFlow({
                   onClick={() => setShowRaw((v) => !v)}
                   style={{ fontSize: "0.72rem", padding: "0.2rem 0.5rem", color: "var(--faint)" }}
                 >
-                  {showRaw ? "Hide" : "Show"} raw error
+                  {showRaw ? t("hideRawError") : t("showRawError")}
                 </button>
                 {showRaw && (
                   <pre
@@ -578,9 +581,9 @@ function ProofFlow({
           >
             <Check size={44} run />
             <div>
-              <div style={{ fontWeight: 600, fontSize: "0.9375rem" }}>Proof verified on-chain</div>
+              <div style={{ fontWeight: 600, fontSize: "0.9375rem" }}>{t("confirmedTitle")}</div>
               <div className="muted" style={{ fontSize: "0.8375rem", marginTop: "0.25rem", lineHeight: 1.5 }}>
-                Your claim is live on Stellar for {Math.round(credTtlSecs(cred) / 86_400)} days — without revealing the data behind it.
+                {t("confirmedBody", { days: Math.round(credTtlSecs(cred) / 86_400) })}
               </div>
             </div>
           </div>

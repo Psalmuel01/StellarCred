@@ -2,14 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { IconBook2, IconCode } from "@tabler/icons-react";
-
-const LINKS = [
-  { href: "/holder",   label: "Wallet" },
-  { href: "/verify",   label: "Verify" },
-  { href: "/issuer",   label: "Issuer" },
-  { href: "/apps",     label: "Apps" },
-];
+import { LangSwitcher } from "@/components/LangSwitcher";
 
 function ShieldIcon() {
   return (
@@ -34,6 +29,15 @@ function ShieldIcon() {
 
 export function SiteNav() {
   const pathname = usePathname();
+  const t = useTranslations("nav");
+
+  const LINKS = [
+    { href: "/holder", label: t("wallet") },
+    { href: "/verify", label: t("verify") },
+    { href: "/issuer", label: t("issuer") },
+    { href: "/apps",   label: t("apps") },
+  ];
+
   return (
     <header className="nav">
       <div className="nav-inner">
@@ -61,27 +65,37 @@ export function SiteNav() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "0.25rem",
-            padding: "0.25rem",
-            borderRadius: "999px",
-            border: "1px solid var(--border)",
-            background: "rgba(255,255,255,0.02)",
+            gap: "0.5rem",
           }}
         >
-          <Link
-            href="/docs"
-            className={`seg-link${pathname.startsWith("/docs") ? " active" : ""}`}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.25rem",
+              padding: "0.25rem",
+              borderRadius: "999px",
+              border: "1px solid var(--border)",
+              background: "rgba(255,255,255,0.02)",
+            }}
           >
-            <IconBook2 size={14} stroke={1.8} />
-            Docs
-          </Link>
-          <Link
-            href="/developers"
-            className={`seg-link${pathname.startsWith("/developers") ? " active" : ""}`}
-          >
-            <IconCode size={14} stroke={1.8} />
-            Developers
-          </Link>
+            <Link
+              href="/docs"
+              className={`seg-link${pathname.startsWith("/docs") ? " active" : ""}`}
+            >
+              <IconBook2 size={14} stroke={1.8} />
+              {t("docs")}
+            </Link>
+            <Link
+              href="/developers"
+              className={`seg-link${pathname.startsWith("/developers") ? " active" : ""}`}
+            >
+              <IconCode size={14} stroke={1.8} />
+              {t("developers")}
+            </Link>
+          </div>
+
+          <LangSwitcher />
         </div>
       </div>
     </header>

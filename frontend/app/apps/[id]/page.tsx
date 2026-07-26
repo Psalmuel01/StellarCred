@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   IconLock,
   IconCheck,
@@ -21,6 +22,7 @@ function ProtocolDetailInner() {
   const { id } = useParams<{ id: string }>();
   const { address } = useWallet();
   const searchParams = useSearchParams();
+  const t = useTranslations("apps");
 
   const scVerified = searchParams.get("sc_verified") === "true";
   const scWallet = searchParams.get("sc_wallet");
@@ -62,9 +64,9 @@ function ProtocolDetailInner() {
   if (!protocol) {
     return (
       <div style={{ textAlign: "center", padding: "4rem 0" }}>
-        <p className="muted">Protocol not found.</p>
+        <p className="muted">{t("protocolNotFound")}</p>
         <Link href="/apps" className="btn btn-secondary btn-sm" style={{ marginTop: "1rem" }}>
-          <IconArrowLeft size={14} /> Back to Apps
+          <IconArrowLeft size={14} /> {t("backToApps")}
         </Link>
       </div>
     );
@@ -81,7 +83,7 @@ function ProtocolDetailInner() {
             className="row faint"
             style={{ fontSize: "0.8125rem", gap: "0.35rem", marginBottom: "0.5rem", textDecoration: "none" }}
           >
-            <IconArrowLeft size={13} /> Apps
+            <IconArrowLeft size={13} /> {t("backToApps")}
           </Link>
           <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
             <span style={{ color: "var(--accent)" }}>{protocol.icon}</span>
@@ -112,8 +114,8 @@ function ProtocolDetailInner() {
         >
           <IconCheck size={18} color="var(--accent)" stroke={2.5} />
           <span>
-            <strong>Verification complete.</strong>{" "}
-            <span className="muted">You were returned here from StellarCred automatically.</span>
+            <strong>{t("verificationComplete")}</strong>{" "}
+            <span className="muted">{t("returnedFrom")}</span>
           </span>
         </div>
       )}
@@ -146,8 +148,7 @@ function ProtocolDetailInner() {
             <div className="mono faint" style={{ fontSize: "0.7rem" }}>{protocol.stat.sub}</div>
           </div>
 
-          {/* Requirements */}
-          <span className="eyebrow" style={{ marginBottom: "0.4rem", display: "block" }}>Requirements</span>
+          <span className="eyebrow" style={{ marginBottom: "0.4rem", display: "block" }}>{t("requirements")}</span>
           <div className="stack" style={{ marginBottom: "1.25rem" }}>
             {protocol.requirements.map((r, i) => (
               <div className="line" key={r.label}>
@@ -162,28 +163,23 @@ function ProtocolDetailInner() {
                   </span>
                 </span>
                 {statuses[i] ? (
-                  <Badge variant="verified">Proved</Badge>
+                  <Badge variant="verified">{t("proved")}</Badge>
                 ) : (
-                  <Badge variant="pending">Needed</Badge>
+                  <Badge variant="pending">{t("needed")}</Badge>
                 )}
               </div>
             ))}
           </div>
 
           {checked && !eligible && (
-            <Link
-              href={protocol.verifyUrl}
-              className="btn btn-secondary"
-              style={{ width: "100%" }}
-            >
-              Get verified
+            <Link href={protocol.verifyUrl} className="btn btn-secondary" style={{ width: "100%" }}>
+              {t("getVerified")}
               <IconArrowRight size={14} />
             </Link>
           )}
-
           {!activeWallet && (
             <p className="faint" style={{ marginTop: "0.75rem", fontSize: "0.8rem" }}>
-              Connect your wallet to check eligibility.
+              {t("connectToCheck")}
             </p>
           )}
         </div>
@@ -200,8 +196,8 @@ function ProtocolDetailInner() {
             <span className="eyebrow">{protocol.actionLabel}</span>
             {checked && (
               eligible
-                ? <Badge variant="verified">Access granted</Badge>
-                : <Badge variant="denied">Access denied</Badge>
+                ? <Badge variant="verified">{t("accessGranted")}</Badge>
+                : <Badge variant="denied">{t("accessDenied")}</Badge>
             )}
           </div>
 
@@ -224,14 +220,14 @@ function ProtocolDetailInner() {
             disabled={!eligible}
           >
             {eligible ? protocol.actionLabel : (
-              <><IconLock size={14} /> Prove eligibility first</>
+              <><IconLock size={14} /> {t("proveFirst")}</>
             )}
           </button>
 
           <p className="faint" style={{ marginTop: "1.25rem", fontSize: "0.8125rem", lineHeight: 1.6 }}>
             {eligible
-              ? `${protocol.name} read ProofRegistry.check_claim and found valid proofs for your address. No personal data was shared.`
-              : `${protocol.name} only reads ProofRegistry.check_claim for your address — it never sees the credential data behind your proofs.`}
+              ? t("noPersonalData", { name: protocol.name })
+              : t("noPersonalDataDenied", { name: protocol.name })}
           </p>
         </div>
       </div>

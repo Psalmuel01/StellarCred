@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   IconKey,
   IconArrowRight,
@@ -45,6 +46,7 @@ export default function IssuerPage() {
   const [issued, setIssued] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const t = useTranslations("issuer");
 
   const meta = TYPE_META[type];
   const needsAttr = !!meta.attribute;
@@ -93,38 +95,25 @@ export default function IssuerPage() {
     <>
       <div className="between" style={{ marginBottom: "2rem" }}>
         <div>
-          <span className="eyebrow">Issuer admin · demo</span>
-          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Issue a credential</h1>
+          <span className="eyebrow">{t("eyebrow")}</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
         </div>
         <WalletButton />
       </div>
 
-      <div
-        style={{
-          marginBottom: "1.75rem",
-          padding: "0.75rem 1rem",
-          borderRadius: "var(--radius)",
-          background: "rgba(255,255,255,0.03)",
-          border: "1px solid var(--border)",
-          fontSize: "0.8125rem",
-          color: "var(--muted)",
-          lineHeight: 1.6,
-        }}
-      >
-        <strong style={{ color: "var(--text)" }}>Simulates the issuer's side.</strong>{" "}
-        In production this would be a separate authenticated app run by the institution —
-        KYC provider, bank, employer — after verifying the holder off-chain. The holder
-        would never see this interface.
+      <div style={{ marginBottom: "1.75rem", padding: "0.75rem 1rem", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", fontSize: "0.8125rem", color: "var(--muted)", lineHeight: 1.6 }}>
+        <strong style={{ color: "var(--text)" }}>{t("simulationStrong")}</strong>{" "}
+        {t("simulationNote")}
       </div>
 
       <div className="grid grid-2" style={{ alignItems: "start", gap: "1.5rem" }}>
         <div className="card">
-          <label className="field-label">Holder address</label>
-          <input value={holder} onChange={(e) => setHolder(e.target.value)} placeholder="G…" />
+          <label className="field-label">{t("holderAddress")}</label>
+          <input value={holder} onChange={(e) => setHolder(e.target.value)} placeholder={t("holderPlaceholder")} />
 
           <div className="grid grid-2" style={{ marginTop: "1.25rem", gap: "1rem" }}>
             <div>
-              <label className="field-label">Credential type</label>
+              <label className="field-label">{t("credentialType")}</label>
               <select value={type} onChange={(e) => onType(e.target.value as CredentialType)}>
                 {TYPES.map(([key, m]) => (
                   <option key={key} value={key}>
@@ -134,10 +123,10 @@ export default function IssuerPage() {
               </select>
             </div>
             <div>
-              <label className="field-label">Expiry</label>
+              <label className="field-label">{t("expiry")}</label>
               <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
-                {["30 days", "90 days", "1 year"].map((t) => (
-                  <option key={t}>{t}</option>
+                {([["30 days", t("expiry30")], ["90 days", t("expiry90")], ["1 year", t("expiry1year")]] as [string, string][]).map(([val, label]) => (
+                  <option key={val} value={val}>{label}</option>
                 ))}
               </select>
             </div>
@@ -169,9 +158,7 @@ export default function IssuerPage() {
           <div className="row faint" style={{ marginTop: "1.25rem", fontSize: "0.8125rem" }}>
             <IconKey size={14} />
             <span>
-              {needsAttr
-                ? "The attribute is committed with Poseidon2 and stays private — the holder proves a claim about it."
-                : "A fresh secret is generated and committed with Poseidon2 — the holder proves it without revealing it."}
+              {needsAttr ? t("poseidonAttr") : t("poseidonSecret")}
             </span>
           </div>
 
@@ -179,24 +166,24 @@ export default function IssuerPage() {
             className="btn btn-primary"
             style={{ marginTop: "1.5rem", width: "100%" }}
             disabled={!holder || !issuerId || (needsAttr && !attribute) || busy}
-            title={!issuerId ? "Connect the issuer wallet first" : undefined}
+            title={!issuerId ? t("connectIssuerFirst") : undefined}
             onClick={onIssue}
           >
             {busy ? (
               <>
                 <IconLoader2 size={15} className="spin" />
-                Computing commitment…
+                {t("computing")}
               </>
             ) : (
               <>
-                Sign &amp; issue
+                {t("signAndIssue")}
                 <IconArrowRight size={15} />
               </>
             )}
           </button>
           {!issuerId && (
             <p className="faint" style={{ marginTop: "0.6rem", fontSize: "0.8125rem" }}>
-              Connect the registered issuer wallet to issue.
+              {t("connectIssuerNote")}
             </p>
           )}
           {error && (
@@ -208,10 +195,10 @@ export default function IssuerPage() {
 
         <div className="card" style={{ minHeight: 280 }}>
           <div className="between" style={{ marginBottom: "1rem" }}>
-            <span className="eyebrow">Signed credential</span>
+            <span className="eyebrow">{t("signedCredential")}</span>
             {issued && (
               <div className="row" style={{ gap: "0.5rem" }}>
-                <Badge variant="verified">Saved to wallet</Badge>
+                <Badge variant="verified">{t("savedToWallet")}</Badge>
                 <CopyButton value={issued} />
               </div>
             )}
@@ -234,9 +221,7 @@ export default function IssuerPage() {
           ) : (
             <div style={{ height: 200, display: "grid", placeItems: "center", textAlign: "center" }}>
               <p className="faint" style={{ maxWidth: 280, fontSize: "0.875rem" }}>
-                Issue a credential to generate signed JSON. It is saved to this
-                browser&rsquo;s wallet and ready to prove on the Holder page — we
-                never store it server-side.
+                {t("emptyIssuer")}
               </p>
             </div>
           )}

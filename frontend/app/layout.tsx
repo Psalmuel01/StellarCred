@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { SiteNav } from "@/components/SiteNav";
 import { WalletProvider } from "@/lib/wallet-context";
+import { LocaleProvider } from "@/lib/locale-context";
 import "./globals.css";
 
 const body = Inter({
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${body.variable} ${display.variable} ${mono.variable}`}>
       <body>
+        <LocaleProvider>
         <WalletProvider>
           <SiteNav />
           <main className="container">{children}</main>
@@ -66,6 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </footer>
         </WalletProvider>
+        </LocaleProvider>
       </body>
     </html>
   );
