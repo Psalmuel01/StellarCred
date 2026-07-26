@@ -178,6 +178,19 @@ impl ProofRegistry {
         }
     }
 
+    
+    /// Returns the expiry ledger timestamp for a cached proof, or 0 if none exists.
+    pub fn claim_expiry(env: Env, holder: Address, credential_type: Symbol) -> u64 {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, ProofRecord>(&DataKey::Proof(holder, credential_type))
+        {
+            Some(r) => r.expiry,
+            None => 0,
+        }
+    }
+
     /// Revoke a cached proof. The holder authorizes their own revocation.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
@@ -255,3 +268,4 @@ impl ProofRegistry {
 }
 
 mod test;
+
