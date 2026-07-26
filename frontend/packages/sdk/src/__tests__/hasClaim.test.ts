@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { hasClaim } from '../index';
+import { hasClaim, configure } from '../index';
+import { scValToNative } from '@stellar/stellar-sdk';
 
-// Mock the Stellar SDK to avoid real network calls
 vi.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: vi.fn().mockImplementation(() => ({
@@ -33,28 +33,26 @@ vi.mock('@stellar/stellar-sdk', () => ({
   BASE_FEE: '100',
 }));
 
-const { scValToNative } = await import('@stellar/stellar-sdk');
-
 describe('hasClaim - expired credentials', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Set config for tests
-    const { configure } = require('../index');
     configure({ registryId: 'CDEF1234', rpcUrl: 'http://localhost' });
   });
 
   it('returns false when is_verified reports the claim as expired', async () => {
-    // Mock is_verified returning (false, 1000, 1000) — expired
     (scValToNative as any).mockReturnValue([false, 1000n, 1000n]);
-
     const result = await hasClaim('GABC123', 'kyc');
     expect(result).toBe(false);
   });
 
-  it('returns false when is_verified reports expiry <= current time', async () => {
-    // Mock is_verified returning (false, 500, 500) — expired with past timestamp
-    (scValToNative as any).mockReturnValue([false, 500n, 500n]);
+  it('returns true when is_verified reports a valid, unexpired claim', async () => {
+    (scValToNative as any).mockReturnValue([true, 1000n, 9999n]);
+    const result = await hasClaim('GABC123', 'kyc');
+    expect(result).toBe(true);
+  });
 
+  it('returns false when is_verified reports expiry in the past', async () => {
+    (scValToNative as any).mockReturnValue([false, 500n, 500n]);
     const result = await hasClaim('GABC123', 'kyc');
     expect(result).toBe(false);
   });
