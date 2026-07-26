@@ -298,3 +298,43 @@ fn age_threshold_stored_and_checked() {
     // A protocol requiring age >= 21 fails â€” the proof only covers >= 18.
     assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(21)));
 }
+
+// -- claim_expiry tests -----------------------------------------------------
+
+#[test]
+fn claim_expiry_returns_expiry_for_valid_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 5000);
+    assert_eq!(h.registry.claim_expiry(&holder, &symbol_short!("kyc")), 5000);
+}
+
+#[test]
+fn claim_expiry_returns_zero_for_nonexistent_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let stranger = Address::generate(&env);
+
+    assert_eq!(h.registry.claim_expiry(&stranger, &symbol_short!("kyc")), 0);
+}
+
+#[test]
+fn claim_expiry_returns_expiry_even_after_expired() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+    assert_eq!(h.registry.claim_expiry(&holder, &symbol_short!("kyc")), 1000);
+
+    // Advance ledger past expiry — claim_expiry still returns the stored expiry.
+    env.ledger().with_mut(|li| li.timestamp = 2000);
+    assert_eq!(h.registry.claim_expiry(&holder, &symbol_short!("kyc")), 1000);
+    // But is_verified correctly reports it as invalid.
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+}
