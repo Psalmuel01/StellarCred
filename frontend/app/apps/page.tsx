@@ -9,6 +9,7 @@ import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { Badge } from "@/components/Badge";
 import { ConfigBanner } from "@/components/ConfigBanner";
+import { usePreviewMode } from "@/lib/wallet-context";
 import { checkClaim } from "@/lib/contracts";
 import { PROTOCOLS, type Protocol } from "@/lib/protocols";
 import { CREDENTIAL_TYPES } from "@/lib/stellar";
@@ -33,8 +34,14 @@ function ProtocolCard({
   const [statuses, setStatuses] = useState<boolean[]>(protocol.requirements.map(() => false));
   const [checked, setChecked] = useState(false);
   const eligible = statuses.every(Boolean);
+  const isPreview = usePreviewMode();
 
   useEffect(() => {
+    if (isPreview) {
+      setChecked(true);
+      setStatuses(protocol.requirements.map(() => true));
+      return;
+    }
     if (!activeWallet) {
       setChecked(false);
       setStatuses(protocol.requirements.map(() => false));
@@ -108,7 +115,7 @@ function ProtocolCard({
 }
 
 function AppsInner() {
-  const { address } = useWallet();
+  const { address, connect } = useWallet();
   const searchParams = useSearchParams();
   const t = useTranslations("apps");
   const scVerified = searchParams.get("sc_verified") === "true";
@@ -151,6 +158,19 @@ function AppsInner() {
 
       <div style={{ marginBottom: "1.75rem", padding: "0.75rem 1rem", borderRadius: "var(--radius)", background: "rgba(62,207,142,0.05)", border: "1px solid rgba(62,207,142,0.15)", fontSize: "0.8125rem", color: "var(--muted)", lineHeight: 1.6 }}>
         <strong style={{ color: "var(--text)" }}>{t("subtitle")}</strong>{" "}
+      <div
+        style={{
+          marginBottom: "1.75rem",
+          padding: "0.75rem 1rem",
+          borderRadius: "var(--radius)",
+          background: "rgba(62,207,142,0.05)",
+          border: "1px solid rgba(62,207,142,0.15)",
+          fontSize: "0.8125rem",
+          color: "var(--muted)",
+          lineHeight: 1.6,
+        }}
+      >
+        <strong style={{ color: "var(--text)" }}>Any protocol, any claim.</strong>{" "}
         Each app below gates access on a different credential type — one read-only call to{" "}
         <span className="mono" style={{ fontSize: "0.75rem" }}>ProofRegistry.is_verified</span>.
         The protocol never sees the credential, the commitment, or the proof itself.
