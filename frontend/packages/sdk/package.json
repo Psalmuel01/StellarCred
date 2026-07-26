@@ -49,5 +49,9 @@
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "issuer-registry": "link:../issuer-registry",
+    "proof-registry": "link:../proof-registry"
   }
 }
