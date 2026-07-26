@@ -33,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "test": "tsx --test src/index.test.ts",
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
@@ -46,6 +47,7 @@
   "devDependencies": {
     "@stellar/stellar-sdk": "^13.3.0",
     "tsup": "^8.5.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }

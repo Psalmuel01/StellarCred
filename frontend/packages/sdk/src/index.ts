@@ -15,6 +15,7 @@
 //   StellarCred.configure({
 //     registryId: process.env.PROOF_REGISTRY_ID,
 //     rpcUrl: "https://soroban-testnet.stellar.org",
+//     cacheEnabled: true,
 //   });
 //
 //   // Option B: set env vars instead (STELLARCRED_REGISTRY_ID, etc.)
@@ -36,13 +37,53 @@ function env(key: string, nextPublicKey?: string): string {
   );
 }
 
-let _config = {
+export interface ConfigureOptions {
+  registryId?: string;
+  rpcUrl?: string;
+  networkPassphrase?: string;
+  baseUrl?: string;
+  cacheEnabled?: boolean;
+  cacheTtlMs?: number;
+  cacheTtl?: number;
+  cache?: boolean | { enabled?: boolean; ttlMs?: number; ttl?: number };
+  /** Optional custom reader for override or testing. */
+  readIsVerified?: (
+    wallet: string,
+    claimType: string
+  ) => Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null>;
+  /** Optional custom reader for override or testing. */
+  readCheckClaim?: (
+    wallet: string,
+    claimType: string,
+    minThreshold: number
+  ) => Promise<boolean>;
+}
+
+let _config: {
+  registryId: string;
+  rpcUrl: string;
+  networkPassphrase: string;
+  baseUrl: string;
+  cacheEnabled: boolean;
+  cacheTtlMs: number;
+  readIsVerified?: (
+    wallet: string,
+    claimType: string
+  ) => Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null>;
+  readCheckClaim?: (
+    wallet: string,
+    claimType: string,
+    minThreshold: number
+  ) => Promise<boolean>;
+} = {
   registryId: env("STELLARCRED_REGISTRY_ID", "NEXT_PUBLIC_PROOF_REGISTRY_ID"),
   rpcUrl: env("STELLARCRED_RPC_URL", "NEXT_PUBLIC_RPC_URL") || "https://soroban-testnet.stellar.org",
   networkPassphrase:
     env("STELLARCRED_NETWORK_PASSPHRASE", "NEXT_PUBLIC_NETWORK_PASSPHRASE") ||
     "Test SDF Network ; September 2015",
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
+  cacheEnabled: false,
+  cacheTtlMs: 30000,
 };
 
 /**
@@ -50,13 +91,69 @@ let _config = {
  * `hasClaim` / `getClaims` calls. Each key is optional — omitted keys keep
  * their env-var-derived or default values.
  */
-export function configure(opts: {
-  registryId?: string;
-  rpcUrl?: string;
-  networkPassphrase?: string;
-  baseUrl?: string;
-}): void {
-  _config = { ..._config, ...opts };
+export function configure(opts: ConfigureOptions): void {
+  const nextConfig = { ..._config, ...opts };
+
+  if (opts.cacheEnabled !== undefined) {
+    nextConfig.cacheEnabled = opts.cacheEnabled;
+  }
+  if (opts.cacheTtlMs !== undefined) {
+    nextConfig.cacheTtlMs = opts.cacheTtlMs;
+  } else if (opts.cacheTtl !== undefined) {
+    nextConfig.cacheTtlMs = opts.cacheTtl * 1000;
+  }
+
+  if (opts.cache !== undefined) {
+    if (typeof opts.cache === "boolean") {
+      nextConfig.cacheEnabled = opts.cache;
+    } else if (typeof opts.cache === "object" && opts.cache !== null) {
+      if (opts.cache.enabled !== undefined) {
+        nextConfig.cacheEnabled = opts.cache.enabled;
+      }
+      if (opts.cache.ttlMs !== undefined) {
+        nextConfig.cacheTtlMs = opts.cache.ttlMs;
+      } else if (opts.cache.ttl !== undefined) {
+        nextConfig.cacheTtlMs = opts.cache.ttl * 1000;
+      }
+    }
+  }
+
+  _config = nextConfig;
+}
+
+// ---------------------------------------------------------------------------
+// In-memory cache for hasClaim
+// ---------------------------------------------------------------------------
+
+interface CacheEntry {
+  value: boolean;
+  expiresAt: number;
+}
+
+const _claimCache = new Map<string, CacheEntry>();
+
+function buildCacheKey(wallet: string, credentialType: string, minThreshold?: number): string {
+  const thresholdKey = minThreshold !== undefined ? String(minThreshold) : "none";
+  return `${wallet}:${credentialType}:${thresholdKey}`;
+}
+
+/**
+ * Bust in-memory cache entries for a given wallet (and optionally credentialType).
+ *
+ * @param wallet The target wallet address. If omitted, clears all cached entries.
+ * @param credentialType Optional credential type to bust (e.g. "kyc", "age"). If omitted, busts all claims for the wallet.
+ */
+export function invalidate(wallet?: string, credentialType?: string): void {
+  if (!wallet) {
+    _claimCache.clear();
+    return;
+  }
+  const prefix = credentialType !== undefined ? `${wallet}:${credentialType}:` : `${wallet}:`;
+  for (const key of Array.from(_claimCache.keys())) {
+    if (key.startsWith(prefix)) {
+      _claimCache.delete(key);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +213,9 @@ async function readIsVerified(
   wallet: string,
   claimType: string,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
+  if (_config.readIsVerified) {
+    return _config.readIsVerified(wallet, claimType);
+  }
   const { registryId } = _config;
   if (!registryId) return null;
 
@@ -138,6 +238,9 @@ async function readCheckClaim(
   claimType: string,
   minThreshold: number,
 ): Promise<boolean> {
+  if (_config.readCheckClaim) {
+    return _config.readCheckClaim(wallet, claimType, minThreshold);
+  }
   const { registryId } = _config;
   if (!registryId) return false;
 
@@ -167,6 +270,9 @@ async function readCheckClaim(
  * for "balance ≥ 10,000" does not. The check is performed on-chain and is
  * fully trustless.
  *
+ * If caching is enabled via `configure({ cacheEnabled: true })` or `configure({ cache: true })`,
+ * repeated reads within the TTL will be served locally from memory without an RPC call.
+ *
  * @example
  * // Binary claim — no threshold needed
  * const ok = await hasClaim("G1ABC…", "kyc");
@@ -184,11 +290,30 @@ export async function hasClaim(
   claimType: string,
   opts?: { minThreshold?: number },
 ): Promise<boolean> {
-  if (opts?.minThreshold !== undefined) {
-    return readCheckClaim(wallet, claimType, opts.minThreshold);
+  const cacheKey = buildCacheKey(wallet, claimType, opts?.minThreshold);
+  if (_config.cacheEnabled) {
+    const entry = _claimCache.get(cacheKey);
+    if (entry && Date.now() < entry.expiresAt) {
+      return entry.value;
+    }
   }
-  const r = await readIsVerified(wallet, claimType);
-  return !!r && r.valid;
+
+  let result: boolean;
+  if (opts?.minThreshold !== undefined) {
+    result = await readCheckClaim(wallet, claimType, opts.minThreshold);
+  } else {
+    const r = await readIsVerified(wallet, claimType);
+    result = !!r && r.valid;
+  }
+
+  if (_config.cacheEnabled) {
+    _claimCache.set(cacheKey, {
+      value: result,
+      expiresAt: Date.now() + (_config.cacheTtlMs ?? 30000),
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -257,5 +382,5 @@ export function buildVerifyUrl(options: {
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
 
-export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, CLAIM_TYPES };
+export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, invalidate, CLAIM_TYPES };
 export default StellarCred;
