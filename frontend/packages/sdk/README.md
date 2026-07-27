@@ -79,6 +79,35 @@ const incomeOk = await StellarCred.hasClaim(wallet, "income", {
 });
 ```
 
+#### Typed errors (`throwOnError`)
+
+By default `hasClaim` / `getClaims` are **fail-soft**: a missing `registryId` or an RPC/simulation failure returns `false` / `[]`, which is indistinguishable from "not verified." Pass `{ throwOnError: true }` to surface a typed error instead:
+
+| Failure | Error class |
+|---|---|
+| Missing `registryId` | `ConfigError` |
+| Network / simulation failure | `RpcError` |
+| Holder not verified | still returns `false` (not an error) |
+
+```ts
+import StellarCred, { ConfigError, RpcError } from "@stellarcred/sdk";
+
+try {
+  const ok = await StellarCred.hasClaim(wallet, "kyc", { throwOnError: true });
+  // ok === false means "not verified"; ok === true means verified
+} catch (err) {
+  if (err instanceof ConfigError) {
+    // SDK misconfigured — fix registryId
+  } else if (err instanceof RpcError) {
+    // Couldn't reach the chain — retry / degrade UI
+  } else {
+    throw err;
+  }
+}
+```
+
+`TimeoutError` remains the rejection used by `watchClaim` when its poll window expires.
+
 ### `getClaims(wallet)`
 
 Returns all active claims a wallet has proved, across all known credential types.

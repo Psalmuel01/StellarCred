@@ -71,6 +71,35 @@ export class TimeoutError extends Error {
   }
 }
 
+/**
+ * Error thrown when the SDK is missing required configuration (e.g. no
+ * `registryId`). Only surfaces when `{ throwOnError: true }` is passed;
+ * the default fail-soft path returns `false` / `[]` instead.
+ */
+export class ConfigError extends Error {
+  constructor(message = "StellarCred is not configured: missing registryId") {
+    super(message);
+    this.name = "ConfigError";
+  }
+}
+
+/**
+ * Error thrown when an RPC / contract-simulation call fails (network,
+ * timeout at the transport layer, simulation error, etc.). Only surfaces
+ * when `{ throwOnError: true }` is passed — distinguishing "couldn't check"
+ * from "not verified" (`false`).
+ */
+export class RpcError extends Error {
+  /** Underlying transport / simulation failure, when available. */
+  cause?: unknown;
+  constructor(message = "StellarCred RPC call failed", options?: { cause?: unknown }) {
+    super(message);
+    this.name = "RpcError";
+    if (options && "cause" in options) {
+      this.cause = options.cause;
+    }
+  }
+}
 
 /** The credential types StellarCred supports. Matches the contract Symbols. */
 export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds", "accreditation"] as const;
@@ -102,6 +131,14 @@ export interface ClaimOptions {
    * `trusted_issuers: None` default. An empty array rejects every issuer.
    */
   trustedIssuers?: string[];
+  /**
+   * When `true`, configuration and RPC failures throw {@link ConfigError} /
+   * {@link RpcError} instead of being masked as `false` / empty results.
+   * Default `false` preserves the historical fail-soft behaviour so a
+   * network blip is indistinguishable from "not verified" unless callers
+   * opt in.
+   */
+  throwOnError?: boolean;
 }
 
 export interface Claim {
@@ -126,10 +163,15 @@ function getSdk(): Promise<StellarSDK> {
   return _sdk;
 }
 
-async function getClient(): Promise<ProofRegistryClient | null> {
+async function getClient(throwOnError = false): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
-  if (!registryId) return null;
-  const { rpc } = await getSdk();
+  if (!registryId) {
+    if (throwOnError) {
+      throw new ConfigError("StellarCred is not configured: missing registryId");
+    }
+    return null;
+  }
+  await getSdk();
   return new ProofRegistryClient({
     networkPassphrase,
     contractId: registryId,
@@ -142,8 +184,9 @@ async function readIsVerified(
   wallet: string,
   claimType: string,
   trustedIssuers?: string[],
+  throwOnError = false,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
-  const client = await getClient();
+  const client = await getClient(throwOnError);
   if (!client) return null;
 
   try {
@@ -155,7 +198,10 @@ async function readIsVerified(
     if (!result) return null;
     const [valid, verifiedAt, expiry] = result;
     return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
-  } catch {
+  } catch (err) {
+    if (throwOnError) {
+      throw new RpcError(`is_verified RPC failed for claim "${claimType}"`, { cause: err });
+    }
     return null;
   }
 }
@@ -165,8 +211,9 @@ async function readCheckClaim(
   claimType: string,
   minThreshold: number,
   trustedIssuers?: string[],
+  throwOnError = false,
 ): Promise<boolean> {
-  const client = await getClient();
+  const client = await getClient(throwOnError);
   if (!client) return false;
 
   try {
@@ -177,7 +224,10 @@ async function readCheckClaim(
       trusted_issuers: trustedIssuers,
     });
     return result ?? false;
-  } catch {
+  } catch (err) {
+    if (throwOnError) {
+      throw new RpcError(`check_claim RPC failed for claim "${claimType}"`, { cause: err });
+    }
     return false;
   }
 }
@@ -213,27 +263,55 @@ async function readCheckClaim(
  * const ok = await hasClaim("G1ABC…", "kyc", {
  *   trustedIssuers: ["G...PERSONA_ISSUER", "G...JUMIO_ISSUER"],
  * });
+ *
+ * @example
+ * // Opt into typed errors — network failure throws RpcError, missing
+ * // registryId throws ConfigError; "not verified" still returns false.
+ * try {
+ *   const ok = await hasClaim("G1ABC…", "kyc", { throwOnError: true });
+ * } catch (err) {
+ *   if (err instanceof ConfigError) {
+ *     // misconfigured SDK — set registryId
+ *   }
+ *   if (err instanceof RpcError) {
+ *     // could not reach the chain — retry or degrade
+ *   }
+ * }
  */
 export async function hasClaim(
   wallet: string,
   claimType: string,
   opts?: ClaimOptions,
 ): Promise<boolean> {
+  const throwOnError = opts?.throwOnError === true;
   if (opts?.minThreshold !== undefined) {
-    return readCheckClaim(wallet, claimType, opts.minThreshold, opts.trustedIssuers);
+    return readCheckClaim(
+      wallet,
+      claimType,
+      opts.minThreshold,
+      opts.trustedIssuers,
+      throwOnError,
+    );
   }
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
+  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers, throwOnError);
   return !!r && r.valid;
 }
 
 /**
  * Returns every active claim a wallet has proven, across all known credential
  * types. Useful for profile pages and protocol dashboards.
+ *
+ * Pass `{ throwOnError: true }` to surface {@link ConfigError} / {@link RpcError}
+ * instead of silently dropping failed reads.
  */
-export async function getClaims(wallet: string): Promise<Claim[]> {
+export async function getClaims(
+  wallet: string,
+  opts?: Pick<ClaimOptions, "throwOnError">,
+): Promise<Claim[]> {
+  const throwOnError = opts?.throwOnError === true;
   const results = await Promise.all(
     CLAIM_TYPES.map(async (t) => {
-      const r = await readIsVerified(wallet, t);
+      const r = await readIsVerified(wallet, t, undefined, throwOnError);
       return r && r.valid ? { type: t, verifiedAt: r.verifiedAt, expiry: r.expiry } : null;
     }),
   );
@@ -405,5 +483,15 @@ export function watchClaim(
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
 
-export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, watchClaim, CLAIM_TYPES, TimeoutError };
+export const StellarCred = {
+  configure,
+  hasClaim,
+  getClaims,
+  buildVerifyUrl,
+  watchClaim,
+  CLAIM_TYPES,
+  TimeoutError,
+  ConfigError,
+  RpcError,
+};
 export default StellarCred;
