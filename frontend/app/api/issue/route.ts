@@ -4,6 +4,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { IssuerClient, CREDENTIAL_TYPES, type CredentialType, type ClaimParams } from "@stellarcred/issuer";
 import { fetchIssuerPubkey } from "@/lib/issuer-registry";
 import { logger, stripSensitiveFields } from "../../../lib/logger";
+import { createPersonaInquiry, type PersonaReference } from "@/lib/persona";
 
 // Server-side only — never shipped to the browser.
 // Set ISSUER_PRIVATE_KEY in .env.local to the 64-char hex secp256k1 private
@@ -30,107 +31,15 @@ function localIssuerPubkeyBytes(): Buffer {
 }
 
 // ---------------------------------------------------------------------------
-// Persona identity verification relay
+// Persona identity verification
 // ---------------------------------------------------------------------------
-// Two templates are supported:
-//   PERSONA_KYC_TEMPLATE_ID  — government ID flow; issues kyc + age + jurisdiction
-//   PERSONA_AGE_TEMPLATE_ID  — selfie age estimation; issues age credential only
-//
-// If PERSONA_API_KEY is not set → demo fallback (always passes).
-// If PERSONA_API_KEY is set but the relevant template ID is missing → loud error.
+// If PERSONA_API_KEY is not set → demo fallback (always passes, synchronous).
+// If PERSONA_API_KEY is set → the holder is redirected to Persona's hosted
+// flow; completion is delivered asynchronously via the webhook at
+// app/api/persona/webhook, which signs and caches the credential for the
+// holder's browser to pick up by polling app/api/persona/result. See
+// lib/persona.ts for the shared Persona API / webhook helpers.
 // ---------------------------------------------------------------------------
-
-const PERSONA_BASE = "https://withpersona.com/api/v1";
-const PERSONA_VERSION = "2023-01-05";
-
-function personaHeaders() {
-  return {
-    Authorization: `Bearer ${process.env.PERSONA_API_KEY}`,
-    "Content-Type": "application/json",
-    "Persona-Version": PERSONA_VERSION,
-  };
-}
-
-async function createPersonaInquiry(
-  templateId: string,
-  redirectUri: string,
-): Promise<{ url: string; id: string }> {
-  const res = await fetch(`${PERSONA_BASE}/inquiries`, {
-    method: "POST",
-    headers: personaHeaders(),
-    body: JSON.stringify({
-      data: {
-        attributes: {
-          "inquiry-template-id": templateId,
-          "redirect-uri": redirectUri,
-        },
-      },
-    }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`Persona: failed to create inquiry — ${JSON.stringify(json)}`);
-  const id: string = json.data.id;
-  // Persona hosted flow URL
-  const url = `https://withpersona.com/verify?inquiry-id=${id}`;
-  return { url, id };
-}
-
-async function retrievePersonaInquiry(inquiryId: string): Promise<{
-  status: string;
-  fields: Record<string, { value: unknown }>;
-}> {
-  const res = await fetch(`${PERSONA_BASE}/inquiries/${inquiryId}`, {
-    headers: personaHeaders(),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`Persona: failed to retrieve inquiry — ${JSON.stringify(json)}`);
-  return {
-    status: json.data.attributes.status as string,
-    fields: (json.data.attributes.fields ?? {}) as Record<string, { value: unknown }>,
-  };
-}
-
-// Minimal ISO 3166-1 alpha-2 → numeric map for countries we care about.
-// Persona returns alpha-2 codes; our jurisdiction circuit uses numeric.
-const ALPHA2_TO_NUMERIC: Record<string, string> = {
-  NG: "566", US: "840", DE: "276", IN: "356", IR: "364",
-  GB: "826", FR: "250", CA: "124", AU: "036", BR: "076",
-  CN: "156", JP: "392", KR: "410", ZA: "710", GH: "288",
-  KE: "404", EG: "818", MX: "484", AR: "032", SG: "702",
-};
-
-function alpha2ToNumeric(code: string): string {
-  return ALPHA2_TO_NUMERIC[code.toUpperCase()] ?? "0";
-}
-
-// Called after user returns from Persona KYC (gov ID) inquiry.
-// Returns DOB and country so we can issue age + jurisdiction credentials.
-async function resolvePersonaKYC(inquiryId: string): Promise<{
-  ok: boolean;
-  dob?: string;
-  countryNumeric?: string;
-  error?: string;
-}> {
-  const { status, fields } = await retrievePersonaInquiry(inquiryId);
-  if (status !== "approved") {
-    return { ok: false, error: `Persona KYC inquiry status: ${status}` };
-  }
-  const dob =
-    String(fields["birthdate"]?.value ?? fields["birth-date"]?.value ?? "").trim() || undefined;
-  const alpha2 =
-    String(
-      fields["selected-country-code"]?.value ??
-      fields["country-code"]?.value ??
-      fields["address-country-code"]?.value ??
-      "",
-    ).trim() || undefined;
-  return {
-    ok: true,
-    dob,
-    countryNumeric: alpha2 ? alpha2ToNumeric(alpha2) : undefined,
-  };
-}
-
 
 // Plaid balance attestation relay. Returns the verified balance from the user's
 // bank — this becomes the credential value, not what the user typed.
@@ -220,8 +129,6 @@ export async function POST(req: NextRequest) {
     attributes?: Record<string, string>;
     attribute?: string;
     claimParams?: ClaimParams;
-    // Set by the frontend after the user returns from Persona's hosted flow.
-    persona_inquiry_id?: string;
     returnUrl?: string;
   };
 
@@ -237,7 +144,6 @@ export async function POST(req: NextRequest) {
     issuerName = "StellarCred Authority",
     expiry = "90 days",
     claimParams,
-    persona_inquiry_id: personaInquiryId,
     returnUrl,
   } = body;
   issuerId = reqIssuerId;
@@ -310,24 +216,22 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   // Identity verification via Persona
   // ---------------------------------------------------------------------------
-  // needsKyc = any of kyc / jurisdiction, OR age when KYC template is available
-  // needsAgeOnly = age-only request when only the selfie age template is available
-  //
-  // Decision tree:
-  //   PERSONA_API_KEY not set                           → demo fallback (always passes)
-  //   PERSONA_API_KEY set, KYC types requested:
-  //     PERSONA_KYC_TEMPLATE_ID not set                → 500 (misconfiguration)
-  //     no inquiry_id yet                              → 202 + Persona URL (redirect)
-  //     inquiry_id present                             → verify + extract DOB/country
-  //   PERSONA_API_KEY set, age-only requested:
-  //     PERSONA_AGE_TEMPLATE_ID not set                → 500 (misconfiguration)
-  //     no inquiry_id yet                              → 202 + Persona URL (redirect)
-  //     inquiry_id present                             → verify + extract min_age
-  // ---------------------------------------------------------------------------
   // Gate the kyc credential on Persona identity verification (gov ID flow).
   // Age and jurisdiction are standalone — user-provided values, no external verification.
-  // If PERSONA_API_KEY is not set → demo fallback, verification skipped.
-  // If PERSONA_API_KEY is set but PERSONA_KYC_TEMPLATE_ID is missing → 500.
+  //
+  //   PERSONA_API_KEY not set        → demo fallback, verification skipped, issue inline.
+  //   PERSONA_API_KEY set:
+  //     PERSONA_KYC_TEMPLATE_ID not set    → 500 (misconfiguration).
+  //     PERSONA_WEBHOOK_SECRET not set     → 500 (misconfiguration — completion has
+  //                                           nowhere to be delivered).
+  //     otherwise                          → create a Persona inquiry and redirect.
+  //                                           Persona verifies asynchronously and
+  //                                           POSTs the result to
+  //                                           app/api/persona/webhook, which signs
+  //                                           and caches the credential for the
+  //                                           holder to pick up via
+  //                                           app/api/persona/result.
+  // ---------------------------------------------------------------------------
   const needsIdentity = credentialTypes.includes("kyc");
   if (needsIdentity) {
     if (!process.env.PERSONA_API_KEY) {
@@ -347,46 +251,41 @@ export async function POST(req: NextRequest) {
           { status: 500 },
         ));
       }
+      if (!process.env.PERSONA_WEBHOOK_SECRET) {
+        return sendResponse(NextResponse.json(
+          {
+            error:
+              "PERSONA_WEBHOOK_SECRET is required when PERSONA_API_KEY is set — Persona delivers the KYC result via webhook.",
+          },
+          { status: 500 },
+        ));
+      }
       const baseUrl = process.env.NEXT_PUBLIC_STELLARCRED_BASE_URL ?? req.nextUrl.origin;
-      if (!personaInquiryId) {
-        // First request — create a Persona inquiry and ask the frontend to redirect.
-        logger.info(stripSensitiveFields({
-          event: "provider_call",
-          credentialType: "kyc",
-          issuerId,
-          walletAddress,
-          outcome: "inquiry_created",
-          requestId,
-        }));
-        const redirectUrl = returnUrl
-          ? `${baseUrl}/verify?return_url=${encodeURIComponent(returnUrl)}`
-          : `${baseUrl}/verify`;
-        const { url, id } = await createPersonaInquiry(templateId, redirectUrl);
-        return sendResponse(NextResponse.json({ needsPersona: true, personaUrl: url, inquiryId: id }, { status: 202 }));
-      }
-      // Second request — user returned from Persona, verify the completed inquiry.
-      const kyc = await resolvePersonaKYC(personaInquiryId);
-      if (!kyc.ok) {
-        logger.info(stripSensitiveFields({
-          event: "provider_call",
-          credentialType: "kyc",
-          issuerId,
-          walletAddress,
-          outcome: "verification_failed",
-          requestId,
-        }));
-        return sendResponse(NextResponse.json({ error: kyc.error ?? "Identity verification failed" }, { status: 403 }));
-      }
       logger.info(stripSensitiveFields({
         event: "provider_call",
         credentialType: "kyc",
         issuerId,
         walletAddress,
-        outcome: "verified",
+        outcome: "inquiry_created",
         requestId,
       }));
-      if (kyc.dob) attributes.date_of_birth = kyc.dob;
-      if (kyc.countryNumeric) attributes.country_code = kyc.countryNumeric;
+      const redirectUrl = returnUrl
+        ? `${baseUrl}/verify?return_url=${encodeURIComponent(returnUrl)}`
+        : `${baseUrl}/verify`;
+      // Everything the webhook needs to finish issuance once Persona approves
+      // — carried via Persona's reference-id and echoed back on the webhook
+      // payload, since that callback arrives on a separate request entirely.
+      const reference: PersonaReference = {
+        holder,
+        issuerId,
+        issuerName,
+        expiry,
+        credentialTypes: Array.from(new Set(credentialTypes)),
+        attributes,
+        claimParams,
+      };
+      const { url, id } = await createPersonaInquiry(templateId, redirectUrl, reference);
+      return sendResponse(NextResponse.json({ needsPersona: true, personaUrl: url, inquiryId: id }, { status: 202 }));
     }
   }
 

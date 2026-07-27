@@ -127,45 +127,72 @@ function VerifyInner() {
       .catch(() => {});
   }, [fundsSelected]);
 
-  // When Persona redirects back to /verify?inquiry-id=XXX, resume the pending
-  // issue request that was stored in sessionStorage before the redirect.
+  // When Persona redirects back to /verify?inquiry-id=XXX, the actual
+  // decisioning happens asynchronously — Persona POSTs the result to our
+  // webhook (app/api/persona/webhook) once it completes, which signs the
+  // credential and caches it keyed by inquiry id. Poll for it here rather
+  // than assuming it's ready the instant the browser comes back.
   useEffect(() => {
     if (!personaInquiryId || !address) return;
-    const raw = sessionStorage.getItem("sc_persona_pending");
-    if (!raw) return;
-    sessionStorage.removeItem("sc_persona_pending");
-    let pending: Record<string, unknown>;
-    try { pending = JSON.parse(raw); } catch { return; }
     setBusy(true);
     setError("");
-    fetch("/api/issue", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...pending, persona_inquiry_id: personaInquiryId }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const d = await res.json().catch(() => null) as { error?: string } | null;
-          throw new Error(d?.error ?? "Issuing failed after identity verification");
-        }
-        return res.json() as Promise<{ credentials: import("@/lib/credential").Credential[] }>;
-      })
-      .then(({ credentials }) => {
-        credentials.forEach((c) => saveCredential(c));
-        justIssuedClaims.current = credentials.map((c) => c.type).filter((t) => VALID_CLAIMS.includes(t as CredentialType));
 
-        setDone(true);
-        toast.success(
-          credentials.length > 1 ? "Credentials issued successfully" : "Credential issued successfully",
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 40; // ~2 minutes at 3s intervals
+    const POLL_MS = 3000;
+
+    async function poll() {
+      attempts += 1;
+      try {
+        const res = await fetch(
+          `/api/persona/result?inquiry_id=${encodeURIComponent(personaInquiryId!)}`,
         );
-        setTimeout(redirectAfterIssue, 1500);
-      })
-      .catch((e) => {
-        const message = (e as Error).message;
-        setError(message);
-        toast.error(`Credential issuance failed: ${message}`);
-      })
-      .finally(() => setBusy(false));
+        const data = (await res.json()) as {
+          ready: boolean;
+          credentials?: Credential[];
+          error?: string;
+        };
+        if (!res.ok && res.status !== 202) {
+          throw new Error(data.error ?? "Verification lookup failed");
+        }
+        if (data.ready && data.credentials) {
+          data.credentials.forEach((c) => saveCredential(c));
+          justIssuedClaims.current = data.credentials
+            .map((c) => c.type)
+            .filter((t) => VALID_CLAIMS.includes(t as CredentialType));
+          setDone(true);
+          setBusy(false);
+          toast.success(
+            data.credentials.length > 1
+              ? "Credentials issued successfully"
+              : "Credential issued successfully",
+          );
+          setTimeout(redirectAfterIssue, 1500);
+          return;
+        }
+      } catch (e) {
+        if (!cancelled) {
+          const message = (e as Error).message;
+          setError(message);
+          toast.error(`Credential issuance failed: ${message}`);
+          setBusy(false);
+        }
+        return;
+      }
+      if (cancelled) return;
+      if (attempts >= MAX_ATTEMPTS) {
+        setError("Verification is taking longer than expected. Please check back shortly.");
+        setBusy(false);
+        return;
+      }
+      setTimeout(poll, POLL_MS);
+    }
+
+    poll();
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personaInquiryId, address]);
 
@@ -238,9 +265,10 @@ function VerifyInner() {
         }),
       });
       // 202 means Persona identity verification is required — redirect user.
+      // Persona carries our reference-id (holder/issuerId/attributes) through
+      // to the webhook on completion, so nothing needs to be stashed here.
       if (res.status === 202) {
         const { personaUrl } = (await res.json()) as { personaUrl: string };
-        sessionStorage.setItem("sc_persona_pending", JSON.stringify(payload));
         window.location.href = personaUrl;
         return; // don't clear busy — page is navigating away
       }

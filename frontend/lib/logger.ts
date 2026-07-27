@@ -15,6 +15,7 @@ const SAFE_FIELDS = [
   "outcome",
   "durationMs",
   "requestId",
+  "inquiryId",
   "level",
   "time",
   "pid",
