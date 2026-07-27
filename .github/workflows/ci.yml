@@ -34,6 +34,47 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  circuits:
+    name: Circuit test vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Noir toolchain
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          echo "$HOME/.nargo/bin" >> $GITHUB_PATH
+          source $HOME/.bashrc || true
+          noirup -v 1.0.0-beta.9
+
+      - name: Install Barretenberg
+        run: |
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/cpp/installation/install | bash
+          echo "$HOME/.bb/bin" >> $GITHUB_PATH
+          source $HOME/.bashrc || true
+          bbup -v 0.87.0
+
+      - name: Verify toolchain versions
+        run: |
+          nargo --version
+          bb --version
+
+      - name: Install jq for JSON parsing
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Verify test vectors
+        working-directory: circuits
+        run: |
+          chmod +x scripts/verify_testvectors.sh
+          ./scripts/verify_testvectors.sh
+
+      - name: Upload verification results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: circuit-verification-logs
+          path: circuits/*/target/
+
   frontend:
     name: Frontend typecheck & build
     runs-on: ubuntu-latest

@@ -1,0 +1,8 @@
+{
+  "circuit_name": "income_proof",
+  "toolchain_version": "1.0.0-beta.9",
+  "bytecode_exists": true,
+  "compiled_successfully": true,
+  "generated_at": "2026-07-27T12:02:47Z",
+  "note": "Basic test vector - bb installation had issues"
+}
