@@ -7,8 +7,10 @@ use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
-    vec, Address, BytesN, Bytes, Env, IntoVal,
+    testutils::{
+        storage::Persistent as _, Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke,
+    },
+    vec, Address, Bytes, BytesN, Env, IntoVal,
 };
 
 // Real UltraHonk artifacts (kyc_proof circuit, Noir beta.9 + bb 0.87.0), so
@@ -946,4 +948,181 @@ fn legacy_record_missing_issuer_key_fails_to_read() {
 
     let result = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// TTL / rent management
+// ---------------------------------------------------------------------------
+
+const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+
+fn proof_ttl(env: &Env, registry_id: &Address, holder: &Address) -> u32 {
+    let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+    env.as_contract(registry_id, || env.storage().persistent().get_ttl(&key))
+}
+
+#[test]
+fn submit_proof_extends_ttl_to_cover_long_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    // Well beyond the 90-day floor, but comfortably under the network's max
+    // entry TTL (~1 year) so nothing gets clamped in this assertion.
+    let expiry = now + 200 * SECONDS_PER_DAY;
+
+    submit(&env, &h, &holder, expiry);
+
+    let ttl = proof_ttl(&env, &h.registry_id, &holder);
+    let expected = env.as_contract(&h.registry_id, || {
+        ProofRegistry::ttl_for_expiry(&env, expiry)
+    });
+
+    assert_eq!(
+        ttl, expected,
+        "TTL after submit_proof should exactly match ttl_for_expiry"
+    );
+    assert!(
+        ttl > PROOF_TTL,
+        "a 200-day credential should get a TTL beyond the 90-day floor (got {ttl}, floor is {PROOF_TTL})"
+    );
+    // Roughly covers the credential's remaining lifetime (within a day of
+    // rounding from the seconds->ledgers conversion).
+    let min_expected_ledgers = ((expiry - now) / SECONDS_PER_LEDGER) as u32;
+    assert!(ttl >= min_expected_ledgers);
+}
+
+#[test]
+fn submit_proof_floors_ttl_at_90_days_for_short_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    let expiry = now + 1000; // seconds — far under the 90-day floor
+
+    submit(&env, &h, &holder, expiry);
+
+    let ttl = proof_ttl(&env, &h.registry_id, &holder);
+    assert_eq!(ttl, PROOF_TTL);
+}
+
+#[test]
+fn submit_proof_caps_ttl_at_network_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    // Absurdly far out — well beyond anything the network will actually let
+    // an entry live for.
+    let expiry = now + 10_000 * SECONDS_PER_DAY;
+
+    submit(&env, &h, &holder, expiry);
+
+    let ttl = proof_ttl(&env, &h.registry_id, &holder);
+    let max_ttl = env.as_contract(&h.registry_id, || env.storage().max_ttl());
+    assert_eq!(
+        ttl, max_ttl,
+        "TTL should be capped at the network's max entry TTL"
+    );
+}
+
+#[test]
+fn bump_claim_extends_ttl_for_valid_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let now = env.ledger().timestamp();
+    let expiry = now + 200 * SECONDS_PER_DAY;
+    submit(&env, &h, &holder, expiry);
+
+    let ttl_after_submit = proof_ttl(&env, &h.registry_id, &holder);
+
+    // Advance the ledger *sequence* (not the timestamp — the claim is still
+    // valid) so the entry's remaining TTL drops just under the bump
+    // threshold, simulating rent nearly running out.
+    env.ledger()
+        .with_mut(|li| li.sequence_number += ttl_after_submit - 100);
+    assert!(proof_ttl(&env, &h.registry_id, &holder) < PROOF_BUMP_THRESHOLD);
+
+    h.registry.bump_claim(&holder, &symbol_short!("kyc"));
+
+    let ttl_after_bump = proof_ttl(&env, &h.registry_id, &holder);
+    let expected = env.as_contract(&h.registry_id, || {
+        ProofRegistry::ttl_for_expiry(&env, expiry)
+    });
+    assert_eq!(ttl_after_bump, expected);
+    assert!(
+        ttl_after_bump > 1000,
+        "TTL should have grown back up from the near-expiry value"
+    );
+}
+
+#[test]
+fn bump_claim_is_noop_when_ttl_already_high() {
+    // extend_ttl only applies below `threshold` — calling bump_claim right
+    // after submit_proof (when TTL is already high) must not panic and must
+    // leave the TTL unchanged.
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(
+        &env,
+        &h,
+        &holder,
+        env.ledger().timestamp() + 200 * SECONDS_PER_DAY,
+    );
+    let ttl_before = proof_ttl(&env, &h.registry_id, &holder);
+
+    h.registry.bump_claim(&holder, &symbol_short!("kyc"));
+
+    assert_eq!(proof_ttl(&env, &h.registry_id, &holder), ttl_before);
+}
+
+#[test]
+fn bump_claim_panics_for_unknown_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let stranger = Address::generate(&env);
+
+    let res = h.registry.try_bump_claim(&stranger, &symbol_short!("kyc"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn bump_claim_panics_for_expired_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+    env.ledger().with_mut(|li| li.timestamp = 2000); // past expiry
+
+    let res = h.registry.try_bump_claim(&holder, &symbol_short!("kyc"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn bump_claim_panics_for_revoked_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1_000_000_000); // valid for a very long time
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+    let res = h.registry.try_bump_claim(&holder, &symbol_short!("kyc"));
+    assert!(res.is_err());
 }
