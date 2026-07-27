@@ -1,93 +1,59 @@
-import CryptoJS from 'crypto-js';
+// frontend/lib/cryptos.ts
 
-const PBKDF2_ITERATIONS = 100000;
-const KEY_SIZE = 256 / 32; // 256 bits in 32-bit words
-const SALT_SIZE = 128 / 8; // 128 bits in bytes
-
-/**
- * Encrypts a payload object using a user-provided passphrase.
- * Uses PBKDF2 with 100k iterations for strong key derivation.
- * Returns a JSON envelope with encrypted flag and Base64 ciphertext.
- */
-export function encryptPayload(payload: Record<string, unknown>, passphrase: string): string {
-  const jsonString = JSON.stringify(payload);
+export async function encryptPayload(payload: Record<string, unknown>, passphrase: string): Promise<string> {
+  const salt = new Uint8Array(16);
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(salt);
+  crypto.getRandomValues(iv);
   
-  // Generate random salt and IV
-  const salt = CryptoJS.lib.WordArray.random(SALT_SIZE);
-  const iv = CryptoJS.lib.WordArray.random(128 / 8);
+  const key = await deriveKey(passphrase, salt.buffer as ArrayBuffer);
   
-  // Derive key using PBKDF2
-  const key = CryptoJS.PBKDF2(passphrase, salt, {
-    keySize: KEY_SIZE,
-    iterations: PBKDF2_ITERATIONS
-  });
-  
-  // Encrypt with derived key
-  const encrypted = CryptoJS.AES.encrypt(jsonString, key, { iv });
-  
-  // Combine salt + iv + ciphertext
-  const combined = salt.concat(iv).concat(encrypted.ciphertext);
-  const ciphertext = CryptoJS.enc.Base64.stringify(combined);
-  
-  // Return structured JSON envelope
-  return JSON.stringify({
-    encrypted: true,
-    ciphertext,
-  });
-}
-
-/**
- * Decrypts a ciphertext string using a user-provided passphrase.
- * Accepts either a JSON envelope or raw Base64 for backward compatibility.
- * Throws an error if the passphrase is incorrect or data is corrupted.
- */
-export function decryptPayload(input: string, passphrase: string): Record<string, unknown> {
-  // Try to parse as JSON envelope first
-  let ciphertext: string;
-  try {
-    const envelope = JSON.parse(input);
-    if (envelope.encrypted && envelope.ciphertext) {
-      ciphertext = envelope.ciphertext;
-    } else {
-      // Not our envelope format, treat as raw ciphertext
-      ciphertext = input;
-    }
-  } catch {
-    // Not valid JSON, treat as raw ciphertext
-    ciphertext = input;
-  }
-  
-  // Parse combined Base64 string
-  const combined = CryptoJS.enc.Base64.parse(ciphertext);
-  
-  // Extract salt (first 16 bytes)
-  const salt = CryptoJS.lib.WordArray.create(combined.words.slice(0, SALT_SIZE / 4));
-  
-  // Extract IV (next 16 bytes)
-  const iv = CryptoJS.lib.WordArray.create(combined.words.slice(SALT_SIZE / 4, (SALT_SIZE + 16) / 4));
-  
-  // Extract ciphertext (remaining bytes)
-  const ciphertextWords = combined.words.slice((SALT_SIZE + 16) / 4);
-  const ciphertextObj = CryptoJS.lib.WordArray.create(ciphertextWords);
-  
-  // Derive key using same parameters
-  const key = CryptoJS.PBKDF2(passphrase, salt, {
-    keySize: KEY_SIZE,
-    iterations: PBKDF2_ITERATIONS
-  });
-  
-  // Decrypt
-  const decrypted = CryptoJS.AES.decrypt(
-    { ciphertext: ciphertextObj } as CryptoJS.lib.CipherParams,
-    key,
-    { iv }
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer }, 
+    key, 
+    encoded.buffer as ArrayBuffer
   );
   
-  const decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+  const combined = new Uint8Array(salt.length + iv.length + ciphertext.byteLength);
+  combined.set(salt);
+  combined.set(iv, salt.length);
+  combined.set(new Uint8Array(ciphertext), salt.length + iv.length);
   
-  if (!decryptedString) {
-    throw new Error('Decryption failed. Invalid passphrase or corrupted data.');
-  }
+  return btoa(String.fromCharCode(...combined));
+}
+
+export async function decryptPayload(ciphertext: string, passphrase: string): Promise<Record<string, unknown>> {
+  const combined = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+  const salt = combined.slice(0, 16);
+  const iv = combined.slice(16, 28);
+  const data = combined.slice(28);
   
-  return JSON.parse(decryptedString) as Record<string, unknown>;
+  const key = await deriveKey(passphrase, salt.buffer as ArrayBuffer);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer }, 
+    key, 
+    data.buffer as ArrayBuffer
+  );
+  
+  return JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, unknown>;
+}
+
+async function deriveKey(passphrase: string, salt: ArrayBuffer): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', 
+    enc.encode(passphrase).buffer as ArrayBuffer, 
+    'PBKDF2', 
+    false, 
+    ['deriveKey']
+  );
+  
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
 }

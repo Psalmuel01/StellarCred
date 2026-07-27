@@ -14,7 +14,7 @@ export default function TransferPage() {
   // In a real app, returnUrl and claimType would be dynamic
   const verifyDeepLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/verify?claimType=ProofOfHumanity&returnUrl=/success`;
 
-  const handleGenerateTransferQR = () => {
+  const handleGenerateTransferQR = async () => {
     setError(null);
     if (!credentialData || !passphrase) {
       setError('Please provide both credential data and a passphrase.');
@@ -23,7 +23,7 @@ export default function TransferPage() {
     
     try {
       const payload = JSON.parse(credentialData) as Record<string, unknown>;
-      const encrypted = encryptPayload(payload, passphrase);
+      const encrypted = await encryptPayload(payload, passphrase);
       setEncryptedQrData(encrypted);
     } catch (e) {
       setError('Invalid credential JSON format.');

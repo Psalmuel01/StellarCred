@@ -1,50 +1,47 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Scanner } from '@yudiel/react-qr-scanner';
-import { decryptPayload } from '@/lib/cryptos';
+import { decryptPayload } from '../../lib/cryptos';
 
 export default function VerifyPage() {
-  const router = useRouter();
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [decryptedData, setDecryptedData] = useState<string | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleScan = (data: string | null) => {
     if (data && !scanResult) {
       setScanResult(data);
-      // Check for structured encrypted JSON envelope
-      try {
-        const envelope = JSON.parse(data);
-        if (envelope.encrypted && envelope.ciphertext) {
-          setIsEncrypted(true);
-          return;
-        }
-      } catch {
-        // Not JSON, proceed to deep link handling
-      }
-      
-      // Navigate to the scanned deep link
-      try {
-        const url = new URL(data);
-        router.push(url.pathname + url.search);
-      } catch {
-        setError('Invalid deep link format.');
+      // CryptoJS AES encrypted strings typically start with "U2FsdGVkX1" (old format)
+      // Native WebCrypto Base64 might vary, but we assume any non-URL string is encrypted
+      if (!data.startsWith('http') && !data.startsWith('/')) {
+        setIsEncrypted(true);
+      } else {
+        console.log('Deep link scanned:', data);
       }
     }
   };
 
-  const handleDecrypt = () => {
+  // FIX: Made async to support Web Crypto API
+  const handleDecrypt = async () => {
     setError(null);
     try {
       if (!scanResult) throw new Error('No data scanned.');
-      const payload = decryptPayload(scanResult, passphrase);
+      const payload = await decryptPayload(scanResult, passphrase);
       setDecryptedData(JSON.stringify(payload, null, 2));
     } catch (e) {
-      setError('Decryption failed. Invalid passphrase or corrupted data.');
+      setError('Decryption failed. Invalid passphrase or tampered data.');
+    }
+  };
+
+  // FIX: Added function to actually save/import the credential
+  const handleSaveCredential = () => {
+    if (decryptedData) {
+      localStorage.setItem('stellarcred_credentials', decryptedData);
+      setIsSaved(true);
     }
   };
 
@@ -54,6 +51,7 @@ export default function VerifyPage() {
     setDecryptedData(null);
     setPassphrase('');
     setError(null);
+    setIsSaved(false);
   };
 
   return (
@@ -67,7 +65,7 @@ export default function VerifyPage() {
               onScan={(result) => handleScan(result?.[0]?.rawValue ?? null)}
               onError={(err) => setError(err.message)}
               constraints={{ facingMode: 'environment' }}
-              classNames={{ container: "w-full h-full" }}
+             classNames={{ container: 'w-full h-full' }}
             />
           </div>
           {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
@@ -87,16 +85,31 @@ export default function VerifyPage() {
                 placeholder="Enter passphrase"
               />
               <button 
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors w-full"
                 onClick={handleDecrypt}
               >
                 Decrypt Credential
               </button>
               {error && <p className="text-red-500 text-sm">{error}</p>}
+              
               {decryptedData && (
-                <div>
-                  <p className="font-medium mb-1 text-gray-700">Decrypted Credential:</p>
-                  <pre className="p-4 bg-gray-100 rounded text-sm overflow-auto text-gray-800">{decryptedData}</pre>
+                <div className="space-y-4">
+                  <div>
+                    <p className="font-medium mb-1 text-gray-700">Decrypted Credential:</p>
+                    <pre className="p-4 bg-gray-100 rounded text-sm overflow-auto text-gray-800">{decryptedData}</pre>
+                  </div>
+                  
+                  {/* FIX: Added missing import step */}
+                  {!isSaved ? (
+                    <button 
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors w-full"
+                      onClick={handleSaveCredential}
+                    >
+                      Save & Import Credential
+                    </button>
+                  ) : (
+                    <p className="text-green-600 font-medium text-center">✓ Credential successfully imported to device!</p>
+                  )}
                 </div>
               )}
             </div>
