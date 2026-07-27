@@ -172,10 +172,10 @@ impl ProofRegistry {
     /// Verify a proof and, if valid, cache it for `holder` until `expiry`
     /// (ledger timestamp, seconds). The holder authorizes their own submission.
     /// `issuer_id` must be registered and trusted for `credential_type`.
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here. 
-    // The idiomatic Soroban v26 replacement is to define a typed event struct using the 
-    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the 
-    // value-based `publish` API, we maintain consistency with other modules to avoid 
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is to define a typed event struct using the
+    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the
+    // value-based `publish` API, we maintain consistency with other modules to avoid
     // introducing architectural mismatch.
     #[allow(deprecated)]
     pub fn submit_proof(
@@ -232,10 +232,10 @@ impl ProofRegistry {
 
     /// One event is emitted per successfully verified credential, matching
     /// the event emission shape in the single-proof path.
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here. 
-    // The idiomatic Soroban v26 replacement is to define a typed event struct using the 
-    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the 
-    // value-based `publish` API, we maintain consistency with other modules to avoid 
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is to define a typed event struct using the
+    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the
+    // value-based `publish` API, we maintain consistency with other modules to avoid
     // introducing architectural mismatch.
     #[allow(deprecated)]
     pub fn submit_proofs_batch(env: Env, holder: Address, submissions: Vec<ProofSubmission>) {
@@ -340,6 +340,23 @@ impl ProofRegistry {
             }
             None => (false, 0, 0),
         }
+    }
+
+    /// Returns the expiry (ledger timestamp, seconds) for `holder`'s cached
+    /// proof of `credential_type`, or 0 if no proof is on record. Reflects
+    /// the stored value regardless of `revoked` status or lapse, mirroring
+    /// `is_verified`'s returned `expiry`. Reading extends the entry's TTL
+    /// the same way `submit_proof` does, so an idle credential isn't evicted
+    /// before a holder gets a chance to see it needs renewal.
+    pub fn claim_expiry(env: Env, holder: Address, credential_type: Symbol) -> u64 {
+        let key = DataKey::Proof(holder, credential_type);
+        let record = env.storage().persistent().get::<_, ProofRecord>(&key);
+        if record.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+        }
+        record.map(|r| r.expiry).unwrap_or(0)
     }
 
     /// Like `is_verified` but also enforces a minimum threshold for parameterised
