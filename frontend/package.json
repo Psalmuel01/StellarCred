@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",`n    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aztec/bb.js": "0.87.0",
@@ -33,3 +33,4 @@
     "typescript": "^5"
   }
 }
+
