@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { decryptPayload } from '@/lib/cryptos';
 
 export default function VerifyPage() {
+  const router = useRouter();
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [passphrase, setPassphrase] = useState('');
@@ -14,12 +16,23 @@ export default function VerifyPage() {
   const handleScan = (data: string | null) => {
     if (data && !scanResult) {
       setScanResult(data);
-      // CryptoJS AES encrypted strings typically start with "U2FsdGVkX1"
-      if (data.startsWith('U2FsdGVkX1')) {
-        setIsEncrypted(true);
-      } else {
-        // Handle deep link routing here (e.g., router.push(data))
-        console.log('Deep link scanned:', data);
+      // Check for structured encrypted JSON envelope
+      try {
+        const envelope = JSON.parse(data);
+        if (envelope.encrypted && envelope.ciphertext) {
+          setIsEncrypted(true);
+          return;
+        }
+      } catch {
+        // Not JSON, proceed to deep link handling
+      }
+      
+      // Navigate to the scanned deep link
+      try {
+        const url = new URL(data);
+        router.push(url.pathname + url.search);
+      } catch {
+        setError('Invalid deep link format.');
       }
     }
   };
