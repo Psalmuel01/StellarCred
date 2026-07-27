@@ -49,7 +49,7 @@ jobs:
 
       - name: Install Barretenberg
         run: |
-          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/cpp/installation/install | bash
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/barretenberg-v0.87.0/barretenberg/cpp/installation/install | bash
           echo "$HOME/.bb/bin" >> $GITHUB_PATH
           source $HOME/.bashrc || true
           bbup -v 0.87.0

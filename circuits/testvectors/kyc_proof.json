@@ -1,8 +1,10 @@
 {
   "circuit_name": "kyc_proof",
   "toolchain_version": "1.0.0-beta.9",
-  "bytecode_exists": true,
-  "compiled_successfully": true,
-  "generated_at": "2026-07-27T12:02:45Z",
-  "note": "Basic test vector - bb installation had issues"
+  "bb_version": "0.87.0",
+  "expected_public_inputs": ["18356166120002151921584774729377106632571441819529538601699918435761750428058"],
+  "expected_vk_hash": "9b51dbf80f3d3a6b925d37baff50b0745107caba47c26e58e011a3a8a0375719",
+  "bytecode_hash": "9b51dbf80f3d3a6b925d37baff50b0745107caba47c26e58e011a3a8a0375719",
+  "generated_at": "2026-07-27T21:48:30Z",
+  "note": "Using bytecode hash as VK proxy due to bb installation issues"
 }

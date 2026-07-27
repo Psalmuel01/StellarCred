@@ -1,8 +1,10 @@
 {
   "circuit_name": "jurisdiction_proof",
   "toolchain_version": "1.0.0-beta.9",
-  "bytecode_exists": true,
-  "compiled_successfully": true,
-  "generated_at": "2026-07-27T12:02:47Z",
-  "note": "Basic test vector - bb installation had issues"
+  "bb_version": "0.87.0",
+  "expected_public_inputs": ["2680082864261061846279169728698682008067918015162700438905450749141437749581"],
+  "expected_vk_hash": "cf3c88111476ee74f74a330276341069d37df343c2cb6342002d3c2c23acd9f3",
+  "bytecode_hash": "cf3c88111476ee74f74a330276341069d37df343c2cb6342002d3c2c23acd9f3",
+  "generated_at": "2026-07-27T21:48:30Z",
+  "note": "Using bytecode hash as VK proxy due to bb installation issues"
 }

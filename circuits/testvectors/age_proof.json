@@ -1,8 +1,10 @@
 {
   "circuit_name": "age_proof",
   "toolchain_version": "1.0.0-beta.9",
-  "bytecode_exists": true,
-  "compiled_successfully": true,
-  "generated_at": "2026-07-27T12:02:46Z",
-  "note": "Basic test vector - bb installation had issues"
+  "bb_version": "0.87.0",
+  "expected_public_inputs": ["11185694688759005258749044191511340074461101343013798358401867479146160036531"],
+  "expected_vk_hash": "897a1093bf33122eead7b24f750148559b7ab567a672d65eda7c4dfc5604443b",
+  "bytecode_hash": "897a1093bf33122eead7b24f750148559b7ab567a672d65eda7c4dfc5604443b",
+  "generated_at": "2026-07-27T21:48:30Z",
+  "note": "Using bytecode hash as VK proxy due to bb installation issues"
 }

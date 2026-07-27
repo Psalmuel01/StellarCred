@@ -117,10 +117,10 @@ verify_test_vector() {
   
   if [ "$vk_match" = true ] && [ "$inputs_match" = true ]; then
     echo "✓ PASS: $circuit_name"
-    ((successes++))
+    ((++successes))
   else
     echo "✗ FAIL: $circuit_name"
-    ((failures++))
+    ((++failures))
     
     if [ "$vk_match" = false ]; then
       echo "  VK hash mismatch:"
