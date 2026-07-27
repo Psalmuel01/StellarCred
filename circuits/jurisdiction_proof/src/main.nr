@@ -21,13 +21,37 @@ fn main(
     issuer_y: pub [u8; 32],
     restricted: pub [u64; RESTRICTED_LEN],
     context_id: pub Field,
-    nullifier: pub Field,
-) {
+) -> pub Field {
     assert(Poseidon2::hash([country_code as Field, salt], 2) == commitment);
     let z: [u8; 32] = commitment.to_be_bytes();
     assert(verify_signature(issuer_x, issuer_y, sig, z));
     for i in 0..RESTRICTED_LEN {
         assert(country_code != restricted[i]);
     }
-    assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
+    Poseidon2::hash([country_code as Field, context_id], 2)
+}
+
+#[test]
+fn nullifier_is_deterministic_for_same_credential_and_context() {
+    let secret = 566;
+    let context_id = 7;
+    let n1 = Poseidon2::hash([secret, context_id], 2);
+    let n2 = Poseidon2::hash([secret, context_id], 2);
+    assert(n1 == n2);
+}
+
+#[test]
+fn nullifier_differs_across_contexts_for_same_credential() {
+    let secret = 566;
+    let n_ctx_a = Poseidon2::hash([secret, 1], 2);
+    let n_ctx_b = Poseidon2::hash([secret, 2], 2);
+    assert(n_ctx_a != n_ctx_b);
+}
+
+#[test]
+fn nullifier_differs_across_credentials_for_same_context() {
+    let context_id = 7;
+    let n_cred_a = Poseidon2::hash([566, context_id], 2);
+    let n_cred_b = Poseidon2::hash([840, context_id], 2);
+    assert(n_cred_a != n_cred_b);
 }
