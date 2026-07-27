@@ -11,7 +11,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
-    Symbol, Vec,
+    String, Symbol, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -33,11 +33,20 @@ pub struct Issuer {
 }
 
 #[contracttype]
+#[derive(Clone)]
+pub struct IssuerMetadata {
+    pub name: Option<String>,
+    pub url: Option<String>,
+    pub logo: Option<String>,
+}
+
+#[contracttype]
 pub enum DataKey {
     Admin,
     Issuer(Address),
     /// Append-only list of registered issuer addresses for enumeration.
     IssuerList,
+    IssuerMetadata(Address),
 }
 
 #[contracterror]
@@ -134,6 +143,31 @@ impl IssuerRegistry {
             Some(issuer) => !issuer.revoked && issuer.credential_types.contains(&credential_type),
             None => false,
         }
+    }
+
+    /// Set optional on-chain metadata (name, url, logo) for an issuer.
+    /// Admin-only. Pass `None` for fields you don't want to set.
+    pub fn set_issuer_metadata(
+        env: Env,
+        issuer: Address,
+        name: Option<String>,
+        url: Option<String>,
+        logo: Option<String>,
+    ) {
+        Self::require_admin(&env);
+        let metadata = IssuerMetadata { name, url, logo };
+        let key = DataKey::IssuerMetadata(issuer.clone());
+        env.storage().persistent().set(&key, &metadata);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, BUMP_THRESHOLD, ENTRY_TTL);
+    }
+
+    /// Read the optional on-chain metadata for an issuer.
+    /// Returns `None` if no metadata has been set.
+    pub fn get_issuer_metadata(env: Env, issuer: Address) -> Option<IssuerMetadata> {
+        let key = DataKey::IssuerMetadata(issuer);
+        env.storage().persistent().get(&key)
     }
 
     pub fn admin(env: Env) -> Address {

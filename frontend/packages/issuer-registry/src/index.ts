@@ -59,6 +59,15 @@ pubkey: Buffer;
   revoked: boolean;
 }
 
+/**
+ * Optional on-chain metadata for issuer discovery (name, url, logo).
+ */
+export interface IssuerMetadata {
+  name?: string;
+  url?: string;
+  logo?: string;
+}
+
 export type DataKey = {tag: "Admin", values: void} | {tag: "Issuer", values: readonly [string]};
 
 export interface Client {
@@ -92,6 +101,18 @@ export interface Client {
    * Look up an issuer's credential-signing public key (secp256k1 x || y).
    */
   get_issuer_pubkey: ({issuer_id}: {issuer_id: string}, options?: MethodOptions) => Promise<AssembledTransaction<Buffer>>
+
+  /**
+   * Construct and simulate a set_issuer_metadata transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Set optional on-chain metadata (name, url, logo) for an issuer. Admin-only.
+   */
+  set_issuer_metadata: ({issuer, name, url, logo}: {issuer: string, name?: string | null, url?: string | null, logo?: string | null}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+
+  /**
+   * Construct and simulate a get_issuer_metadata transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Read the optional on-chain metadata for an issuer. Returns None if no metadata has been set.
+   */
+  get_issuer_metadata: ({issuer}: {issuer: string}, options?: MethodOptions) => Promise<AssembledTransaction<IssuerMetadata | null>>
 
 }
 export class Client extends ContractClient {
@@ -130,6 +151,8 @@ export class Client extends ContractClient {
         revoke_issuer: this.txFromJSON<null>,
         is_valid_issuer: this.txFromJSON<boolean>,
         register_issuer: this.txFromJSON<null>,
-        get_issuer_pubkey: this.txFromJSON<Buffer>
+        get_issuer_pubkey: this.txFromJSON<Buffer>,
+        set_issuer_metadata: this.txFromJSON<null>,
+        get_issuer_metadata: this.txFromJSON<IssuerMetadata | null>
   }
 }
