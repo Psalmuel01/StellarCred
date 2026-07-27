@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { encryptPayload } from '../../lib/cryptos';
 
@@ -10,10 +10,13 @@ export default function TransferPage() {
   const [encryptedQrData, setEncryptedQrData] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Generate the unencrypted verify deep-link
-  // In a real app, returnUrl and claimType would be dynamic
-  const verifyDeepLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/verify?claimType=ProofOfHumanity&returnUrl=/success`;
+  const [verifyDeepLink, setVerifyDeepLink] = useState('');
 
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setVerifyDeepLink(`${window.location.origin}/verify?claimType=ProofOfHumanity&returnUrl=/success`);
+  }
+}, []);
   const handleGenerateTransferQR = async () => {
     setError(null);
     if (!credentialData || !passphrase) {

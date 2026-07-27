@@ -15,8 +15,6 @@ export default function VerifyPage() {
   const handleScan = (data: string | null) => {
     if (data && !scanResult) {
       setScanResult(data);
-      // CryptoJS AES encrypted strings typically start with "U2FsdGVkX1" (old format)
-      // Native WebCrypto Base64 might vary, but we assume any non-URL string is encrypted
       if (!data.startsWith('http') && !data.startsWith('/')) {
         setIsEncrypted(true);
       } else {
@@ -25,7 +23,6 @@ export default function VerifyPage() {
     }
   };
 
-  // FIX: Made async to support Web Crypto API
   const handleDecrypt = async () => {
     setError(null);
     try {
@@ -37,11 +34,25 @@ export default function VerifyPage() {
     }
   };
 
-  // FIX: Added function to actually save/import the credential
   const handleSaveCredential = () => {
     if (decryptedData) {
-      localStorage.setItem('stellarcred_credentials', decryptedData);
-      setIsSaved(true);
+      try {
+        const storageKey = 'stellarcred:credentials';
+        const existing = localStorage.getItem(storageKey);
+        let credArray = [];
+        
+        if (existing) {
+          credArray = JSON.parse(existing);
+        }
+        
+        credArray.push(JSON.parse(decryptedData));
+        
+        localStorage.setItem(storageKey, JSON.stringify(credArray));
+        setIsSaved(true);
+        setError(null);
+      } catch (e) {
+        setError('Failed to save credential. Invalid format.');
+      }
     }
   };
 
@@ -65,7 +76,7 @@ export default function VerifyPage() {
               onScan={(result) => handleScan(result?.[0]?.rawValue ?? null)}
               onError={(err) => setError(err.message)}
               constraints={{ facingMode: 'environment' }}
-             classNames={{ container: 'w-full h-full' }}
+              classNames={{ container: 'w-full h-full' }}
             />
           </div>
           {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
@@ -99,7 +110,6 @@ export default function VerifyPage() {
                     <pre className="p-4 bg-gray-100 rounded text-sm overflow-auto text-gray-800">{decryptedData}</pre>
                   </div>
                   
-                  {/* FIX: Added missing import step */}
                   {!isSaved ? (
                     <button 
                       className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors w-full"

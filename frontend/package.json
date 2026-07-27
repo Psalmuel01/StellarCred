@@ -24,7 +24,6 @@
     "@yudiel/react-qr-scanner": "^2.6.0",
     "blakejs": "^1.2.1",
     "buffer": "^6.0.3",
-    "crypto-js": "^4.2.0",
     "next": "14.2.15",
     "pino": "^10.3.1",
     "process": "^0.11.10",
@@ -33,7 +32,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/crypto-js": "^4.2.2",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
