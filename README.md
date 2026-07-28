@@ -197,7 +197,22 @@ full reference.
    result. Identity fields are sent once to the provider and never stored.
 4. **Proof expiry.** `ProofRegistry` uses persistent storage with an explicit
    `expiry` (checked against ledger time) plus TTL extension.
-5. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
+5. **Rent and archival.** Soroban persistent entries carry their own TTL,
+   separate from `expiry` — an entry whose TTL reaches zero is archived
+   (evicted from live state) regardless of whether the credential it caches
+   is still valid. `submit_proof` / `submit_proofs_batch` extend a proof's
+   TTL to cover at least its `expiry` (converted from a ledger timestamp to a
+   ledger count, capped at the network's max allowed entry TTL — currently
+   ~1 year on mainnet), so a long-lived credential doesn't outlive its
+   storage. Because that cap can be shorter than a credential's remaining
+   lifetime, `bump_claim(holder, credential_type)` is exposed as a
+   permissionless entry point — no `require_auth` — that anyone (the holder,
+   a relying protocol, or unrelated rent-keeper automation) can call to top
+   up a still-valid claim's TTL without resubmitting a proof. See the
+   "Rent and archival" doc comment at the top of
+   [`contracts/proof_registry/src/lib.rs`](contracts/proof_registry/src/lib.rs)
+   for the full model.
+6. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
 
 ---
 

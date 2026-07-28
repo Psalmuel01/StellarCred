@@ -13,15 +13,66 @@
 //! `submit_proofs_batch` accepts up to 5 `ProofSubmission` entries and verifies
 //! and stores all of them atomically: if any single proof fails the entire call
 //! reverts, saving the holder from multiple wallet confirmations and fee payments.
+//!
+//! ## Rent and archival
+//!
+//! Soroban persistent storage isn't free forever: every entry has a TTL
+//! (time-to-live), expressed as a number of ledgers, not a wall-clock
+//! duration. Once an entry's TTL reaches zero it is "archived" — evicted from
+//! the live ledger state — and any read of it fails until someone pays to
+//! restore it. A `ProofRecord` that gets archived while its credential is
+//! still logically valid would make `is_verified` / `check_claim` behave as
+//! if the holder had never proved anything, even though nothing about the
+//! proof itself changed.
+//!
+//! `expiry` (the field on `ProofRecord`) and TTL are two independent clocks:
+//! `expiry` is a ledger *timestamp* (seconds) the contract compares against
+//! `env.ledger().timestamp()` to decide whether a claim is still valid;
+//! TTL is a ledger *count* the network uses to decide whether the entry is
+//! still resident at all. A record can be logically valid (`expiry` in the
+//! future) yet physically gone (TTL hit zero) — that's the failure mode this
+//! module guards against:
+//!
+//! - `submit_proof` / `submit_proofs_batch` extend the entry's TTL to cover
+//!   at least `expiry` (translated from seconds to ledgers via
+//!   `ttl_for_expiry`), not just a fixed default — a long-lived credential
+//!   (e.g. a 1-year expiry) gets a TTL long enough to actually survive to
+//!   its own expiry, bounded by the network's max allowed entry TTL
+//!   (`env.storage().max_ttl()`; currently ~1 year on Stellar mainnet, so a
+//!   sufficiently long-lived credential's proof entry may still need
+//!   periodic top-ups — see `bump_claim` below).
+//! - `bump_claim` is a permissionless entry point — no `require_auth`, since
+//!   topping up rent benefits the holder and costs the caller only gas, not
+//!   the holder's assets or authority — that anyone (the holder, the
+//!   protocol relying on the claim, or unrelated rent-keeper automation) can
+//!   call to refresh a still-valid claim's TTL without resubmitting a proof.
+//!   This matters because the ledger-per-second conversion `ttl_for_expiry`
+//!   uses is an approximation (`SECONDS_PER_LEDGER`), and because the
+//!   network's max entry TTL can itself be shorter than a credential's
+//!   remaining lifetime, requiring a later top-up as the ledger advances.
+//! - `extend_ttl`'s `threshold` parameter (`PROOF_BUMP_THRESHOLD`) means both
+//!   paths are no-ops once the entry already has enough TTL headroom — so
+//!   calling `bump_claim` speculatively, or resubmitting a proof early, never
+//!   wastes a network write.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
     symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
-// Persistent-entry lifetime management (~5s ledgers).
-const DAY_IN_LEDGERS: u32 = 17280;
+// Persistent-entry lifetime management. Ledgers close roughly every 5
+// seconds on Stellar — used only to translate a credential's `expiry` (a
+// wall-clock ledger *timestamp*, seconds) into the ledger *count* delta
+// `extend_ttl` expects. This is an approximation, not a network guarantee;
+// `bump_claim` exists so a claim's TTL can be topped up later if the
+// estimate runs short before the credential itself expires.
+const SECONDS_PER_LEDGER: u64 = 5;
+const DAY_IN_LEDGERS: u32 = (86_400 / SECONDS_PER_LEDGER) as u32;
 const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
+// Floor TTL applied on every submission, independent of `expiry` — keeps a
+// short-lived claim's entry (and, on `revoke`, its revocation tombstone)
+// resident for a reasonable minimum window even when the credential itself
+// expires sooner than that.
 const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
 
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
@@ -118,6 +169,9 @@ pub enum Error {
     /// Two or more submissions in the batch share the same `credential_type`;
     /// only the last write would survive, so the batch is rejected outright.
     DuplicateCredentialType = 9,
+    /// `bump_claim` was called for a claim that exists but is no longer
+    /// valid (revoked or expired) — there is nothing worth keeping alive.
+    ClaimNotValid = 10,
 }
 
 #[contract]
@@ -219,9 +273,11 @@ impl ProofRegistry {
             issuer: Some(issuer_id),
         };
         env.storage().persistent().set(&key, &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PROOF_BUMP_THRESHOLD,
+            Self::ttl_for_expiry(&env, expiry),
+        );
 
         // Emit an event matching the event emission shape in the batch-proof path.
         env.events().publish(
@@ -299,9 +355,11 @@ impl ProofRegistry {
                 issuer: Some(sub.issuer_id.clone()),
             };
             env.storage().persistent().set(&key, &record);
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+            env.storage().persistent().extend_ttl(
+                &key,
+                PROOF_BUMP_THRESHOLD,
+                Self::ttl_for_expiry(&env, sub.expiry),
+            );
 
             // Emit one event per credential, matching the shape callers already
             // expect from the single-proof path.
@@ -432,6 +490,38 @@ impl ProofRegistry {
         );
     }
 
+    /// Top up the TTL of a still-valid claim so its `ProofRecord` doesn't get
+    /// archived while the credential it caches remains valid. Permissionless
+    /// by design — no `require_auth` — since extending storage rent costs
+    /// only the caller's transaction fee and cannot affect the holder's
+    /// claim in any other way; anyone (the holder, a relying protocol, or
+    /// unrelated rent-keeper automation) can call this to keep a claim alive.
+    /// See the module-level "Rent and archival" doc for why this is needed
+    /// even though `submit_proof` already extends the TTL on write.
+    ///
+    /// Panics with `ProofNotFound` if there's no claim for `(holder,
+    /// credential_type)`, or `ClaimNotValid` if one exists but is revoked or
+    /// past its `expiry` — bumping rent for a claim nothing should be
+    /// trusting anymore would just waste the caller's fee.
+    pub fn bump_claim(env: Env, holder: Address, credential_type: Symbol) {
+        let key = DataKey::Proof(holder, credential_type);
+        let record: ProofRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
+
+        if record.revoked || record.expiry <= env.ledger().timestamp() {
+            panic_with_error!(&env, Error::ClaimNotValid);
+        }
+
+        env.storage().persistent().extend_ttl(
+            &key,
+            PROOF_BUMP_THRESHOLD,
+            Self::ttl_for_expiry(&env, record.expiry),
+        );
+    }
+
     pub fn verifier_address(env: Env) -> Address {
         Self::verifier(&env)
     }
@@ -484,6 +574,23 @@ impl ProofRegistry {
             }
         }
         true
+    }
+
+    /// Ledger-count TTL that covers `expiry` (a ledger timestamp, seconds),
+    /// with a day of headroom so the entry doesn't archive right at the
+    /// moment the credential itself expires, floored at `PROOF_TTL` (so a
+    /// short-lived credential's entry still gets a reasonable minimum
+    /// residency) and capped at the network's max allowed entry TTL — see
+    /// the module-level "Rent and archival" doc.
+    fn ttl_for_expiry(env: &Env, expiry: u64) -> u32 {
+        let now = env.ledger().timestamp();
+        let seconds_remaining = expiry.saturating_sub(now);
+        let ledgers_remaining = seconds_remaining / SECONDS_PER_LEDGER;
+        let desired = ledgers_remaining
+            .saturating_add(DAY_IN_LEDGERS as u64)
+            .max(PROOF_TTL as u64);
+        let max_ttl = env.storage().max_ttl() as u64;
+        desired.min(max_ttl) as u32
     }
 
     fn verifier(env: &Env) -> Address {
