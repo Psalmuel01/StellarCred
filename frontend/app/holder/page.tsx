@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -63,6 +64,52 @@ function daysRemaining(cred: Credential): number {
   if (!cred.provedAt) return 0;
   const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
   return Math.max(0, Math.ceil(secsLeft / 86_400));
+}
+
+// ── Empty State ────────────────────────────────────────────────────────────────
+
+function EmptyState() {
+  return (
+    <div className="card empty-state" role="status" aria-label="No credentials">
+      <div className="empty-state__illustration" aria-hidden="true">
+        <svg
+          viewBox="0 0 120 120"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          width="96"
+          height="96"
+        >
+          {/* Outer hexagon-like shape */}
+          <path
+            d="M60 10 L100 25 L100 55 L60 70 L20 55 L20 25 Z"
+            stroke="var(--border)"
+            strokeWidth="2"
+            fill="none"
+          />
+          {/* Inner accent shape */}
+          <path
+            d="M60 28 L88 38 L88 58 L60 68 L32 58 L32 38 Z"
+            fill="var(--accent-soft)"
+            stroke="var(--accent)"
+            strokeWidth="1.5"
+          />
+          {/* Center accent dot */}
+          <circle cx="60" cy="48" r="8" fill="var(--accent)" />
+          {/* Subtle corner accents */}
+          <circle cx="32" cy="38" r="2.5" fill="var(--border)" />
+          <circle cx="88" cy="38" r="2.5" fill="var(--border)" />
+          <circle cx="60" cy="68" r="2.5" fill="var(--border)" />
+        </svg>
+      </div>
+      <h2 className="empty-state__title">No credentials yet</h2>
+      <p className="empty-state__text">
+        Get your first credential to start generating proofs.
+      </p>
+      <Link href="/verify" className="btn btn-primary empty-state__cta">
+        Get a credential →
+      </Link>
+    </div>
+  );
 }
 
 // ── Credential card ──────────────────────────────────────────────────────────
@@ -260,23 +307,7 @@ export default function HolderPage() {
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
 
           {/* ── Empty state ── */}
-          {creds.length === 0 && !importing && (
-            <div
-              className="card"
-              style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
-            >
-              <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
-              <h3 style={{ margin: "1rem 0 0.4rem" }}>No credentials yet</h3>
-              <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 340, margin: "0 auto 1.5rem" }}>
-                Get a credential from a trusted issuer, then generate a
-                zero-knowledge proof to verify it on-chain.
-              </p>
-              <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
-                Get a credential
-                <IconArrowRight size={14} />
-              </a>
-            </div>
-          )}
+          {creds.length === 0 && !importing && <EmptyState />}
 
           {/* ── Credentials to prove ── */}
           {unproved.length > 0 && (
