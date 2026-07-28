@@ -28,7 +28,7 @@ fn main(
     for i in 0..RESTRICTED_LEN {
         assert(country_code != restricted[i]);
     }
-    Poseidon2::hash([country_code as Field, context_id], 2)
+    Poseidon2::hash([salt, context_id], 2)
 }
 
 #[test]
