@@ -474,6 +474,48 @@ p {
   background: rgba(62, 207, 142, 0.1);
 }
 
+/* ---- Empty State ------------------------------------------------------------ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 3.5rem 2rem;
+  gap: 1.25rem;
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.empty-state__illustration {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.empty-state__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state__text {
+  margin: 0;
+  max-width: 340px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.empty-state__cta {
+  margin-top: 0.5rem;
+  width: 100%;
+  max-width: 280px;
+}
+
 /* ---- Card ------------------------------------------------------------------- */
 
 .card {
