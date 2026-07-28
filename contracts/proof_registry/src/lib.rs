@@ -19,6 +19,19 @@ use soroban_sdk::{
     symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
+DuplicateCredentialType = 9,
+
+/// A nullifier for this context has already been recorded — the same
+    /// underlying credential is being reused where the caller asked this
+    /// call to prevent that.
+    NullifierAlreadyUsed = 10,
++    
+
+/// Cached verification, keyed by (holder, credential_type).
+     Proof(Address, Symbol),
++    /// Marks a (context_id, nullifier) pair as seen, for Sybil detection.
++    Nullifier(BytesN<32>, BytesN<32>),
+
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
 const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
@@ -46,6 +59,17 @@ pub trait IssuerRegistryInterface {
 // commitment, fields 1..33 are issuer_x bytes (one byte per field, in the low
 // byte), fields 33..65 are issuer_y bytes. The signed public key therefore
 // occupies bytes 32..2080 of `public_inputs`.
+//
+// Nullifier support (Issue #79): every credential circuit now takes
+// `context_id: pub Field` as its final parameter and returns the nullifier
+// (`Poseidon2([secret, context_id], 2)`) as its public return value. Noir's
+// ABI always appends the public return value after all public parameters,
+// so regardless of how many circuit-specific public params a given
+// credential type has (threshold, current_date, restricted list, ...):
+//   - context_id is always the second-to-last 32-byte field
+//   - the nullifier is always the LAST 32-byte field
+// This is why context_id/nullifier extraction below uses `public_inputs.len()`
+// instead of a hardcoded per-type offset like `extract_threshold` does.
 const PUBKEY_START_FIELD: u32 = 1;
 const FIELD_BYTES: u32 = 32;
 
@@ -97,6 +121,12 @@ pub enum DataKey {
     IssuerRegistry,
     /// Cached verification, keyed by (holder, credential_type).
     Proof(Address, Symbol),
+
+    /// Presence marker for a seen nullifier. The nullifier itself already
+    /// encodes its context (Poseidon2([secret, context_id], 2)), so no
+    /// separate context dimension is needed here — two different context_id
+    /// values can never collide for the same secret.
+    Nullifier(BytesN<32>),
 }
 
 #[contracterror]
@@ -118,6 +148,8 @@ pub enum Error {
     /// Two or more submissions in the batch share the same `credential_type`;
     /// only the last write would survive, so the batch is rejected outright.
     DuplicateCredentialType = 9,
+    /// A nullifier already recorded for this context_id was resubmitted.
+    NullifierAlreadyUsed = 10,
 }
 
 #[contract]
@@ -229,6 +261,55 @@ impl ProofRegistry {
             record.expiry,
         );
     }
+
+    /// Like `submit_proof`, but additionally enforces nullifier-based
+    /// Sybil-resistance for protocols that opt in (Issue #79): rejects the
+    /// call if this exact credential has already submitted a proof for this
+    /// exact `context_id` (i.e. the nullifier extracted from `public_inputs`
+    /// has been seen before). Nullifiers persist independently of proof
+    /// expiry/revocation — reuse detection is permanent by design, since the
+    /// whole point is "this credential was already used here."
+    ///
+    /// Existing callers are unaffected: this is a new function, not a change
+    /// to `submit_proof`'s signature, so protocols that don't need
+    /// Sybil-resistance keep working exactly as before.
+    #[allow(deprecated)]
+    pub fn submit_proof_with_nullifier(
+        env: Env,
+        holder: Address,
+        issuer_id: Address,
+        credential_type: Symbol,
+        proof: Bytes,
+        public_inputs: Bytes,
+        expiry: u64,
+    ) {
+        let nullifier = Self::extract_nullifier(&public_inputs);
+        let key = DataKey::Nullifier(nullifier.clone());
+        if env.storage().persistent().has(&key) {
+            panic_with_error!(&env, Error::NullifierAlreadyUsed);
+        }
+
+        Self::submit_proof(
+            env.clone(),
+            holder,
+            issuer_id,
+            credential_type,
+            proof,
+            public_inputs,
+            expiry,
+        );
+
+        env.storage().persistent().set(&key, &());
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+
+        env.events()
+            .publish((symbol_short!("nullifr"),), nullifier);
+    }
+
+
+    
 
     /// One event is emitted per successfully verified credential, matching
     /// the event emission shape in the single-proof path.
@@ -462,6 +543,18 @@ impl ProofRegistry {
         }
     }
 
+    /// The nullifier is always the last 32-byte field of `public_inputs`
+    /// (Noir appends the public return value after all public parameters).
+    fn extract_nullifier(public_inputs: &Bytes) -> BytesN<32> {
+        let len = public_inputs.len();
+        let slice = public_inputs.slice(len - FIELD_BYTES..len);
+        let mut arr = [0u8; 32];
+        for i in 0..32u32 {
+            arr[i as usize] = slice.get(i).unwrap_or(0);
+        }
+        BytesN::from_array(public_inputs.env(), &arr)
+    }
+
     /// Read a big-endian u64 from the last 8 bytes of a 32-byte field element.
     fn read_u64_field(public_inputs: &Bytes, field_index: u32) -> u64 {
         let base = field_index * FIELD_BYTES;
@@ -486,7 +579,80 @@ impl ProofRegistry {
         true
     }
 
-    fn verifier(env: &Env) -> Address {
+    /// Reads (context_id, nullifier) from the two 32-byte fields appended
+    /// after each credential type's existing public inputs.
+    fn extract_nullifier(
+        env: &Env,
+        public_inputs: &Bytes,
+        credential_type: &Symbol,
+    ) -> Option<(BytesN<32>, BytesN<32>)> {
+        let ctx_field = if *credential_type == symbol_short!("kyc") {
+            65
+        } else if *credential_type == symbol_short!("age") {
+            67
+        } else if *credential_type == symbol_short!("income")
+            || *credential_type == symbol_short!("funds")
+            || *credential_type == Symbol::new(env, "accreditation")
+        {
+            66
+        } else if *credential_type == Symbol::new(env, "jurisdiction") {
+            73
+        } else {
+            return None;
+        };
+       let context_id = Self::read_field_bytes(env, public_inputs, ctx_field);
+        let nullifier = Self::read_field_bytes(env, public_inputs, ctx_field + 1);
+
+        
+        Some((context_id, nullifier))
+    }
+
+   fn read_field_bytes(env: &Env, public_inputs: &Bytes, field_index: u32) -> BytesN<32> {
+        let base = field_index * FIELD_BYTES;
+        let mut arr = [0u8; 32];
+        for i in 0..32u32 {
+            arr[i as usize] = public_inputs.get(base + i).unwrap_or(0);
+        }
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Like `submit_proof`, but additionally enforces Sybil-resistance:
+    /// rejects if this proof's (context_id, nullifier) pair was already seen.
+    pub fn submit_proof_with_context(
+        env: Env,
+        holder: Address,
+        issuer_id: Address,
+        credential_type: Symbol,
+        proof: Bytes,
+        public_inputs: Bytes,
+        expiry: u64,
+    ) {
+        let (context_id, nullifier) =
+            Self::extract_nullifier(&env, &public_inputs, &credential_type)
+                .unwrap_or_else(|| panic_with_error!(&env, Error::VerificationFailed));
+
+        let null_key = DataKey::Nullifier(context_id, nullifier);
+        if env.storage().persistent().has(&null_key) {
+            panic_with_error!(&env, Error::NullifierAlreadyUsed);
+        }
+
+        Self::submit_proof(
+            env.clone(),
+            holder,
+            issuer_id,
+            credential_type,
+            proof,
+            public_inputs,
+            expiry,
+        );
+
+        env.storage().persistent().set(&null_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&null_key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+    }
+    
+    fn verifier(env: &Env) -> Address { 
         env.storage()
             .instance()
             .get(&DataKey::Verifier)

@@ -18,26 +18,56 @@ commit() { # value salt -> canonical decimal commitment
 
 echo "kyc_proof..."
 C=$(commit 42 7)
-{ echo "secret = \"42\""; echo "salt = \"7\""; echo "commitment = \"$C\""; node "$SCRIPTS/sign.js" "$C"; } \
+CTX=1001
+N=$(commit 7 "$CTX")
+{ echo "secret = \"42\""; echo "salt = \"7\""; echo "commitment = \"$C\""; \
+  echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/kyc_proof/Prover.toml"
 
 echo "age_proof..."
 C=$(commit 3650 12345)
+CTX=1002
+N=$(commit 12345 "$CTX")
 { echo "date_of_birth = \"3650\""; echo "salt = \"12345\""; echo "commitment = \"$C\""; \
-  echo "current_date = \"20000\""; echo "threshold_years = \"18\""; node "$SCRIPTS/sign.js" "$C"; } \
+  echo "current_date = \"20000\""; echo "threshold_years = \"18\""; \
+  echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/age_proof/Prover.toml"
 
 echo "income_proof..."
 C=$(commit 250000 99)
+CTX=1003
+N=$(commit 99 "$CTX")
 { echo "income = \"250000\""; echo "salt = \"99\""; echo "commitment = \"$C\""; \
-  echo "threshold = \"200000\""; node "$SCRIPTS/sign.js" "$C"; } \
+  echo "threshold = \"200000\""; echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; \
+  node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/income_proof/Prover.toml"
 
 echo "jurisdiction_proof..."
 C=$(commit 566 77)
+CTX=1004
+N=$(commit 77 "$CTX")
 { echo "country_code = \"566\""; echo "salt = \"77\""; echo "commitment = \"$C\""; \
-  echo "restricted = [\"840\", \"364\", \"408\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; node "$SCRIPTS/sign.js" "$C"; } \
+  echo "restricted = [\"840\", \"364\", \"408\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; \
+  echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/jurisdiction_proof/Prover.toml"
+
+echo "funds_proof..."
+C=$(commit 500000 55)
+CTX=1005
+N=$(commit 55 "$CTX")
+{ echo "balance = \"500000\""; echo "salt = \"55\""; echo "commitment = \"$C\""; \
+  echo "threshold = \"100000\""; echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; \
+  node "$SCRIPTS/sign.js" "$C"; } \
+  > "$ROOT/funds_proof/Prover.toml"
+
+echo "accreditation_proof..."
+C=$(commit 2000000 88)
+CTX=1006
+N=$(commit 88 "$CTX")
+{ echo "net_worth = \"2000000\""; echo "salt = \"88\""; echo "commitment = \"$C\""; \
+  echo "threshold = \"1000000\""; echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; \
+  node "$SCRIPTS/sign.js" "$C"; } \
+  > "$ROOT/accreditation_proof/Prover.toml"
 
 echo "done. demo issuer public key:"
 node "$SCRIPTS/sign.js" --pubkey
