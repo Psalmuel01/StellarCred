@@ -15,6 +15,18 @@ const DEMO_SK_HEX =
   process.env.ISSUER_PRIVATE_KEY ||
   Buffer.from(sha256(new TextEncoder().encode("stellarcred-demo-issuer"))).toString("hex");
 
+// Emit a prominent warning when running in demo key mode.
+if (!process.env.ISSUER_PRIVATE_KEY) {
+  console.warn(
+    "\n" +
+    "=".repeat(72) + "\n" +
+    "  WARNING: USING PUBLIC DEMO ISSUER KEY — not for production\n" +
+    "  Set ISSUER_PRIVATE_KEY in .env.local to a real 64-char hex\n" +
+    "  secp256k1 private key before deploying.\n" +
+    "=".repeat(72) + "\n"
+  );
+}
+
 const issuer = new IssuerClient({ privateKey: DEMO_SK_HEX });
 const SIM_ACCOUNT =
   process.env.NEXT_PUBLIC_ISSUER_ADDRESS ??
