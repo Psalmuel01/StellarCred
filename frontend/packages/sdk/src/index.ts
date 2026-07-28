@@ -45,6 +45,22 @@ let _config = {
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
 };
 
+// Track whether we've already emitted the missing-registryId dev warning so it
+// only fires once per process — silent-by-default in production.
+let _warnedMissingRegistry = false;
+
+/**
+ * Returns `true` when running in a development-like environment. We check
+ * `process.env.NODE_ENV` (Node.js / Next.js / Vite define this at build time)
+ * and also tolerate environments where `process` is undefined (treating them
+ * as production to stay silent).
+ */
+function isDev(): boolean {
+  if (typeof process === "undefined") return false;
+  const nodeEnv = (process.env as Record<string, string | undefined>).NODE_ENV;
+  return nodeEnv !== "production" && nodeEnv !== "test";
+}
+
 /**
  * Override SDK defaults at runtime. Call this once at app startup before any
  * `hasClaim` / `getClaims` calls. Each key is optional — omitted keys keep
@@ -57,6 +73,59 @@ export function configure(opts: {
   baseUrl?: string;
 }): void {
   _config = { ..._config, ...opts };
+}
+
+/**
+ * Report which SDK config values are present, **without throwing**.
+ *
+ * The SDK reads configuration from environment variables (and/or
+ * {@link configure}) at startup. The critical value is `registryId` — the
+ * on-chain ProofRegistry contract ID. If it is missing, every `hasClaim` /
+ * `getClaims` call **silently** returns `false` / `[]` (the low-level client
+ * cannot be constructed), which means a misconfigured protocol ships a gate
+ * that always denies but never raises an error.
+ *
+ * Use `healthCheck()` to diagnose this from your app:
+ *
+ * @example
+ * const { registryId } = StellarCred.healthCheck();
+ * if (!registryId) {
+ *   console.error("StellarCred: STELLARCRED_REGISTRY_ID is not set — hasClaim will always return false");
+ * }
+ *
+ * @returns An object whose keys mirror the four config fields. Each value is
+ * `true` when the field has a non-empty value (either from env or
+ * {@link configure}), `false` when it is missing/empty.
+ *
+ * ## Environment variables
+ *
+ * | Field              | Env var                          | Next.js public alias              | Default if unset      |
+ * |--------------------|----------------------------------|----------------------------------|------------------------|
+ * | `registryId`       | `STELLARCRED_REGISTRY_ID`        | `NEXT_PUBLIC_PROOF_REGISTRY_ID`  | _(none — required)_   |
+ * | `rpcUrl`           | `STELLARCRED_RPC_URL`            | `NEXT_PUBLIC_RPC_URL`            | soroban-testnet RPC   |
+ * | `networkPassphrase`| `STELLARCRED_NETWORK_PASSPHRASE` | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Test SDF passphrase   |
+ * | `baseUrl`          | `STELLARCRED_BASE_URL`           | `NEXT_PUBLIC_STELLARCRED_BASE_URL`| `https://stellarcred.xyz` |
+ *
+ * ## Failure mode
+ *
+ * The most common breakage is a missing `registryId`. Because the read path
+ * catches all errors and returns `false`/`null`, a missing registry never
+ * throws — it silently makes every claim check fail-closed (deny). `healthCheck`
+ * is the safe way to surface that without disrupting the silent-by-default
+ * production contract.
+ */
+export function healthCheck(): {
+  registryId: boolean;
+  rpcUrl: boolean;
+  networkPassphrase: boolean;
+  baseUrl: boolean;
+} {
+  return {
+    registryId: !!_config.registryId,
+    rpcUrl: !!_config.rpcUrl,
+    networkPassphrase: !!_config.networkPassphrase,
+    baseUrl: !!_config.baseUrl,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +197,20 @@ function getSdk(): Promise<StellarSDK> {
 
 async function getClient(): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
-  if (!registryId) return null;
+  if (!registryId) {
+    // One-time dev warning so a missing registryId is diagnosable instead of
+    // silently making every read fail-closed. Production stays quiet.
+    if (isDev() && !_warnedMissingRegistry) {
+      _warnedMissingRegistry = true;
+      console.warn(
+        "[StellarCred] registryId is not set — hasClaim/getClaims will return false/[]. " +
+          "Set STELLARCRED_REGISTRY_ID (or NEXT_PUBLIC_PROOF_REGISTRY_ID), " +
+          "or call StellarCred.configure({ registryId }). " +
+          "Run StellarCred.healthCheck() to diagnose. (this warning fires once)",
+      );
+    }
+    return null;
+  }
   const { rpc } = await getSdk();
   return new ProofRegistryClient({
     networkPassphrase,
@@ -291,6 +373,76 @@ export function buildVerifyUrl(options: {
 }
 
 /**
+ * Parsed StellarCred return-URL parameters.
+ *
+ * ⚠️ **These are UNTRUSTED hints.** The verify-redirect flow appends
+ * `sc_verified`, `sc_wallet`, and `sc_claims` to your `return_url`, but
+ * nothing binds that redirect to the user's session — the URL can be
+ * hand-crafted. You MUST re-verify with {@link hasClaim} (server-side,
+ * against the on-chain ProofRegistry) before granting access or changing state.
+ * The values here are only for UX (e.g. pre-filling a wallet, showing a
+ * "verified" banner) and never for authorization.
+ */
+export interface ParsedReturnParams {
+  /** `sc_verified` — true only when the param is exactly `"true"`. Treat as a hint. */
+  sc_verified: boolean;
+  /** `sc_wallet` — the wallet address from the redirect, or `null` if absent. Treat as a hint. */
+  sc_wallet: string | null;
+  /** `sc_claims` — claim types from the redirect as a trimmed array (empty if absent). Treat as hints. */
+  sc_claims: string[];
+}
+
+/**
+ * Extract StellarCred's return-URL parameters from a URL string or `URL` object.
+ *
+ * This is a convenience parser for the verify-redirect callback. It reads
+ * `sc_verified`, `sc_wallet`, and `sc_claims` and returns them typed and
+ * normalized so you don't hand-parse query strings.
+ *
+ * ⚠️ **The returned values are UNTRUSTED HINTS ONLY.** There is no signature
+ * binding the redirect to your session — a user can construct any URL. You
+ * MUST re-verify the wallet's claims with {@link hasClaim} (server-side, on-chain)
+ * before granting access or trusting the data. The return value of this helper
+ * is suitable only for UX affordances (pre-filling, banners) and must never
+ * be the basis of an authorization decision.
+ *
+ * If you passed a `state` nonce to {@link buildVerifyUrl}, you can also read
+ * `url.searchParams.get("state")` directly and compare it to your session's
+ * expected nonce to reject replayed/forged redirects (CSRF-style). A matching
+ * `state` reduces but does not eliminate the need for the on-chain check.
+ *
+ * @example
+ * // In your /verify/callback route handler:
+ * const { sc_verified, sc_wallet, sc_claims } = parseReturnParams(req.url);
+ * if (!sc_verified || !sc_wallet) return renderRetry();
+ *
+ * // ← re-verify on-chain before granting access ↓
+ * const ok = await StellarCred.hasClaim(sc_wallet, "kyc");
+ * if (!ok) return renderNotVerified();
+ * // ...now safe to grant access
+ *
+ * @param url A full URL (string or `URL` object) that may contain StellarCred
+ * return params. Relative strings without an origin are parsed relative to
+ * `http://localhost` so this works in browsers and servers.
+ * @returns A {@link ParsedReturnParams} object. Missing params yield safe
+ * defaults (`sc_verified: false`, `sc_wallet: null`, `sc_claims: []`).
+ */
+export function parseReturnParams(url: string | URL): ParsedReturnParams {
+  const parsed = url instanceof URL ? url : new URL(url, "http://localhost");
+  const params = parsed.searchParams;
+  const sc_verified = params.get("sc_verified") === "true";
+  const sc_wallet = params.get("sc_wallet");
+  const claimsRaw = params.get("sc_claims");
+  const sc_claims = claimsRaw
+    ? claimsRaw
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean)
+    : [];
+  return { sc_verified, sc_wallet, sc_claims };
+}
+
+/**
  * Options for `watchClaim`.
  */
 export interface WatchClaimOptions {
@@ -405,5 +557,15 @@ export function watchClaim(
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
 
-export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, watchClaim, CLAIM_TYPES, TimeoutError };
+export const StellarCred = {
+  configure,
+  healthCheck,
+  hasClaim,
+  getClaims,
+  buildVerifyUrl,
+  parseReturnParams,
+  watchClaim,
+  CLAIM_TYPES,
+  TimeoutError,
+};
 export default StellarCred;
