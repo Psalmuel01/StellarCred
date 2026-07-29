@@ -22,6 +22,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { Badge } from "@/components/Badge";
 import { Check } from "@/components/Check";
 import { ConfigBanner } from "@/components/ConfigBanner";
+import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
 import { computeWitness, proveWithBackend } from "@/lib/proof";
@@ -417,6 +418,7 @@ function ProofFlow({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const t = useTranslations("holder");
   const toast = useToast();
+  const { networkMismatch } = useWallet();
 
   useEffect(() => {
     let cancelled = false;
@@ -466,7 +468,7 @@ function ProofFlow({
   }, [cred]);
 
   async function onSubmit() {
-    if (!proof) return;
+    if (!proof || networkMismatch) return;
     setStage("submitting");
     toast.info(`Submitting proof for ${cred.title} to Stellar…`);
     try {
@@ -606,6 +608,28 @@ function ProofFlow({
             {t("submitToStellar")}
             <IconArrowRight size={15} />
           </button>
+          <>
+            {networkMismatch && (
+              <div style={{ marginTop: "1.5rem" }}>
+                <NetworkMismatchBanner />
+              </div>
+            )}
+            <button
+              className="btn btn-primary"
+              style={{
+                marginTop: networkMismatch ? 0 : "1.5rem",
+                width: "100%",
+                opacity: networkMismatch ? 0.5 : 1,
+                cursor: networkMismatch ? "not-allowed" : "pointer",
+              }}
+              onClick={onSubmit}
+              disabled={networkMismatch}
+              title={networkMismatch ? "Switch your wallet to the correct network to submit" : undefined}
+            >
+              Submit to Stellar
+              <IconArrowRight size={15} />
+            </button>
+          </>
         )}
 
         {stage === "error" && error && (
@@ -718,6 +742,7 @@ function BatchProofFlow({
   const [batchError, setBatchError] = useState<ContractError | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const toast = useToast();
+  const { networkMismatch } = useWallet();
   const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
     creds.map(() => null),
   );
@@ -815,14 +840,19 @@ function BatchProofFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // All proofs ready — fire the batch submission automatically.
+  // All proofs ready — fire the batch submission automatically, but never
+  // while the connected wallet is on the wrong network: submission would
+  // fail after the (expensive) proofs are already generated. Once ready,
+  // this effect re-fires the moment `networkMismatch` clears — no separate
+  // retry button needed, matching this flow's fully-automatic submission.
   const allReady =
     batchStage === "generating" &&
     credStates.length > 0 &&
     credStates.every((s) => s.status === "ready");
+  const blockedByNetwork = allReady && networkMismatch;
 
   useEffect(() => {
-    if (!allReady) return;
+    if (!allReady || networkMismatch) return;
     toast.success(`Generated ${creds.length} proofs`);
     setBatchStage("submitting");
 
@@ -854,7 +884,7 @@ function BatchProofFlow({
         toast.error(`Batch submission failed: ${parsed.friendly}`);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allReady, onProved]);
+  }, [allReady, networkMismatch, onProved]);
 
   const isSubmitting = batchStage === "submitting";
   const isConfirmed = batchStage === "confirmed";
@@ -928,6 +958,13 @@ function BatchProofFlow({
             ) : null
           }
         />
+
+        {/* Network mismatch — proofs are ready but submission is blocked */}
+        {blockedByNetwork && (
+          <div style={{ marginTop: "1.5rem" }}>
+            <NetworkMismatchBanner />
+          </div>
+        )}
 
         {/* Error banner */}
         {isError && batchError && (

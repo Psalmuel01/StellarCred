@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { InputMap } from "@noir-lang/noir_js";
+import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
 import ageCircuit from "../../../public/circuits/age.json";
 import fundsCircuit from "../../../public/circuits/funds.json";
 import incomeCircuit from "../../../public/circuits/income.json";
@@ -100,17 +101,26 @@ function circuitFor(type: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = resolveRequestId(req.headers.get("x-request-id"));
+
+  const sendResponse = (response: NextResponse) => {
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+
   let body: { type?: string; credential?: Record<string, unknown> };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return sendResponse(NextResponse.json({ error: "Invalid JSON" }, { status: 400 }));
   }
 
   const { type, credential } = body;
   if (!type || !credential) {
-    return NextResponse.json({ error: "type and credential are required" }, { status: 400 });
+    return sendResponse(NextResponse.json({ error: "type and credential are required" }, { status: 400 }));
   }
+
+  logger.info(stripSensitiveFields({ event: "witness_request_received", credentialType: type, requestId }));
 
   try {
     const { Noir } = await import("@noir-lang/noir_js");
@@ -120,8 +130,21 @@ export async function POST(req: NextRequest) {
     const { witness } = await noir.execute(inputs);
     // Serialize Uint8Array → hex string for JSON transport.
     const hex = Buffer.from(witness).toString("hex");
-    return NextResponse.json({ witness: hex });
+    logger.info(stripSensitiveFields({
+      event: "witness_response_sent",
+      credentialType: type,
+      outcome: "success",
+      requestId,
+    }));
+    return sendResponse(NextResponse.json({ witness: hex }));
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    logger.error(stripSensitiveFields({
+      event: "witness_response_sent",
+      credentialType: type,
+      outcome: "failure",
+      error: (e as Error).message,
+      requestId,
+    }));
+    return sendResponse(NextResponse.json({ error: (e as Error).message }, { status: 500 }));
   }
 }
