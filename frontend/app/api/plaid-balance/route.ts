@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
+import type { PlaidBalanceResponse } from "../../../types/index.js";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest): Promise<NextResponse<PlaidBalanceResponse | { error: string }>> {
   const requestId = resolveRequestId(req.headers.get("x-request-id"));
 
-  const sendResponse = (response: NextResponse) => {
+  const sendResponse = <T>(response: NextResponse<T>): NextResponse<T> => {
     response.headers.set("x-request-id", requestId);
     return response;
   };

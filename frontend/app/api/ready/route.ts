@@ -1,25 +1,8 @@
 import { NextResponse } from "next/server";
 import { RPC_URL, CONTRACTS } from "../../../lib/stellar";
+import type { ReadyResponse, SignerStatus, DependencyStatus } from "../../../types/index.js";
 
 export const dynamic = "force-dynamic";
-
-interface DependencyStatus {
-  status: "ok" | "error";
-  message?: string;
-}
-
-interface SignerStatus extends DependencyStatus {
-  /** "demo" = signing with the public demo issuer key; "configured" = ISSUER_PRIVATE_KEY set. */
-  issuer: "demo" | "configured";
-}
-
-interface ReadyResponse {
-  ready: boolean;
-  signer: SignerStatus;
-  contracts: DependencyStatus;
-  rpc: DependencyStatus;
-  persona: DependencyStatus;
-}
 
 async function checkRpc(): Promise<DependencyStatus> {
   try {

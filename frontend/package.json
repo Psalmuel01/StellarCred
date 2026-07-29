@@ -7,6 +7,7 @@
     "predev": "node scripts/copy-bb.mjs",
     "prebuild": "node scripts/copy-bb.mjs",
     "postinstall": "pnpm --dir packages/issuer build",
+    "generate-types": "openapi-typescript ../docs/openapi.yaml -o types/api.d.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -31,6 +32,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@redocly/cli": "^1.34.17",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@types/node": "^20",
@@ -38,6 +40,7 @@
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
+    "openapi-typescript": "^7.13.0",
     "typescript": "^5",
     "vitest": "^2.1.9"
   }
