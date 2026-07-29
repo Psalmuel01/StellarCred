@@ -3,6 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { IssuerClient, CREDENTIAL_TYPES, type CredentialType, type ClaimParams } from "@stellarcred/issuer";
 import { fetchIssuerPubkey } from "@/lib/issuer-registry";
 import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
+import type { IssueRequest, IssueResponse200, IssueResponse202 } from "../../../types/index.js";
 
 // Server-side only — never shipped to the browser.
 // Set ISSUER_PRIVATE_KEY in .env.local to the 64-char hex secp256k1 private
@@ -222,21 +223,7 @@ export async function POST(req: NextRequest) {
     return response;
   };
 
-  let body: {
-    credential_types?: string[];
-    // Legacy single-type shape — still accepted for backward compatibility.
-    type?: string;
-    holder?: string;
-    issuerId?: string;
-    issuerName?: string;
-    expiry?: string;
-    attributes?: Record<string, string>;
-    attribute?: string;
-    claimParams?: ClaimParams;
-    // Set by the frontend after the user returns from Persona's hosted flow.
-    persona_inquiry_id?: string;
-    returnUrl?: string;
-  };
+  let body: IssueRequest;
 
   try {
     body = await req.json();

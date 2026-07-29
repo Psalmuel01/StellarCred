@@ -1,0 +1,858 @@
+openapi: "3.1.0"
+
+info:
+  title: StellarCred Issuer API
+  version: "1.0.0"
+  description: |
+    Server-side API for the StellarCred privacy-preserving credential platform.
+
+    ## Overview
+    Issuers call `/api/issue` to sign credentials for a holder's Stellar wallet.
+    The holder then generates a ZK proof locally (via `/api/witness` or in-browser
+    with `noir_js`) and submits it to the on-chain `ProofRegistry`.  Any protocol
+    can subsequently read `is_verified` on the registry without ever seeing
+    credential data.
+
+    ## Authentication
+    All endpoints are unauthenticated at the HTTP level — trust is enforced
+    cryptographically.  `/api/issue` signs credentials with the server's
+    secp256k1 `ISSUER_PRIVATE_KEY`; `ProofRegistry` accepts a proof only if the
+    embedded public key matches a key registered in `IssuerRegistry`.
+
+    ## Request IDs
+    Pass `X-Request-Id` on any request to correlate server logs.  The same ID
+    is echoed back in the `X-Request-Id` response header.  If omitted the server
+    generates one automatically.
+  contact:
+    name: StellarCred
+    url: https://github.com/Psalmuel01/StellarCred
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: /
+    description: Same-origin (Next.js dev / production)
+
+tags:
+  - name: Credentials
+    description: Credential issuance and ZK witness generation
+  - name: Health
+    description: Liveness and readiness probes
+  - name: Registry
+    description: On-chain issuer registry read-through
+  - name: Finance
+    description: Plaid balance attestation relay
+
+# All endpoints are unauthenticated at the HTTP level.
+# Trust is enforced cryptographically (issuer key ↔ IssuerRegistry).
+security: []
+
+# ---------------------------------------------------------------------------
+# Reusable components
+# ---------------------------------------------------------------------------
+components:
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: >
+        Caller-supplied correlation ID.  Echoed back in the `X-Request-Id`
+        response header.  Server generates a UUID v4 when omitted.
+      schema:
+        type: string
+        example: "req_01J3X8KZMQVW4T9PBHEF6YDCN5"
+
+  headers:
+    XRequestId:
+      description: Correlation ID (supplied or generated).
+      schema:
+        type: string
+        example: "req_01J3X8KZMQVW4T9PBHEF6YDCN5"
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Shared primitives
+    # ------------------------------------------------------------------
+    CredentialType:
+      type: string
+      enum: [kyc, age, jurisdiction, income, funds, accreditation]
+      description: |
+        | Value | Proves |
+        |---|---|
+        | `kyc` | Identity verified |
+        | `age` | Age ≥ threshold |
+        | `jurisdiction` | Country not restricted |
+        | `income` | Income ≥ threshold |
+        | `funds` | Balance ≥ threshold |
+        | `accreditation` | Net worth ≥ threshold |
+      example: kyc
+
+    ClaimParams:
+      type: object
+      description: >
+        Optional per-type parameters that are embedded in the credential and
+        verified by the on-chain circuit.  All fields are optional; omitted
+        fields use the circuit's default value.
+      properties:
+        threshold_years:
+          type: string
+          description: Minimum age in years (age circuit). Default "18".
+          example: "21"
+        threshold:
+          type: string
+          description: >
+            Numeric threshold for income / funds / accreditation circuits.
+            Units: USD cents-free integer (e.g. `"50000"` = $50 000).
+          example: "50000"
+        restricted:
+          type: array
+          items:
+            type: string
+          maxItems: 8
+          description: >
+            ISO 3166-1 numeric country codes to block (jurisdiction circuit).
+            Array is zero-padded to exactly 8 entries.  Default blocks US (840),
+            Iran (364), and North Korea (408).
+          example: ["840", "364", "408", "0", "0", "0", "0", "0"]
+
+    Credential:
+      type: object
+      required:
+        - type
+        - title
+        - claim
+        - issuer
+        - issuerId
+        - holder
+        - value
+        - salt
+        - commitment
+        - sig
+        - issuerPubX
+        - issuerPubY
+        - issuedAt
+        - expiry
+      description: >
+        A signed credential returned by `/api/issue`.  The holder stores this
+        locally (never on-chain) and uses it as private input when generating
+        a ZK proof.
+      properties:
+        type:
+          $ref: "#/components/schemas/CredentialType"
+        title:
+          type: string
+          description: Human-readable credential title.
+          example: "KYC Complete"
+        claim:
+          type: string
+          description: Human-readable claim description.
+          example: "identity verified"
+        issuer:
+          type: string
+          description: Display name of the issuing authority.
+          example: "StellarCred Authority"
+        issuerId:
+          type: string
+          description: Stellar account address of the registered issuer.
+          example: "GABC...XYZ"
+        holder:
+          type: string
+          description: Stellar account address of the credential holder.
+          example: "GDEF...UVW"
+        value:
+          type: string
+          description: >
+            The circuit preimage (private input).  For `kyc` this is a random
+            field element; for `age` it is days-since-epoch; for numeric types
+            it is an integer string.
+          example: "18900"
+        salt:
+          type: string
+          description: Random 31-byte field element used in the Poseidon2 commitment.
+          example: "0x1a2b3c..."
+        commitment:
+          type: string
+          description: "Poseidon2([value, salt], 2) — the public input committed to on-chain."
+          example: "0xdeadbeef..."
+        sig:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+          description: secp256k1 DER signature bytes (issuer signs the raw commitment).
+          example: [48, 68, 2, 32]
+        issuerPubX:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+          description: 32-byte big-endian X coordinate of the issuer's secp256k1 public key.
+        issuerPubY:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+          description: 32-byte big-endian Y coordinate of the issuer's secp256k1 public key.
+        issuedAt:
+          type: integer
+          description: Unix timestamp (seconds) when the credential was issued.
+          example: 1722268547
+        expiry:
+          type: string
+          description: >
+            Duration string or absolute timestamp string.  Duration format:
+            `"N days"` (e.g. `"90 days"`).
+          example: "90 days"
+        claimParams:
+          $ref: "#/components/schemas/ClaimParams"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          example: "holder address is required"
+
+    DependencyStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        message:
+          type: string
+          description: Extra detail when status is "error".
+          example: "Missing: proofRegistry"
+
+    SignerStatus:
+      allOf:
+        - $ref: "#/components/schemas/DependencyStatus"
+        - type: object
+          required: [issuer]
+          properties:
+            issuer:
+              type: string
+              enum: [demo, configured]
+              description: >
+                `"configured"` when `ISSUER_PRIVATE_KEY` env var is set;
+                `"demo"` when the app is running with the public fallback key.
+              example: configured
+
+    ReadyResponse:
+      type: object
+      required: [ready, signer, contracts, rpc, persona]
+      description: Structured readiness check returned by `/api/ready`.
+      properties:
+        ready:
+          type: boolean
+          description: "`true` only when all four dependency checks pass."
+          example: true
+        signer:
+          $ref: "#/components/schemas/SignerStatus"
+        contracts:
+          $ref: "#/components/schemas/DependencyStatus"
+        rpc:
+          $ref: "#/components/schemas/DependencyStatus"
+        persona:
+          $ref: "#/components/schemas/DependencyStatus"
+
+    PlaidBalanceMockResponse:
+      type: object
+      required: [balance, mock]
+      description: Response when `PLAID_ACCESS_TOKEN` is not configured (demo mode).
+      properties:
+        balance:
+          type: integer
+          description: Mock balance of $50 000.
+          example: 50000
+        mock:
+          type: boolean
+          description: Always `true` in mock mode.
+          example: true
+
+    PlaidBalanceRealResponse:
+      type: object
+      required: [balance, accounts]
+      description: Response when Plaid returns real account data.
+      properties:
+        balance:
+          type: integer
+          description: Highest available balance across depository accounts (USD integer).
+          example: 12500
+        accounts:
+          type: array
+          description: All depository accounts, sorted by available balance descending.
+          items:
+            type: object
+            required: [name, available]
+            properties:
+              name:
+                type: string
+                description: Account display name from Plaid.
+                example: "Checking"
+              available:
+                type: integer
+                description: Available balance in USD (integer).
+                example: 12500
+
+    RegisteredIssuer:
+      type: object
+      required: [id, name, pubkeyHex, credentialTypes, revoked]
+      properties:
+        id:
+          type: string
+          description: Stellar account address of the issuer.
+          example: "GABC...XYZ"
+        name:
+          type: string
+          description: Display name (from `NEXT_PUBLIC_ISSUER_NAMES` env or truncated address).
+          example: "StellarCred Authority"
+        pubkeyHex:
+          type: string
+          description: Hex-encoded secp256k1 public key (x || y, 64 bytes = 128 hex chars).
+          example: "04abcd..."
+        credentialTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CredentialType"
+          description: Credential types this issuer is authorised to issue.
+          example: [kyc, age, jurisdiction]
+        revoked:
+          type: boolean
+          description: Always `false` in this response — revoked issuers are filtered out.
+          example: false
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  /api/issue:
+    post:
+      operationId: issueCredentials
+      summary: Issue one or more signed credentials
+      description: |
+        Issues one signed `Credential` per requested type.  The server computes
+        the Poseidon2 commitment over the attribute value and salt, signs it with
+        its secp256k1 `ISSUER_PRIVATE_KEY`, and returns the full credential
+        objects for the holder to store locally.
+
+        **Identity verification flow (Persona)**
+
+        When `kyc` is included in `credential_types` and `PERSONA_API_KEY` is
+        configured, the first call returns HTTP 202 with a `personaUrl` redirect.
+        After the user completes the Persona flow and returns, re-send the
+        original request body with `persona_inquiry_id` set to the ID from the
+        202 response.
+
+        **Funds verification flow (Plaid)**
+
+        When `funds` is included, the server calls Plaid to fetch the holder's
+        verified bank balance.  No `attributes.balance` value from the client
+        is used — Plaid is the source of truth.
+
+        **Demo mode**
+
+        If `PERSONA_API_KEY` / `PLAID_ACCESS_TOKEN` are absent the server uses
+        safe demo fallbacks (always passes / returns $50 000) so the app works
+        without third-party credentials.
+      tags: [Credentials]
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [holder, issuerId]
+              description: >
+                Either `credential_types` (preferred) or the legacy `type` field
+                must be present to specify which credentials to issue.
+              properties:
+                credential_types:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/CredentialType"
+                  minItems: 1
+                  description: >
+                    One or more credential types to issue in a single call.
+                    Duplicates are de-duplicated server-side.
+                    Preferred over the deprecated `type` field.
+                  example: [kyc, age]
+                holder:
+                  type: string
+                  description: Stellar account address of the credential holder.
+                  example: "GDEF...UVW"
+                issuerId:
+                  type: string
+                  description: >
+                    Stellar account address of the issuer whose key is registered
+                    in `IssuerRegistry`.  Must match the server's
+                    `ISSUER_PRIVATE_KEY`.
+                  example: "GABC...XYZ"
+                issuerName:
+                  type: string
+                  default: "StellarCred Authority"
+                  description: Display name embedded in every issued credential.
+                  example: "StellarCred Authority"
+                expiry:
+                  type: string
+                  default: "90 days"
+                  description: >
+                    Duration string (`"N days"`) or Unix timestamp string.
+                    Embedded in the credential; not enforced on-chain until
+                    `ProofRegistry` checks it at proof submission.
+                  example: "90 days"
+                attributes:
+                  type: object
+                  description: |
+                    Type-specific attribute fields.  Required keys per type:
+
+                    | Type | Required key | Format |
+                    |------|-------------|--------|
+                    | `age` | `date_of_birth` | `YYYY-MM-DD` |
+                    | `income` | `income` | Integer string (USD) |
+                    | `jurisdiction` | `country_code` | ISO 3166-1 numeric string |
+                    | `accreditation` | `net_worth` | Integer string (USD) |
+                    | `kyc` | _(none — auto)_ | — |
+                    | `funds` | _(overridden by Plaid)_ | — |
+                  additionalProperties:
+                    type: string
+                  example:
+                    date_of_birth: "1990-06-15"
+                    country_code: "566"
+                claimParams:
+                  $ref: "#/components/schemas/ClaimParams"
+                persona_inquiry_id:
+                  type: string
+                  description: >
+                    Persona inquiry ID returned by the 202 response.  Include
+                    on the follow-up request after the user returns from the
+                    Persona hosted flow.
+                  example: "inq_abc123"
+                returnUrl:
+                  type: string
+                  format: uri
+                  description: >
+                    URL to redirect the user back to after Persona verification.
+                    Appended as `?return_url=…` on the StellarCred verify page.
+                  example: "https://yourapp.xyz/deposit"
+                type:
+                  $ref: "#/components/schemas/CredentialType"
+                  deprecated: true
+                  description: >
+                    **Deprecated** — use `credential_types` instead.
+                    Legacy single-type field; still accepted for backwards
+                    compatibility.
+                attribute:
+                  type: string
+                  deprecated: true
+                  description: >
+                    **Deprecated** — use `attributes` instead.
+                    Legacy single-attribute value; mapped to the correct key
+                    based on `type`.
+            examples:
+              kyc_only:
+                summary: Issue a KYC credential (demo mode)
+                value:
+                  credential_types: [kyc]
+                  holder: "GDEF...UVW"
+                  issuerId: "GABC...XYZ"
+              multi_claim:
+                summary: Issue KYC + age + jurisdiction together
+                value:
+                  credential_types: [kyc, age, jurisdiction]
+                  holder: "GDEF...UVW"
+                  issuerId: "GABC...XYZ"
+                  attributes:
+                    date_of_birth: "1990-06-15"
+                    country_code: "566"
+              funds_with_threshold:
+                summary: Issue funds credential with custom threshold
+                value:
+                  credential_types: [funds]
+                  holder: "GDEF...UVW"
+                  issuerId: "GABC...XYZ"
+                  claimParams:
+                    threshold: "100000"
+      responses:
+        "200":
+          description: All requested credentials issued successfully.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentials]
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Credential"
+                    description: One credential per requested type, in request order.
+        "202":
+          description: |
+            Identity verification required.  The holder must visit `personaUrl`
+            to complete the Persona KYC flow, then re-send the original request
+            with `persona_inquiry_id` set.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [needsPersona, personaUrl, inquiryId]
+                properties:
+                  needsPersona:
+                    type: boolean
+                    example: true
+                  personaUrl:
+                    type: string
+                    format: uri
+                    description: Persona hosted-flow URL to redirect the user to.
+                    example: "https://withpersona.com/verify?inquiry-id=inq_abc123"
+                  inquiryId:
+                    type: string
+                    description: Persona inquiry ID; pass back as `persona_inquiry_id`.
+                    example: "inq_abc123"
+        "400":
+          description: |
+            Bad request.  Possible causes:
+            - `credential_types` is empty or contains an unknown type
+            - `holder` or `issuerId` is missing
+            - Request body is not valid JSON
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missing_holder:
+                  value: { error: "holder address is required" }
+                invalid_type:
+                  value: { error: "Invalid credential type: foobar" }
+        "403":
+          description: |
+            Identity or balance verification failed, or issuer key mismatch.
+            Possible causes:
+            - Persona inquiry was not approved
+            - Plaid balance verification failed
+            - `ISSUER_PRIVATE_KEY` does not match the on-chain registered key
+              for the requested `issuerId`
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                kyc_failed:
+                  value: { error: "Persona KYC inquiry status: pending" }
+                key_mismatch:
+                  value:
+                    error: >
+                      ISSUER_PRIVATE_KEY does not match the selected issuer's
+                      registered public key on IssuerRegistry.
+        "500":
+          description: |
+            Internal server error.  Possible causes:
+            - Commitment or signing step failed
+            - `PERSONA_API_KEY` set but `PERSONA_KYC_TEMPLATE_ID` missing
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/witness:
+    post:
+      operationId: generateWitness
+      summary: Generate a ZK witness for a credential
+      description: |
+        Executes the Noir circuit for the given credential type server-side and
+        returns the serialised witness bytes as a hex string.
+
+        The witness is private — it encodes all inputs (value, salt, sig, …)
+        needed by Barretenberg (`bb.js`) to produce a UltraHonk proof.
+
+        **Note:** the browser can run this step directly via `noir_js` + WASM.
+        This endpoint exists as a server-side fallback for environments where
+        WASM execution is inconvenient.
+      tags: [Credentials]
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, credential]
+              properties:
+                type:
+                  $ref: "#/components/schemas/CredentialType"
+                credential:
+                  $ref: "#/components/schemas/Credential"
+            examples:
+              kyc_witness:
+                summary: Generate witness for a KYC credential
+                value:
+                  type: kyc
+                  credential:
+                    type: kyc
+                    title: "KYC Complete"
+                    claim: "identity verified"
+                    issuer: "StellarCred Authority"
+                    issuerId: "GABC...XYZ"
+                    holder: "GDEF...UVW"
+                    value: "0x1234..."
+                    salt: "0xabcd..."
+                    commitment: "0xdeadbeef..."
+                    sig: [48, 68]
+                    issuerPubX: [1, 2, 3]
+                    issuerPubY: [4, 5, 6]
+                    issuedAt: 1722268547
+                    expiry: "90 days"
+      responses:
+        "200":
+          description: Witness generated successfully.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [witness]
+                properties:
+                  witness:
+                    type: string
+                    description: >
+                      Serialised witness as a lowercase hex string.
+                      Pass this to `bb.js` `UltraHonkBackend.generateProof()`.
+                    example: "1a2b3c..."
+        "400":
+          description: Missing or invalid request body.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missing_fields:
+                  value: { error: "type and credential are required" }
+        "500":
+          description: Circuit execution failed (e.g. invalid credential inputs).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      description: >
+        Always returns HTTP 200 `{ "status": "ok" }`.  Use this as a liveness
+        check — if the process is alive, it responds.  For a deeper readiness
+        check (RPC reachable, contracts configured, signer key set) use
+        `/api/ready` instead.
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                    example: ok
+        "405":
+          description: Method not allowed (only GET is accepted).
+
+  /api/ready:
+    get:
+      operationId: getReady
+      summary: Readiness probe
+      description: |
+        Checks all runtime dependencies and returns a structured status
+        for each.  Returns HTTP 200 only when **all** checks pass; HTTP 503
+        when any check fails.
+
+        | Dependency | What is checked |
+        |---|---|
+        | `signer` | `ISSUER_PRIVATE_KEY` env var is set |
+        | `contracts` | All `NEXT_PUBLIC_*` contract addresses are set |
+        | `rpc` | Stellar RPC responds to `getNetwork` within 5 s |
+        | `persona` | `PERSONA_API_KEY` unset (demo OK) or `PERSONA_KYC_TEMPLATE_ID` also set |
+      tags: [Health]
+      responses:
+        "200":
+          description: All dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+              example:
+                ready: true
+                signer:
+                  status: ok
+                  issuer: configured
+                contracts:
+                  status: ok
+                rpc:
+                  status: ok
+                persona:
+                  status: ok
+        "503":
+          description: One or more dependencies are not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+              example:
+                ready: false
+                signer:
+                  status: error
+                  message: "ISSUER_PRIVATE_KEY not set — signing with the public demo issuer key"
+                  issuer: demo
+                contracts:
+                  status: error
+                  message: "Missing: proofRegistry, credentialVerifier"
+                rpc:
+                  status: ok
+                persona:
+                  status: ok
+                  message: "not configured (demo mode)"
+        "405":
+          description: Method not allowed (only GET is accepted).
+
+  /api/issuers:
+    get:
+      operationId: listIssuers
+      summary: List registered issuers
+      description: |
+        Returns all active (non-revoked) issuers from the on-chain
+        `IssuerRegistry` contract via Soroban simulation.
+
+        Returns an empty array when `NEXT_PUBLIC_ISSUER_REGISTRY_ID` is not
+        configured.  Revoked issuers are filtered out before the response.
+      tags: [Registry]
+      responses:
+        "200":
+          description: Issuer list retrieved (may be empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issuers]
+                properties:
+                  issuers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RegisteredIssuer"
+        "500":
+          description: On-chain simulation failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, issuers]
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to fetch issuers"
+                  issuers:
+                    type: array
+                    items: {}
+                    maxItems: 0
+                    description: Always an empty array on error.
+        "405":
+          description: Method not allowed (only GET is accepted).
+
+  /api/plaid-balance:
+    get:
+      operationId: getPlaidBalance
+      summary: Fetch verified bank balance via Plaid
+      description: |
+        Fetches the holder's verified bank balance from Plaid and returns the
+        highest available balance across all depository accounts.
+
+        **Mock mode:** when `PLAID_ACCESS_TOKEN` is not set the endpoint
+        returns `{ "balance": 50000, "mock": true }` so the app works without
+        a real Plaid integration.
+
+        **Production mode:** returns `{ "balance": <highest depository balance>,
+        "accounts": [...] }` where each account has `name` and `available`.
+
+        This value is used as the `funds` credential attribute — the user cannot
+        supply their own balance.
+      tags: [Finance]
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Balance fetched (real or mock).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PlaidBalanceMockResponse"
+                  - $ref: "#/components/schemas/PlaidBalanceRealResponse"
+              examples:
+                mock:
+                  summary: Mock mode (no PLAID_ACCESS_TOKEN set)
+                  value:
+                    balance: 50000
+                    mock: true
+                real:
+                  summary: Real Plaid response
+                  value:
+                    balance: 12500
+                    accounts:
+                      - name: "Checking"
+                        available: 12500
+                      - name: "Savings"
+                        available: 8000
+        "502":
+          description: Plaid API returned an error.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                plaid_error:
+                  value: { error: "INVALID_ACCESS_TOKEN" }
+        "405":
+          description: Method not allowed (only GET is accepted).

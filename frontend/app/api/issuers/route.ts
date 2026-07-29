@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { fetchRegisteredIssuers } from "@/lib/issuer-registry";
+import type { RegisteredIssuer } from "../../../types/index.js";
 
 // Any existing account works for read-only Soroban simulation.
 const SIM_ACCOUNT =
   process.env.NEXT_PUBLIC_ISSUER_ADDRESS ??
   "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
-export async function GET() {
+export async function GET(): Promise<NextResponse<{ issuers: RegisteredIssuer[] } | { error: string; issuers: [] }>> {
   try {
     const issuers = await fetchRegisteredIssuers(SIM_ACCOUNT);
     return NextResponse.json({ issuers });
