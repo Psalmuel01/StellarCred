@@ -12,7 +12,11 @@ import {
   WalletNetwork,
   allowAllModules,
   FREIGHTER_ID,
+  ALBEDO_ID,
+  type ISupportedWallet,
+  type StellarWalletsKit as StellarWalletsKitType,
 } from "@creit.tech/stellar-wallets-kit";
+import { WalletConnectModule } from "@creit.tech/stellar-wallets-kit/modules/walletconnect.module";
 import { NETWORK, NETWORK_PASSPHRASE } from "./stellar";
 
 const APP_NETWORK =
@@ -20,15 +24,54 @@ const APP_NETWORK =
 
 const CONNECT_TIMEOUT_MS = 30_000;
 const FREIGHTER_URL = "https://freighter.app";
+const ALEDO_URL = "https://albedo.link";
+const WALLET_CONNECT_URL = "https://walletconnect.com";
 
-let kit: StellarWalletsKit | null = null;
+export interface SupportedWalletOption {
+  id: string;
+  name: string;
+  description: string;
+  installUrl?: string;
+}
 
-export function getKit(): StellarWalletsKit {
+export const SUPPORTED_WALLETS: SupportedWalletOption[] = [
+  {
+    id: FREIGHTER_ID,
+    name: "Freighter",
+    description: "Browser extension wallet",
+    installUrl: FREIGHTER_URL,
+  },
+  {
+    id: ALBEDO_ID,
+    name: "Albedo",
+    description: "Browser extension wallet",
+    installUrl: ALEDO_URL,
+  },
+  {
+    id: "wallet_connect",
+    name: "WalletConnect",
+    description: "Mobile and desktop wallet connection",
+    installUrl: WALLET_CONNECT_URL,
+  },
+];
+
+let kit: StellarWalletsKitType | null = null;
+
+export function getKit(): StellarWalletsKitType {
   if (!kit) {
+    const walletConnectModule = new WalletConnectModule({
+      projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "demo-project-id",
+      name: "StellarCred",
+      description: "StellarCred wallet connection",
+      url: "https://stellarcred.com",
+      icons: ["https://stellarcred.com/icon.png"],
+      method: "stellar_signAndSubmitXDR" as never,
+      network: APP_NETWORK,
+    });
     kit = new StellarWalletsKit({
       network: APP_NETWORK,
       selectedWalletId: FREIGHTER_ID,
-      modules: allowAllModules(),
+      modules: [...allowAllModules(), walletConnectModule],
     });
   }
   return kit;
@@ -47,11 +90,6 @@ export class WalletConnectError extends Error {
 
 export const FREIGHTER_INSTALL_URL = FREIGHTER_URL;
 
-// Map whatever the kit/wallet extension throws into one of our known error
-// kinds. There's no stable, documented string for "user declined in the
-// extension popup" (it's internal to each wallet extension, not the npm
-// package), so any post-selection failure that isn't the well-known
-// "not installed" message is treated as a cancellation.
 function toWalletError(e: unknown): WalletConnectError {
   if (e instanceof WalletConnectError) return e;
   const message =
@@ -60,13 +98,16 @@ function toWalletError(e: unknown): WalletConnectError {
       : typeof e === "object" && e && "message" in e
         ? String((e as { message: unknown }).message)
         : String(e);
-  if (/not connected|not available/i.test(message)) {
+  if (/not connected|not available|not installed|missing/i.test(message)) {
     return new WalletConnectError(
       "not-installed",
-      "No Stellar wallet extension found. Install Freighter to continue.",
+      "No Stellar wallet extension found. Install a supported wallet or try WalletConnect.",
     );
   }
-  return new WalletConnectError("rejected", "Connection cancelled");
+  if (/cancel|dismiss|decline|rejected/i.test(message)) {
+    return new WalletConnectError("rejected", "Connection cancelled");
+  }
+  return new WalletConnectError("unknown", message || "Something went wrong");
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -86,9 +127,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// Live network check — reads from the connected wallet, not hardcoded. Returns
-// true if the wallet doesn't support getNetwork() at all, to avoid a
-// false-positive mismatch warning.
 export async function getNetworkOk(): Promise<boolean> {
   try {
     const { networkPassphrase } = await getKit().getNetwork();
@@ -107,7 +145,7 @@ export async function connect(): Promise<Connection> {
   const k = getKit();
   const attempt = new Promise<Connection>((resolve, reject) => {
     k.openModal({
-      onWalletSelected: async (option) => {
+      onWalletSelected: async (option: ISupportedWallet) => {
         try {
           k.setWallet(option.id);
           const { address } = await k.getAddress();
@@ -122,7 +160,6 @@ export async function connect(): Promise<Connection> {
   return withTimeout(attempt, CONNECT_TIMEOUT_MS);
 }
 
-// Restore a previously-selected wallet (no modal) after a full page reload.
 export async function restore(walletId: string): Promise<string> {
   const k = getKit();
   k.setWallet(walletId);
@@ -130,7 +167,6 @@ export async function restore(walletId: string): Promise<string> {
   return address;
 }
 
-/** Sign a transaction XDR with the connected wallet; returns the signed XDR. */
 export async function signTx(xdr: string, address: string): Promise<string> {
   const k = getKit();
   const { signedTxXdr } = await k.signTransaction(xdr, {

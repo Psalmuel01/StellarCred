@@ -1,6 +1,6 @@
-import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import Link from "next/link";
 import { SiteNav } from "@/components/SiteNav";
 import { NetworkBanner } from "@/components/NetworkBanner";
 import { WalletProvider } from "@/lib/wallet-context";
@@ -103,9 +103,9 @@ export default function RootLayout({
                   >
                     @stellarcred/sdk
                   </a>
-                  <a href="/developers" className="footer-link">
+                  <Link href="/developers" className="footer-link">
                     Docs
-                  </a>
+                  </Link>
                 </div>
               </div>
             </footer>
