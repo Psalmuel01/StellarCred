@@ -155,6 +155,9 @@ impl IssuerRegistry {
         logo: Option<String>,
     ) {
         Self::require_admin(&env);
+        if !env.storage().persistent().has(&DataKey::Issuer(issuer.clone())) {
+            panic_with_error!(&env, Error::IssuerNotFound);
+        }
         let metadata = IssuerMetadata { name, url, logo };
         let key = DataKey::IssuerMetadata(issuer.clone());
         env.storage().persistent().set(&key, &metadata);

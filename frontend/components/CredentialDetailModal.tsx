@@ -62,8 +62,11 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
         return;
       }
       if (e.key === "Tab") {
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
+        const current = modal!.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        const first = current[0];
+        const last = current[current.length - 1];
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last.focus();
@@ -115,7 +118,6 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
         justifyContent: "center",
         padding: "1rem",
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         style={{
@@ -124,6 +126,7 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
           background: "rgba(0,0,0,0.6)",
           backdropFilter: "blur(6px)",
         }}
+        onClick={onClose}
       />
 
       <div
@@ -141,6 +144,7 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
           overflowY: "auto",
           padding: "1.75rem",
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="between" style={{ marginBottom: "1.25rem" }}>
           <span className="eyebrow">Credential details</span>
