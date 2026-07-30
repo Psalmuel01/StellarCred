@@ -1,0 +1,5 @@
+[package]
+name = "set_membership"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"

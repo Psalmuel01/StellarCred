@@ -197,8 +197,17 @@ full reference.
 3. **Attestation relay.** Issuance can be gated on a real KYC provider — the
    route integrates Persona's sandbox and only signs credentials after a positive
    result. Identity fields are sent once to the provider and never stored.
-4. **Proof expiry.** `ProofRegistry` uses persistent storage with an explicit
-   `expiry` (checked against ledger time) plus TTL extension.
+4. **Proof expiry and storage rent.** `ProofRegistry` uses persistent storage with an explicit
+   `expiry` (checked against ledger time) plus proactive TTL management:
+   - On `submit_proof`, the entry TTL is set to cover the credential's expiry time
+     (bounded by the Soroban maximum persistent entry TTL of ~631,152,000 ledgers,
+     approximately 1 year at 5-second ledger times).
+   - `bump_claim` allows anyone to extend the TTL of a still-valid claim, useful
+     for long-lived credentials that need to outlast their original TTL.
+   - The bump threshold is set to 1 day, meaning the TTL is extended whenever
+     the entry is accessed within 1 day of its expiry.
+   - This ensures that proofs don't get archived while they're still valid, while
+     allowing the network to reclaim storage for expired credentials.
 5. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
 
 ---

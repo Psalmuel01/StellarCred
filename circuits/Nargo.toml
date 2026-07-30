@@ -8,4 +8,5 @@ members = [
     "jurisdiction_proof",
     "funds_proof",
     "accreditation_proof",
+    "set_membership",
 ]

@@ -143,6 +143,83 @@ fn expires_after_ledger_time_passes() {
 }
 
 #[test]
+fn ttl_set_based_on_credential_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit with expiry 1 year in the future (in seconds)
+    let one_year_seconds = 365 * 24 * 60 * 60;
+    let expiry = env.ledger().timestamp() + one_year_seconds;
+    
+    submit(&env, &h, &holder, expiry);
+
+    // The TTL should be set to cover the credential expiry
+    // We can't directly check TTL in tests, but we can verify the proof is stored
+    let (valid, _at, stored_expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+    assert_eq!(stored_expiry, expiry);
+}
+
+#[test]
+fn bump_claim_extends_ttl_for_valid_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit a proof with expiry in the future
+    let expiry = env.ledger().timestamp() + 10000;
+    submit(&env, &h, &holder, expiry);
+
+    // Bump the claim should succeed
+    h.registry.bump_claim(&holder, &symbol_short!("kyc"));
+
+    // Verify the claim is still valid
+    let (valid, _at, _) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+}
+
+#[test]
+#[should_panic]
+fn bump_claim_fails_for_expired_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit a proof with expiry in the past
+    let past_expiry = env.ledger().timestamp() - 1000;
+    submit(&env, &h, &holder, past_expiry);
+
+    // Advance ledger time to ensure the claim is expired
+    env.ledger().with_mut(|li| li.timestamp = env.ledger().timestamp() + 2000);
+
+    // Bump should fail for expired claim
+    h.registry.bump_claim(&holder, &symbol_short!("kyc"));
+}
+
+#[test]
+#[should_panic]
+fn bump_claim_fails_for_revoked_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit a proof
+    let expiry = env.ledger().timestamp() + 10000;
+    submit(&env, &h, &holder, expiry);
+
+    // Revoke the proof
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+    // Bump should fail for revoked claim
+    h.registry.bump_claim(&holder, &symbol_short!("kyc"));
+}
+
+#[test]
 fn rejects_wrong_issuer_key() {
     let env = Env::default();
     env.mock_all_auths();

@@ -1,0 +1,23 @@
+{
+  "merkle_path": [
+    "15500",
+    "83647082",
+    "1470973456767118995326",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0"
+  ],
+  "merkle_indices": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "leaf_index": 0
+}

@@ -13,6 +13,23 @@
 //! `submit_proofs_batch` accepts up to 5 `ProofSubmission` entries and verifies
 //! and stores all of them atomically: if any single proof fails the entire call
 //! reverts, saving the holder from multiple wallet confirmations and fee payments.
+//!
+//! ## Storage Rent and Archival Model
+//!
+//! Soroban persistent storage entries expire unless their TTL is extended. This
+//! contract manages TTL explicitly to ensure stored proofs persist as long as
+//! they are valid:
+//!
+//! - On `submit_proof`, the entry TTL is set to cover the credential's expiry
+//!   time (bounded by the Soroban maximum persistent entry TTL of ~631,152,000
+//!   ledgers, approximately 1 year at 5-second ledger times).
+//! - `bump_claim` allows anyone to extend the TTL of a still-valid claim, useful
+//!   for long-lived credentials that need to outlast their original TTL.
+//! - The bump threshold is set to 1 day, meaning the TTL is extended whenever
+//!   the entry is accessed within 1 day of its expiry.
+//!
+//! This ensures that proofs don't get archived while they're still valid, while
+//! allowing the network to reclaim storage for expired credentials.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
@@ -22,7 +39,13 @@ use soroban_sdk::{
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
 const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
-const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
+
+// Maximum persistent entry TTL in Soroban (~1 year at 5s ledgers)
+// This is the maximum TTL that can be set for any persistent storage entry
+const MAX_PERSISTENT_TTL: u32 = 631_152_000;
+
+// Default minimum TTL for proof entries (90 days)
+const MIN_PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
 
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
 const MAX_BATCH_SIZE: u32 = 5;
@@ -118,6 +141,8 @@ pub enum Error {
     /// Two or more submissions in the batch share the same `credential_type`;
     /// only the last write would survive, so the batch is rejected outright.
     DuplicateCredentialType = 9,
+    /// The claim is expired or not found, so it cannot be bumped.
+    ClaimExpired = 10,
 }
 
 #[contract]
@@ -219,9 +244,12 @@ impl ProofRegistry {
             issuer: Some(issuer_id),
         };
         env.storage().persistent().set(&key, &record);
+        
+        // Calculate TTL to cover the credential's expiry time
+        let ttl = Self::calculate_ttl(&env, expiry);
         env.storage()
             .persistent()
-            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, ttl);
 
         // Emit an event matching the event emission shape in the batch-proof path.
         env.events().publish(
@@ -299,9 +327,12 @@ impl ProofRegistry {
                 issuer: Some(sub.issuer_id.clone()),
             };
             env.storage().persistent().set(&key, &record);
+            
+            // Calculate TTL to cover the credential's expiry time
+            let ttl = Self::calculate_ttl(&env, sub.expiry);
             env.storage()
                 .persistent()
-                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, ttl);
 
             // Emit one event per credential, matching the shape callers already
             // expect from the single-proof path.
@@ -424,12 +455,35 @@ impl ProofRegistry {
         env.storage().persistent().set(&key, &record);
         env.storage()
             .persistent()
-            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, Self::calculate_ttl(&env, record.expiry));
 
         env.events().publish(
             (symbol_short!("revoked"),),
             (holder, credential_type, issuer, env.ledger().timestamp()),
         );
+    }
+
+    /// Extend the TTL of a still-valid claim. Anyone can call this to top up
+    /// the TTL of a claim that hasn't expired yet. This is useful for long-lived
+    /// credentials that need to persist beyond their initial TTL.
+    pub fn bump_claim(env: Env, holder: Address, credential_type: Symbol) {
+        let key = DataKey::Proof(holder, credential_type.clone());
+        let record: ProofRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
+
+        // Only bump if the claim is still valid (not expired and not revoked)
+        if record.revoked || record.expiry <= env.ledger().timestamp() {
+            panic_with_error!(&env, Error::ClaimExpired);
+        }
+
+        // Extend TTL to cover the remaining validity period
+        let ttl = Self::calculate_ttl(&env, record.expiry);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, ttl);
     }
 
     pub fn verifier_address(env: Env) -> Address {
@@ -498,6 +552,24 @@ impl ProofRegistry {
             .instance()
             .get(&DataKey::IssuerRegistry)
             .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    /// Calculate the TTL for a proof entry based on its expiry time.
+    /// The TTL is set to cover the credential's expiry time, bounded by the
+    /// Soroban maximum persistent entry TTL.
+    fn calculate_ttl(env: &Env, expiry: u64) -> u32 {
+        let now = env.ledger().timestamp();
+        let remaining_ledgers = if expiry > now {
+            // Convert seconds to ledgers (assuming ~5s per ledger)
+            // This is an approximation; in production, use the actual ledger time
+            ((expiry - now) / 5) as u32
+        } else {
+            0
+        };
+
+        // Ensure minimum TTL and cap at maximum
+        let ttl = remaining_ledgers.max(MIN_PROOF_TTL);
+        ttl.min(MAX_PERSISTENT_TTL)
     }
 }
 

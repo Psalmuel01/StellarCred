@@ -73,6 +73,23 @@ fn verifies_jurisdiction() {
     ));
 }
 
+// TODO: Enable this test once set_membership fixtures are built with bb
+// #[test]
+// fn verifies_set_membership() {
+//     let env = Env::default();
+//     env.mock_all_auths();
+//     let c = setup(&env);
+//     c.set_vk(
+//         &Symbol::new(&env, "set_membership"),
+//         &Bytes::from_slice(&env, fixture!("set_membership", "vk")),
+//     );
+//     assert!(c.verify_proof(
+//         &Symbol::new(&env, "set_membership"),
+//         &Bytes::from_slice(&env, fixture!("set_membership", "proof")),
+//         &Bytes::from_slice(&env, fixture!("set_membership", "public_inputs")),
+//     ));
+// }
+
 #[test]
 fn rejects_tampered_proof() {
     let env = Env::default();
@@ -122,4 +139,147 @@ fn panics_without_vk() {
         &Bytes::from_slice(&env, fixture!("kyc", "proof")),
         &Bytes::from_slice(&env, fixture!("kyc", "public_inputs")),
     );
+}
+
+// Role management tests
+
+#[test]
+fn admin_has_role_after_construction() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    assert!(c.has_role(&symbol_short!("admin"), &admin));
+}
+
+#[test]
+fn admin_can_grant_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pauser = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    c.grant_role(&symbol_short!("pauser"), &pauser);
+    assert!(c.has_role(&symbol_short!("pauser"), &pauser));
+}
+
+#[test]
+fn admin_can_revoke_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pauser = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    c.grant_role(&symbol_short!("pauser"), &pauser);
+    assert!(c.has_role(&symbol_short!("pauser"), &pauser));
+
+    c.revoke_role(&symbol_short!("pauser"), &pauser);
+    assert!(!c.has_role(&symbol_short!("pauser"), &pauser));
+}
+
+// TODO: Add proper integration tests for authorization failures
+// These require more complex test setup to simulate different callers
+// #[test]
+// #[should_panic]
+// fn non_admin_cannot_grant_role() {
+//     let env = Env::default();
+//     let admin = Address::generate(&env);
+//     let pauser = Address::generate(&env);
+//     let non_admin = Address::generate(&env);
+//     let id = env.register(CredentialVerifier, (admin,));
+//     let c = CredentialVerifierClient::new(&env, &id);
+//
+//     // Try to grant role as non_admin (should panic because non_admin doesn't have admin role)
+//     c.grant_role(&symbol_short!("pauser"), &pauser);
+// }
+
+#[test]
+fn role_holder_can_set_vk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    // Grant admin role to new_admin
+    c.grant_role(&symbol_short!("admin"), &new_admin);
+
+    // new_admin should be able to set_vk
+    c.set_vk(&symbol_short!("kyc"), &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+}
+
+// TODO: Add proper integration tests for authorization failures
+// These require more complex test setup to simulate different callers
+// #[test]
+// #[should_panic]
+// fn non_role_holder_cannot_set_vk() {
+//     let env = Env::default();
+//     let admin = Address::generate(&env);
+//     let _random = Address::generate(&env);
+//     let id = env.register(CredentialVerifier, (admin,));
+//     let c = CredentialVerifierClient::new(&env, &id);
+//
+//     // Random address without admin role should not be able to set_vk
+//     c.set_vk(&symbol_short!("kyc"), &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+// }
+
+#[test]
+fn pauser_can_pause_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pauser = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    c.grant_role(&symbol_short!("pauser"), &pauser);
+    c.pause();
+    assert!(c.is_paused());
+}
+
+#[test]
+fn pauser_can_unpause_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pauser = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    c.grant_role(&symbol_short!("pauser"), &pauser);
+    c.pause();
+    assert!(c.is_paused());
+
+    c.unpause();
+    assert!(!c.is_paused());
+}
+
+#[test]
+fn verify_proof_returns_false_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pauser = Address::generate(&env);
+    let id = env.register(CredentialVerifier, (admin.clone(),));
+    let c = CredentialVerifierClient::new(&env, &id);
+
+    // Set up VK first
+    c.set_vk(&symbol_short!("kyc"), &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+
+    // Grant pauser role and pause
+    c.grant_role(&symbol_short!("pauser"), &pauser);
+    c.pause();
+
+    // Verify should return false when paused
+    assert!(!c.verify_proof(
+        &symbol_short!("kyc"),
+        &Bytes::from_slice(&env, fixture!("kyc", "proof")),
+        &Bytes::from_slice(&env, fixture!("kyc", "public_inputs")),
+    ));
 }
