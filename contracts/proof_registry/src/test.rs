@@ -27,6 +27,11 @@ const AGE_VK: &[u8] = include_bytes!("../../../fixtures/age/vk");
 const AGE_PROOF: &[u8] = include_bytes!("../../../fixtures/age/proof");
 const AGE_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/age/public_inputs");
 
+// employment_proof fixture: proves employed with seniority >= 3 (min_seniority in public inputs).
+const EMPLOYMENT_VK: &[u8] = include_bytes!("../../../fixtures/employment/vk");
+const EMPLOYMENT_PROOF: &[u8] = include_bytes!("../../../fixtures/employment/proof");
+const EMPLOYMENT_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/employment/public_inputs");
+
 
 // Extract the issuer secp256k1 key (x || y) from any fixture's public inputs
 // (fields 1..65, low byte of each 32-byte field).
@@ -625,6 +630,51 @@ fn age_threshold_stored_and_checked() {
 
     // A protocol requiring age >= 21 fails — the proof only covers >= 18.
     assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(21), &None));
+}
+
+#[test]
+fn employment_threshold_stored_and_checked() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &pubkey_from(&env, EMPLOYMENT_PUBLIC_INPUTS),
+        &vec![&env, Symbol::new(&env, "employment")],
+    );
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id).set_vk(
+        &Symbol::new(&env, "employment"),
+        &Bytes::from_slice(&env, EMPLOYMENT_VK),
+    );
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+
+    // Submit the real employment proof.
+    registry.submit_proof(
+        &holder,
+        &issuer,
+        &Symbol::new(&env, "employment"),
+        &Bytes::from_slice(&env, EMPLOYMENT_PROOF),
+        &Bytes::from_slice(&env, EMPLOYMENT_PUBLIC_INPUTS),
+        &9999,
+    );
+
+    // The holder is verified as "employed" (no threshold).
+    assert!(registry.is_verified(&holder, &Symbol::new(&env, "employment"), &None).0);
+    assert!(registry.check_claim(&holder, &Symbol::new(&env, "employment"), &None, &None));
+
+    // Proven seniority >= 3: a protocol requiring <= 3 passes.
+    assert!(registry.check_claim(&holder, &Symbol::new(&env, "employment"), &Some(3), &None));
+    assert!(registry.check_claim(&holder, &Symbol::new(&env, "employment"), &Some(1), &None));
+
+    // Requiring seniority > 3 (only the proven amount) fails.
+    assert!(!registry.check_claim(&holder, &Symbol::new(&env, "employment"), &Some(4), &None));
 }
 
 // ── submit_proofs_batch tests ─────────────────────────────────────────────────

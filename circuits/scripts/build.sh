@@ -31,7 +31,7 @@ type_of() {
     jurisdiction_proof) echo jurisdiction ;;
     funds_proof) echo funds ;;
     accreditation_proof) echo accreditation ;;
-    set_membership) echo set_membership ;;
+    employment_proof) echo employment ;;
     *) echo "$1" ;;
   esac
 }
@@ -55,15 +55,17 @@ build() {
   local json="$ROOT/target/${name}.json"
   local gz="$ROOT/target/${name}.gz"
 
-  # The commit helper is only ever executed (to derive commitments), never
-  # proven — compile and stage its JSON, nothing else.
-  if [ "$name" = "commit" ]; then
-    nargo compile
-    cp "$json" "$FRONTEND_CIRCUITS/commit.json"
-    echo "  -> frontend/public/circuits/commit.json"
-    popd >/dev/null
-    return
-  fi
+  # The commit helpers are only ever executed (to derive commitments), never
+  # proven — compile and stage their JSON, nothing else.
+  case "$name" in
+    commit|commit3)
+      nargo compile
+      cp "$json" "$FRONTEND_CIRCUITS/${name}.json"
+      echo "  -> frontend/public/circuits/${name}.json"
+      popd >/dev/null
+      return
+      ;;
+  esac
 
   # Compile + VK are always possible (write_vk needs only the bytecode).
   nargo compile
@@ -97,5 +99,5 @@ build() {
 if [ "$#" -gt 0 ]; then
   for n in "$@"; do build "$n"; done
 else
-  for n in commit kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof set_membership; do build "$n"; done
+  for n in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof; do build "$n"; done
 fi

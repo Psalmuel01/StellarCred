@@ -7,8 +7,9 @@ import incomeCircuit from "../../../public/circuits/income.json";
 import jurisdictionCircuit from "../../../public/circuits/jurisdiction.json";
 import kycCircuit from "../../../public/circuits/kyc.json";
 import accreditationCircuit from "../../../public/circuits/accreditation.json";
+import employmentCircuit from "../../../public/circuits/employment.json";
 
-// Default claim params — used when a credential has no protocol-specific values.
+// Default claim params -- used when a credential has no protocol-specific values.
 const DEFAULT_THRESHOLD_YEARS = "18";
 const DEFAULT_INCOME_THRESHOLD = "200000";
 const DEFAULT_FUNDS_THRESHOLD = "10000";
@@ -64,7 +65,9 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        restricted: normalizeRestricted(params.restricted ?? DEFAULT_RESTRICTED),
+        restricted: normalizeRestricted(
+          params.restricted ?? DEFAULT_RESTRICTED,
+        ),
       };
     case "funds":
       return {
@@ -82,6 +85,19 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         commitment,
         threshold: params.threshold ?? DEFAULT_ACCREDITATION_THRESHOLD,
       };
+    case "employment":
+      return {
+        // employment_status is the binary "is employed" tag; seniority is the
+        // specific tenure the issuer committed to. Both must come from the
+        // stored credential (issuer-signed) -- NOT from request params -- so the
+        // holder can't claim a seniority they weren't actually issued.
+        employment_status: value,
+        seniority: String(cred.seniority ?? "0"),
+        salt,
+        ...sigInputs,
+        commitment,
+        min_seniority: params.threshold ?? String(cred.seniority ?? "3"),
+      };
     case "kyc":
     default:
       return { secret: value, salt, ...sigInputs, commitment };
@@ -90,13 +106,21 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
 
 function circuitFor(type: string) {
   switch (type) {
-    case "age": return ageCircuit;
-    case "funds": return fundsCircuit;
-    case "accreditation": return accreditationCircuit;
-    case "income": return incomeCircuit;
-    case "jurisdiction": return jurisdictionCircuit;
+    case "age":
+      return ageCircuit;
+    case "funds":
+      return fundsCircuit;
+    case "accreditation":
+      return accreditationCircuit;
+    case "income":
+      return incomeCircuit;
+    case "jurisdiction":
+      return jurisdictionCircuit;
+    case "employment":
+      return employmentCircuit;
     case "kyc":
-    default: return kycCircuit;
+    default:
+      return kycCircuit;
   }
 }
 

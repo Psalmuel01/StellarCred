@@ -91,6 +91,22 @@ fn verifies_jurisdiction() {
 // }
 
 #[test]
+fn verifies_employment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let c = setup(&env);
+    c.set_vk(
+        &Symbol::new(&env, "employment"),
+        &Bytes::from_slice(&env, fixture!("employment", "vk")),
+    );
+    assert!(c.verify_proof(
+        &Symbol::new(&env, "employment"),
+        &Bytes::from_slice(&env, fixture!("employment", "proof")),
+        &Bytes::from_slice(&env, fixture!("employment", "public_inputs")),
+    ));
+}
+
+#[test]
 fn rejects_tampered_proof() {
     let env = Env::default();
     env.mock_all_auths();
