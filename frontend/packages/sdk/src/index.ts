@@ -59,6 +59,76 @@ export function configure(opts: {
   _config = { ..._config, ...opts };
 }
 
+/**
+ * Reports which required configuration is present, without throwing.
+ *
+ * `registryId` is read from `STELLARCRED_REGISTRY_ID` / `NEXT_PUBLIC_PROOF_REGISTRY_ID`
+ * (or {@link configure}) — if it is missing, every {@link hasClaim} /
+ * {@link getClaims} call silently returns `false` / `[]` (via `getClient`
+ * returning `null`) instead of throwing, so a misconfigured integration can
+ * ship a gate that always denies access with no visible error. Call
+ * `healthCheck()` (e.g. at app startup, or from a debug route) to diagnose
+ * this before it surfaces as "nothing works."
+ *
+ * @example
+ * const health = StellarCred.healthCheck();
+ * if (!health.configured) console.error("StellarCred misconfigured:", health.missing);
+ */
+export function healthCheck(): {
+  configured: boolean;
+  registryId: boolean;
+  rpcUrl: boolean;
+  networkPassphrase: boolean;
+  missing: Array<"registryId" | "rpcUrl" | "networkPassphrase">;
+} {
+  const registryId = !!_config.registryId;
+  const rpcUrl = !!_config.rpcUrl;
+  const networkPassphrase = !!_config.networkPassphrase;
+  const missing: Array<"registryId" | "rpcUrl" | "networkPassphrase"> = [];
+  if (!registryId) missing.push("registryId");
+  if (!rpcUrl) missing.push("rpcUrl");
+  if (!networkPassphrase) missing.push("networkPassphrase");
+  return {
+    configured: missing.length === 0,
+    registryId,
+    rpcUrl,
+    networkPassphrase,
+    missing,
+  };
+}
+
+/**
+ * Alias for `healthCheck().configured` — a quick boolean check for call
+ * sites that don't need the detailed breakdown.
+ */
+export function isConfigured(): boolean {
+  return healthCheck().configured;
+}
+
+// One-time (per missing-config state) dev warning — never logs in production
+// builds, and never logs more than once for the same misconfiguration so it
+// doesn't spam a polling caller like `watchClaim`.
+let _warnedMissingRegistryId = false;
+function warnIfMissingRegistryIdOnce(): void {
+  if (_config.registryId) {
+    _warnedMissingRegistryId = false; // config fixed at runtime — allow re-warning if it regresses
+    return;
+  }
+  if (_warnedMissingRegistryId) return;
+  const isDev =
+    typeof process !== "undefined" &&
+    (process.env as Record<string, string | undefined>)?.NODE_ENV !== "production";
+  if (!isDev) return;
+  _warnedMissingRegistryId = true;
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[StellarCred] hasClaim()/getClaims() called with no `registryId` configured. " +
+      "Every check will silently return false/[] until you set STELLARCRED_REGISTRY_ID " +
+      "(or NEXT_PUBLIC_PROOF_REGISTRY_ID) or call StellarCred.configure({ registryId }). " +
+      "Call StellarCred.healthCheck() to diagnose. This warning only logs in development.",
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Types and Errors
 // ---------------------------------------------------------------------------
@@ -74,6 +144,14 @@ export class TimeoutError extends Error {
 
 /** The credential types StellarCred supports. Matches the contract Symbols. */
 export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds", "accreditation"] as const;
+/**
+ * Union type representing every supported StellarCred credential.
+ *
+ * @example
+ * ```ts
+ * const claim: ClaimType = "kyc";
+ * ```
+ */
 export type ClaimType = (typeof CLAIM_TYPES)[number];
 
 /**
@@ -219,6 +297,7 @@ export async function hasClaim(
   claimType: string,
   opts?: ClaimOptions,
 ): Promise<boolean> {
+  warnIfMissingRegistryIdOnce();
   if (opts?.minThreshold !== undefined) {
     return readCheckClaim(wallet, claimType, opts.minThreshold, opts.trustedIssuers);
   }
@@ -231,6 +310,7 @@ export async function hasClaim(
  * types. Useful for profile pages and protocol dashboards.
  */
 export async function getClaims(wallet: string): Promise<Claim[]> {
+  warnIfMissingRegistryIdOnce();
   const results = await Promise.all(
     CLAIM_TYPES.map(async (t) => {
       const r = await readIsVerified(wallet, t);
@@ -274,10 +354,33 @@ export function buildVerifyUrl(options: {
     /** For "jurisdiction" claims: ISO 3166-1 numeric codes to block (default []). */
     restricted?: string | string[];
   };
+  /**
+   * Opaque CSRF-style correlation token (e.g. a per-session nonce). Embedded
+   * into `returnUrl` as `sc_state` and round-tripped back on the redirect —
+   * use it to confirm the return matches a session *you* started. This is a
+   * correlation aid only, not a substitute for the on-chain `hasClaim` check:
+   * see {@link parseReturnParams} for the full trust model.
+   */
+  state?: string;
 }): string {
   const base = options.baseUrl ?? _config.baseUrl;
   const url = new URL("/verify", base);
-  url.searchParams.set("return_url", options.returnUrl);
+
+  let returnUrl = options.returnUrl;
+  if (options.state !== undefined) {
+    // Merge into returnUrl's own query string so it round-trips through the
+    // verify flow untouched, with no server-side change required — the verify
+    // page forwards return_url's existing query params as-is.
+    const returnUrlBase =
+      typeof window !== "undefined" ? window.location.origin : (base ?? "https://stellarcred.xyz");
+    const returnUrlObj = returnUrl.startsWith("/")
+      ? new URL(returnUrl, returnUrlBase)
+      : new URL(returnUrl);
+    returnUrlObj.searchParams.set("sc_state", options.state);
+    returnUrl = returnUrl.startsWith("/") ? returnUrlObj.pathname + returnUrlObj.search : returnUrlObj.toString();
+  }
+
+  url.searchParams.set("return_url", returnUrl);
   url.searchParams.set("claim", options.claim);
   if (options.claimParams) {
     const { threshold_years, threshold, restricted } = options.claimParams;
@@ -288,6 +391,70 @@ export function buildVerifyUrl(options: {
     }
   }
   return url.toString();
+}
+
+// ---------------------------------------------------------------------------
+// Return-URL params — untrusted hints only (Issue #213)
+// ---------------------------------------------------------------------------
+
+/**
+ * The query params StellarCred appends to `returnUrl` after the verify flow
+ * completes: `sc_verified=true`, `sc_wallet=<address>`, and an optional
+ * `sc_claims=<comma-separated-types>` (only the claim types issued in the
+ * current session — see {@link buildVerifyUrl}). `sc_state` round-trips
+ * whatever correlation token was passed to `buildVerifyUrl`'s `state` option.
+ *
+ * **These are untrusted hints, not a proof.** Nothing binds this redirect to
+ * a specific session — a URL shaped exactly like this one can be
+ * hand-crafted by anyone and pasted into a browser; StellarCred does not
+ * sign or otherwise authenticate this redirect. `sc_state`, if you set one,
+ * only tells you the redirect correlates with a session *you* started — it
+ * does not tell you the claims are real. The one thing that IS trustless is
+ * the on-chain ProofRegistry itself: **always call {@link hasClaim} (server
+ * side, for the real wallet address you intend to gate) before granting
+ * access**, using these params only to decide which wallet/claim to check
+ * and to render optimistic UI while that check is in flight.
+ *
+ * @example
+ * const hint = parseReturnParams(window.location.href);
+ * if (hint.verified && hint.wallet) {
+ *   // Optimistic UI only — the real gate is the server-side check below.
+ *   const reallyVerified = await hasClaim(hint.wallet, "kyc");
+ * }
+ */
+export interface UntrustedReturnParams {
+  /** `true` if `sc_verified=true` was present. Untrusted — see interface doc. */
+  verified: boolean;
+  /** The wallet address the redirect claims verified. Untrusted — re-check with `hasClaim`. */
+  wallet: string | null;
+  /** Claim types the redirect claims were just issued. Untrusted — re-check with `hasClaim`. */
+  claims: string[];
+  /** The `state` token passed to `buildVerifyUrl`, if any — for session correlation only. */
+  state: string | null;
+}
+
+/**
+ * Extracts `sc_verified` / `sc_wallet` / `sc_claims` / `sc_state` from a
+ * return-URL, typed as {@link UntrustedReturnParams} to make the trust model
+ * explicit at the call site. See that type's TSDoc for why these values MUST
+ * be re-verified with {@link hasClaim} before granting access.
+ *
+ * Accepts a full URL string, a relative URL (`pathname?search`), or a
+ * `URLSearchParams`/`URL` instance directly.
+ */
+export function parseReturnParams(url: string | URL | URLSearchParams): UntrustedReturnParams {
+  const params =
+    url instanceof URLSearchParams
+      ? url
+      : new URL(url instanceof URL ? url.toString() : url, "http://localhost").searchParams;
+
+  const claimsParam = params.get("sc_claims");
+  return {
+    verified: params.get("sc_verified") === "true",
+    wallet: params.get("sc_wallet"),
+    claims: claimsParam ? claimsParam.split(",").filter(Boolean) : [],
+    state: params.get("sc_state"),
+  };
 }
 
 /**
@@ -405,5 +572,16 @@ export function watchClaim(
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
 
-export const StellarCred = { configure, hasClaim, getClaims, buildVerifyUrl, watchClaim, CLAIM_TYPES, TimeoutError };
+export const StellarCred = {
+  configure,
+  healthCheck,
+  isConfigured,
+  hasClaim,
+  getClaims,
+  buildVerifyUrl,
+  parseReturnParams,
+  watchClaim,
+  CLAIM_TYPES,
+  TimeoutError,
+};
 export default StellarCred;

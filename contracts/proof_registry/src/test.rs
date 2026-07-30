@@ -550,6 +550,229 @@ fn age_threshold_stored_and_checked() {
     assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(21), &None));
 }
 
+// ── check_claim property & boundary fuzz tests (Issue #26) ───────────────────
+
+use proptest::prelude::*;
+
+fn deploy_registry(env: &Env) -> (ProofRegistryClient<'static>, Address) {
+    env.mock_all_auths();
+    let admin = Address::generate(env);
+    let v_id = Address::generate(env);
+    let ir_id = Address::generate(env);
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    (ProofRegistryClient::new(env, &pr_id), pr_id)
+}
+
+fn set_proof_record(
+    env: &Env,
+    registry_id: &Address,
+    holder: &Address,
+    cred: &Symbol,
+    record: &ProofRecord,
+) {
+    env.as_contract(registry_id, || {
+        let key = DataKey::Proof(holder.clone(), cred.clone());
+        env.storage().persistent().set(&key, record);
+        env.storage().persistent().extend_ttl(&key, 17280, 17280 * 90);
+    });
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    #[test]
+    fn prop_check_claim_stored_ge_required_returns_true(
+        required in any::<u64>(),
+        offset in any::<u64>(),
+    ) {
+        // Generate stored >= required via saturating add to cover entire u64 space without overflow
+        let stored = required.saturating_add(offset);
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: Some(stored),
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &Some(required), &None);
+        prop_assert!(res);
+    }
+
+    #[test]
+    fn prop_check_claim_stored_lt_required_returns_false(
+        required in 1..=u64::MAX,
+        delta in 1..=u64::MAX,
+    ) {
+        // Generate stored < required
+        let diff = (delta % required).max(1);
+        let stored = required - diff;
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: Some(stored),
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &Some(required), &None);
+        prop_assert!(!res);
+    }
+
+    #[test]
+    fn prop_check_claim_none_required_returns_true_for_valid_proof(
+        stored in prop::option::of(any::<u64>()),
+    ) {
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("kyc");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: stored,
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &None, &None);
+        prop_assert!(res);
+    }
+
+    #[test]
+    fn prop_check_claim_expired_or_revoked_always_returns_false(
+        stored in prop::option::of(any::<u64>()),
+        required in prop::option::of(any::<u64>()),
+        revoked in any::<bool>(),
+        expired in any::<bool>(),
+    ) {
+        if !revoked && !expired {
+            return Ok(());
+        }
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let expiry = if expired { env.ledger().timestamp() } else { env.ledger().timestamp() + 1000 };
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry,
+            threshold: stored,
+            revoked,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &required, &None);
+        prop_assert!(!res);
+    }
+}
+
+#[test]
+fn check_claim_boundary_values_exhaustive() {
+    let env = Env::default();
+    let (client, reg_id) = deploy_registry(&env);
+    let cred = symbol_short!("funds");
+
+    let boundaries = [0, 1, 2, u64::MAX / 2, u64::MAX - 1, u64::MAX];
+
+    for &req in &boundaries {
+        // Test exact match (stored == req) -> true
+        {
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(req),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req for req={}", req
+            );
+        }
+
+        // Test stored == req + 1 (if req < u64::MAX) -> true
+        if req < u64::MAX {
+            let stored = req + 1;
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(stored),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req + 1 for req={}", req
+            );
+        }
+
+        // Test stored == req - 1 (if req > 0) -> false
+        if req > 0 {
+            let stored = req - 1;
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(stored),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                !client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req - 1 for req={}", req
+            );
+        }
+    }
+}
+
+#[test]
+fn check_claim_stored_none_with_required_threshold() {
+    let env = Env::default();
+    let (client, reg_id) = deploy_registry(&env);
+    let cred = symbol_short!("kyc");
+    let holder1 = Address::generate(&env);
+    let record1 = ProofRecord {
+        verified_at: 100,
+        expiry: 1000,
+        threshold: None, // e.g. KYC proof without numeric threshold
+        revoked: false,
+        issuer: None,
+    };
+    set_proof_record(&env, &reg_id, &holder1, &cred, &record1);
+
+    // None threshold defaults to 0 in unwrap_or(0).
+    // So Some(0) returns true (0 >= 0), while Some(1) returns false (0 < 1).
+    assert!(client.check_claim(&holder1, &cred, &Some(0), &None));
+    assert!(!client.check_claim(&holder1, &cred, &Some(1), &None));
+    assert!(!client.check_claim(&holder1, &cred, &Some(u64::MAX), &None));
+}
+
 // ── submit_proofs_batch tests ─────────────────────────────────────────────────
 
 /// Helper: build a ProofSubmission for the kyc fixture.

@@ -23,6 +23,12 @@ export interface Credential {
   issuerPubY: number[];
   issuedAt: number;
   expiry: string;
+  /**
+   * Issuer-attested tenure (years), set on `employment` credentials so the
+   * holder can prove `seniority >= min_seniority` against the issuer's signed
+   * commitment. Required for employment; absent for other types.
+   */
+  seniority?: string;
   /** Protocol-specific proof parameters (e.g. age threshold, restricted list). */
   claimParams?: ClaimParams;
   /** Unix timestamp (seconds) when the proof was last successfully submitted. */
@@ -36,7 +42,12 @@ export const TYPE_META: Record<
   { title: string; claim: string; issuable: boolean; attribute?: string }
 > = {
   kyc: { title: "KYC Complete", claim: "identity verified", issuable: true },
-  age: { title: "Age Verified", claim: "age ≥ 18", issuable: true, attribute: "Date of birth" },
+  age: {
+    title: "Age Verified",
+    claim: "age ≥ 18",
+    issuable: true,
+    attribute: "Date of birth",
+  },
   income: {
     title: "Accredited (Income)",
     claim: "income > $200,000",
@@ -60,6 +71,12 @@ export const TYPE_META: Record<
     claim: "net worth ≥ $1,000,000",
     issuable: true,
     attribute: "Net worth (USD)",
+  },
+  employment: {
+    title: "Employed",
+    claim: "employed, seniority ≥ 3",
+    issuable: true,
+    attribute: "Seniority (years)",
   },
 };
 
@@ -91,7 +108,9 @@ export function saveCredential(cred: Credential): Credential[] {
   const all = loadCredentials();
   const next = [
     cred,
-    ...all.filter((c) => !(c.type === cred.type && c.commitment === cred.commitment)),
+    ...all.filter(
+      (c) => !(c.type === cred.type && c.commitment === cred.commitment),
+    ),
   ];
   localStorage.setItem(KEY, JSON.stringify(next));
   return next;
@@ -108,13 +127,14 @@ export function markProved(commitment: string, txHash: string): Credential[] {
 }
 
 /** Mark multiple credentials as proved in a single localStorage write. */
-export function markAllProved(commitments: string[], txHash: string): Credential[] {
+export function markAllProved(
+  commitments: string[],
+  txHash: string,
+): Credential[] {
   const set = new Set(commitments);
   const now = Math.floor(Date.now() / 1000);
   const next = loadCredentials().map((c) =>
-    set.has(c.commitment)
-      ? { ...c, provedAt: now, provedTxHash: txHash }
-      : c,
+    set.has(c.commitment) ? { ...c, provedAt: now, provedTxHash: txHash } : c,
   );
   localStorage.setItem(KEY, JSON.stringify(next));
   return next;
@@ -128,8 +148,16 @@ export function removeCredential(commitment: string): Credential[] {
 
 export function parseCredential(json: string): Credential {
   const c = JSON.parse(json);
-  if (!c.type || c.value === undefined || !c.commitment || !c.issuerId || !c.sig) {
-    throw new Error("Not a valid credential (missing type, value, commitment, issuerId, or sig).");
+  if (
+    !c.type ||
+    c.value === undefined ||
+    !c.commitment ||
+    !c.issuerId ||
+    !c.sig
+  ) {
+    throw new Error(
+      "Not a valid credential (missing type, value, commitment, issuerId, or sig).",
+    );
   }
   return c as Credential;
 }

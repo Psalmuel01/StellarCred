@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { InputMap } from "@noir-lang/noir_js";
+import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
 import ageCircuit from "../../../public/circuits/age.json";
 import fundsCircuit from "../../../public/circuits/funds.json";
 import incomeCircuit from "../../../public/circuits/income.json";
 import jurisdictionCircuit from "../../../public/circuits/jurisdiction.json";
 import kycCircuit from "../../../public/circuits/kyc.json";
 import accreditationCircuit from "../../../public/circuits/accreditation.json";
+import employmentCircuit from "../../../public/circuits/employment.json";
 
-// Default claim params — used when a credential has no protocol-specific values.
+// Default claim params -- used when a credential has no protocol-specific values.
 const DEFAULT_THRESHOLD_YEARS = "18";
 const DEFAULT_INCOME_THRESHOLD = "200000";
 const DEFAULT_FUNDS_THRESHOLD = "10000";
@@ -63,7 +65,9 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        restricted: normalizeRestricted(params.restricted ?? DEFAULT_RESTRICTED),
+        restricted: normalizeRestricted(
+          params.restricted ?? DEFAULT_RESTRICTED,
+        ),
       };
     case "funds":
       return {
@@ -81,6 +85,19 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         commitment,
         threshold: params.threshold ?? DEFAULT_ACCREDITATION_THRESHOLD,
       };
+    case "employment":
+      return {
+        // employment_status is the binary "is employed" tag; seniority is the
+        // specific tenure the issuer committed to. Both must come from the
+        // stored credential (issuer-signed) -- NOT from request params -- so the
+        // holder can't claim a seniority they weren't actually issued.
+        employment_status: value,
+        seniority: String(cred.seniority ?? "0"),
+        salt,
+        ...sigInputs,
+        commitment,
+        min_seniority: params.threshold ?? String(cred.seniority ?? "3"),
+      };
     case "kyc":
     default:
       return { secret: value, salt, ...sigInputs, commitment };
@@ -89,28 +106,45 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
 
 function circuitFor(type: string) {
   switch (type) {
-    case "age": return ageCircuit;
-    case "funds": return fundsCircuit;
-    case "accreditation": return accreditationCircuit;
-    case "income": return incomeCircuit;
-    case "jurisdiction": return jurisdictionCircuit;
+    case "age":
+      return ageCircuit;
+    case "funds":
+      return fundsCircuit;
+    case "accreditation":
+      return accreditationCircuit;
+    case "income":
+      return incomeCircuit;
+    case "jurisdiction":
+      return jurisdictionCircuit;
+    case "employment":
+      return employmentCircuit;
     case "kyc":
-    default: return kycCircuit;
+    default:
+      return kycCircuit;
   }
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = resolveRequestId(req.headers.get("x-request-id"));
+
+  const sendResponse = (response: NextResponse) => {
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+
   let body: { type?: string; credential?: Record<string, unknown> };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return sendResponse(NextResponse.json({ error: "Invalid JSON" }, { status: 400 }));
   }
 
   const { type, credential } = body;
   if (!type || !credential) {
-    return NextResponse.json({ error: "type and credential are required" }, { status: 400 });
+    return sendResponse(NextResponse.json({ error: "type and credential are required" }, { status: 400 }));
   }
+
+  logger.info(stripSensitiveFields({ event: "witness_request_received", credentialType: type, requestId }));
 
   try {
     const { Noir } = await import("@noir-lang/noir_js");
@@ -120,8 +154,21 @@ export async function POST(req: NextRequest) {
     const { witness } = await noir.execute(inputs);
     // Serialize Uint8Array → hex string for JSON transport.
     const hex = Buffer.from(witness).toString("hex");
-    return NextResponse.json({ witness: hex });
+    logger.info(stripSensitiveFields({
+      event: "witness_response_sent",
+      credentialType: type,
+      outcome: "success",
+      requestId,
+    }));
+    return sendResponse(NextResponse.json({ witness: hex }));
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    logger.error(stripSensitiveFields({
+      event: "witness_response_sent",
+      credentialType: type,
+      outcome: "failure",
+      error: (e as Error).message,
+      requestId,
+    }));
+    return sendResponse(NextResponse.json({ error: (e as Error).message }, { status: 500 }));
   }
 }

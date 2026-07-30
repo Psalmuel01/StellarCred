@@ -265,6 +265,24 @@ p {
   }
 }
 
+/* Documentation Anchor Links */
+.heading-group .anchor-link-icon {
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+}
+
+.heading-group:hover .anchor-link-icon,
+.heading-group a:focus .anchor-link-icon,
+.anchor-link-icon:focus {
+  opacity: 0.85;
+}
+
+@media (max-width: 640px) {
+  .heading-group .anchor-link-icon {
+    opacity: 0.5;
+  }
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -1038,6 +1056,50 @@ textarea:focus {
   from {
     opacity: 0;
     transform: translateX(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Modal --------------------------------------------------------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: modal-overlay-in 0.15s var(--ease) both;
+}
+
+.modal {
+  width: 100%;
+  max-width: 360px;
+  max-height: calc(100vh - 2.5rem);
+  overflow-y: auto;
+  box-shadow: var(--shadow-card);
+  animation: modal-in 0.2s var(--ease) both;
+  /* Programmatically focused on open (for the Tab trap) — a focus ring
+     around the whole dialog on open would look like a rendering glitch. */
+  outline: none;
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
   }
 
   to {

@@ -59,6 +59,103 @@ async function loadBb(): Promise<BbModule> {
   return import(/* webpackIgnore: true */ "/bb/index.js") as Promise<BbModule>;
 }
 
+type Backend = InstanceType<BbModule["UltraHonkBackend"]>;
+
+// Constructed (or in-flight) UltraHonkBackend instances, keyed by circuit
+// type, for this browser tab's session. Construction is the expensive part
+// (bytecode fetch + wasm init), so once a backend exists for a type we keep
+// it around and reuse it across every subsequent proof of that type instead
+// of tearing it down after each use. Callers that own this cache's lifecycle
+// (see lib/use-warm-prover.ts) are responsible for calling destroyBackend /
+// destroyAllBackends when it's time to let the wasm memory go (e.g. the
+// holder page unmounting or the tab closing) -- this module never does so on
+// its own.
+const backendCache = new Map<CredentialType, Promise<Backend>>();
+
+// Multithreading is only safe once the page is crossOriginIsolated (see the
+// COOP/COEP comment in next.config.mjs, which today keeps that permanently
+// false so bb.js stays on its single-threaded path). Read the live value at
+// construction time rather than hardcoding `threads: 1`, so this keeps
+// working correctly without changes if/when the multithreading fix lands.
+function backendOptions(): { threads?: number } {
+  if (typeof window !== "undefined" && window.crossOriginIsolated) {
+    return {};
+  }
+  return { threads: 1 };
+}
+
+async function buildBackend(type: CredentialType): Promise<Backend> {
+  const circuitRes = await fetch(`/circuits/${type}.json`);
+  if (!circuitRes.ok) {
+    throw new Error(
+      `Compiled circuit "${type}" not found. Run the circuit build to emit /public/circuits/${type}.json.`,
+    );
+  }
+  const circuit = (await circuitRes.json()) as { bytecode: string };
+  const { UltraHonkBackend } = await loadBb();
+  return new UltraHonkBackend(circuit.bytecode, backendOptions());
+}
+
+// Returns the cached (or in-flight) backend for `type`, constructing one if
+// none exists yet. Concurrent callers for the same type -- e.g. the warm
+// trigger firing twice under React StrictMode, or a real prove click racing
+// an in-flight warm -- share this exact promise instead of racing separate
+// constructions, since the cache is checked and populated synchronously
+// (no `await` between the `get` and the `set`).
+function getBackend(type: CredentialType): Promise<Backend> {
+  let pending = backendCache.get(type);
+  if (!pending) {
+    pending = buildBackend(type);
+    backendCache.set(type, pending);
+    // A failed construction must not permanently poison the cache for this
+    // type -- evict it so the next call (a warm retry, or the user's actual
+    // prove click) gets a fresh attempt instead of replaying the same error
+    // forever.
+    pending.catch(() => {
+      if (backendCache.get(type) === pending) backendCache.delete(type);
+    });
+  }
+  return pending;
+}
+
+// Warms the prover for `type` in the background: kicks off backend
+// construction (bytecode fetch + wasm init) without blocking the caller or
+// throwing. Meant to be called ahead of time (see use-warm-prover.ts) so the
+// eventual prove click hits an already-warm cache. If warming fails (network
+// error, wasm init failure, etc.) it's logged and swallowed -- the real
+// prove click still falls back to constructing fresh via proveWithBackend.
+export function warmBackend(type: CredentialType): void {
+  const before = backendCache.get(type);
+  const pending = getBackend(type);
+  if (pending !== before) {
+    pending.catch((err) => {
+      console.warn(`[proof] Failed to warm prover for "${type}":`, err);
+    });
+  }
+}
+
+// Destroys and evicts the cached backend for `type`, if one exists. Safe to
+// call even when nothing was ever warmed/proved for that type.
+export async function destroyBackend(type: CredentialType): Promise<void> {
+  const pending = backendCache.get(type);
+  if (!pending) return;
+  backendCache.delete(type);
+  try {
+    const backend = await pending;
+    await backend.destroy();
+  } catch {
+    // Construction itself failed, or destroy() threw -- either way there's
+    // nothing left to clean up.
+  }
+}
+
+// Destroys every cached backend. Intended for page unmount / navigating away
+// from the holder page (see use-warm-prover.ts), so wasm memory isn't held
+// for the rest of the tab's lifetime once the user is done proving.
+export async function destroyAllBackends(): Promise<void> {
+  await Promise.all(Array.from(backendCache.keys()).map(destroyBackend));
+}
+
 // Stage 1 — server computes the witness (Noir circuit execution).
 // Exported so ProofFlow can report progress between stages.
 export async function computeWitness(
@@ -84,28 +181,24 @@ export async function computeWitness(
 
 // Stage 2 — browser runs UltraHonk over the witness.
 // Exported so ProofFlow can call it after stage 1 completes.
+//
+// Reuses the cached backend for `type` (see getBackend above) if one is
+// already warm or warming, constructing one on demand otherwise. Unlike the
+// original implementation, this deliberately does NOT destroy the backend
+// afterwards -- the whole point of the cache is that a second proof of the
+// same type (a retry, or the next credential in a batch) reuses the already-
+// initialized wasm instance instead of paying construction cost again.
+// Destruction is the cache owner's responsibility (see destroyBackend /
+// destroyAllBackends, called from use-warm-prover.ts on unmount).
 export async function proveWithBackend(
   type: CredentialType,
   witness: Uint8Array,
 ): Promise<GeneratedProof> {
-  const circuitRes = await fetch(`/circuits/${type}.json`);
-  if (!circuitRes.ok) {
-    throw new Error(
-      `Compiled circuit "${type}" not found. Run the circuit build to emit /public/circuits/${type}.json.`,
-    );
-  }
-  const circuit = (await circuitRes.json()) as { bytecode: string };
-
-  const { UltraHonkBackend } = await loadBb();
-  const backend = new UltraHonkBackend(circuit.bytecode, { threads: 1 });
-  try {
-    const { proof, publicInputs } = await backend.generateProof(witness, {
-      keccak: true,
-    });
-    return { proof, publicInputs: fieldsToBytes(publicInputs) };
-  } finally {
-    await backend.destroy();
-  }
+  const backend = await getBackend(type);
+  const { proof, publicInputs } = await backend.generateProof(witness, {
+    keccak: true,
+  });
+  return { proof, publicInputs: fieldsToBytes(publicInputs) };
 }
 
 // Convenience wrapper — runs both stages in sequence.
