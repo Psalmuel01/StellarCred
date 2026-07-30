@@ -91,20 +91,14 @@ const nextConfig = {
             value: "max-age=63072000; includeSubDomains",
           },
           { key: "X-Frame-Options", value: "DENY" },
+          // components/QrScanner.tsx uses getUserMedia() for camera-based QR
+          // scanning (/verify and /holder). Explicitly scoped to this origin —
+          // no embedding context should be able to request it.
+          { key: "Permissions-Policy", value: "camera=(self)" },
         ],
       },
-      {
-        source: "/api/:path*",
-        headers: [
-          {
-            key: "Access-Control-Allow-Origin",
-            value: process.env.APP_ORIGIN || "http://localhost:3000",
-          },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization" },
-          { key: "Vary", value: "Origin" },
-        ],
-      },
+      // CORS headers for /api/* are handled by middleware.ts (OPTIONS preflight
+      // returns 204, all other methods get headers appended to the response).
     ];
   },
 };

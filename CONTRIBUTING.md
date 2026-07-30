@@ -67,7 +67,7 @@ pnpm dev
 1. **Fork** the repo and create a branch from `main`.
 2. Make your changes. Keep commits focused — one logical change per commit.
 3. For contract changes: run `cargo test` and confirm all tests pass.
-4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts.
+4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts, then regenerate the regression test vectors with `node circuits/scripts/testvectors.js update` (see `circuits/README.md` — "Test Vectors") and commit the result. CI runs `node circuits/scripts/testvectors.js check` and fails if a circuit or toolchain change silently altered proof output without the vectors being updated.
 5. For frontend changes: run `pnpm tsc --noEmit` (zero errors required) and `pnpm build`.
 6. Open a pull request against `main` with a clear description of what changed and why.
 
