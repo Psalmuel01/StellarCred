@@ -83,7 +83,11 @@ export async function GET() {
     rpc.status === "ok" &&
     persona.status === "ok";
 
-  const body: ReadyResponse = { ready, signer, contracts, rpc, persona };
+  const body: ReadyResponse = {
+    ready,
+    issuer: process.env.ISSUER_PRIVATE_KEY ? "configured" : "demo",
+    signer, contracts, rpc, persona,
+  };
 
   return NextResponse.json(body, { status: ready ? 200 : 503 });
 }
