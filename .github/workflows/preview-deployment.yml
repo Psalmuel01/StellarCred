@@ -1,0 +1,142 @@
+name: Preview Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - 'frontend/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Pull Vercel Environment Information
+        working-directory: ./frontend
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build Project Artifacts
+        working-directory: ./frontend
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          NEXT_PUBLIC_STELLAR_NETWORK: "testnet"
+          NEXT_PUBLIC_CONTRACT_ID: "CB2R3O43TX3G3N3X4Y5Z6A7B8C9D0E1F2G3H4I5J6K7L8M9N0O"
+
+      - name: Deploy Project Artifacts to Vercel
+        id: deploy
+        working-directory: ./frontend
+        run: |
+          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "preview_url=$url" >> $GITHUB_OUTPUT
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Comment PR with Preview Link
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
+        with:
+          script: |
+            const previewUrl = process.env.PREVIEW_URL;
+            const issue_number = context.issue.number;
+            const body = `### 🚀 Preview Deployment Ready!\n\n| Name | Link |\n| --- | --- |\n| **Latest Deploy** | [${previewUrl}](${previewUrl}) |\n\n*Built automatically for commit ${context.sha.substring(0, 7)}*`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+            });
+
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes('🚀 Preview Deployment Ready!'));
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+                body: body
+              });
+            }
+
+  teardown-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Find Preview URL from PR Comment
+        id: find-url
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes('🚀 Preview Deployment Ready!'));
+            if (!botComment) {
+              core.setOutput('preview_url', '');
+              return;
+            }
+
+            const match = botComment.body.match(/\[(https:\/\/[^\]]+)\]\(https:\/\/[^)]+\)/);
+            core.setOutput('preview_url', match ? match[1] : '');
+
+      - name: Remove Preview Deployment
+        if: steps.find-url.outputs.preview_url != ''
+        run: vercel remove "$PREVIEW_URL" --yes --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          PREVIEW_URL: ${{ steps.find-url.outputs.preview_url }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

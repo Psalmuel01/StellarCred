@@ -233,8 +233,9 @@ function ProtocolDetailInner() {
             )}
           </div>
 
-          <label className="field-label">{protocol.inputLabel}</label>
+          <label className="field-label" htmlFor="protocol-input">{protocol.inputLabel}</label>
           <input
+            id="protocol-input"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             disabled={!eligible}

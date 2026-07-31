@@ -79,25 +79,14 @@ export function useStellarCred(
     setError(null);
 
     try {
-      const typesToCheck = options?.claims || ["kyc", "age", "jurisdiction", "income", "funds", "accreditation"];
-      const results: Partial<Record<ClaimType, boolean>> = {};
+      const typesToCheck: ClaimType[] =
+        options?.claims || ["kyc", "age", "jurisdiction", "income", "funds", "accreditation"];
 
-      await Promise.all(
-        typesToCheck.map(async (claimType) => {
-          try {
-            const hasClaim = await StellarCred.hasClaim(wallet, claimType, {
-              minThreshold: options?.minThresholds?.[claimType],
-            });
-            if (mountedRef.current) {
-              results[claimType] = hasClaim;
-            }
-          } catch {
-            if (mountedRef.current) {
-              results[claimType] = false;
-            }
-          }
-        })
-      );
+      // One batched read shares a single client across all types; per-type
+      // failures resolve to `false` inside `hasClaims`.
+      const results = await StellarCred.hasClaims(wallet, typesToCheck, {
+        minThresholds: options?.minThresholds,
+      });
 
       if (mountedRef.current) {
         setClaims(results);

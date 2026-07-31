@@ -71,6 +71,14 @@ pnpm dev
 5. For frontend changes: run `pnpm tsc --noEmit` (zero errors required) and `pnpm build`.
 6. Open a pull request against `main` with a clear description of what changed and why.
 
+## Preview Deployments
+
+Every Pull Request automatically triggers a live preview deployment via GitHub Actions.
+
+- **URL Generation:** Once CI runs, the deployment URL will be automatically posted as a comment on your PR.
+- **Environment Configuration:** Preview builds automatically ingest safe **testnet/dummy contract IDs**. No production secrets are exposed or required for PR previews.
+- **Lifecycle:** The preview environment updates automatically with every new commit pushed to the PR and is torn down when the PR is closed or merged.
+
 ## Areas open for contribution
 
 - Additional credential types (employment, accreditation, etc.)

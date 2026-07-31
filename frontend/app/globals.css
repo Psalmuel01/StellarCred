@@ -27,6 +27,7 @@
   --accent-dim: #2ba870;
   --accent-soft: rgba(62, 207, 142, 0.1);
   --accent-glow: rgba(62, 207, 142, 0.18);
+  --on-accent: #021a0c;
 
   /* Semantic */
   --warn: #e3b341;
@@ -58,13 +59,14 @@
   --card-hover: #f3f3f1;
   --text: #111110;
   --muted: #6f6e6b;
-  --faint: #a8a49e;
+  --faint: #736f69;
   --border: #e5e3de;
   --border-strong: #c8c6c1;
   --accent: #1a7a4a;
   --accent-dim: #135c37;
   --accent-soft: rgba(26, 122, 74, 0.06);  /* Light green surface tint */
   --accent-glow: rgba(26, 122, 74, 0.12);
+  --on-accent: #ffffff;
 }
 :root .sun-icon {
   display: block;
@@ -596,7 +598,7 @@ p {
 /* Green primary - branded */
 .btn-primary {
   background: var(--accent);
-  color: #021a0c;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -683,8 +685,36 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: rgba(62, 207, 142, 0.35);
-  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.08);
+  border-color: rgba(62, 207, 142, 0.6);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.35);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(62, 207, 142, 0.9);
+  outline-offset: 1px;
+}
+
+/* ---- Skip link ---------------------------------------------------------------- */
+
+.skip-link {
+  position: absolute;
+  top: -3rem;
+  left: 0.5rem;
+  z-index: 1000;
+  padding: 0.6rem 1rem;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: 0.5rem;
 }
 
 /* ---- Badge ------------------------------------------------------------------ */
@@ -918,11 +948,21 @@ textarea:focus {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 
   .check circle,
   .check path {
     stroke-dashoffset: 0;
+  }
+
+  .card-link:hover,
+  .protocol-card:hover,
+  .protocol-card:active,
+  .btn:active {
+    transform: none !important;
   }
 }
 

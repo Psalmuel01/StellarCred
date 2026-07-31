@@ -72,13 +72,22 @@ type Backend = InstanceType<BbModule["UltraHonkBackend"]>;
 // its own.
 const backendCache = new Map<CredentialType, Promise<Backend>>();
 
-// Multithreading is only safe once the page is crossOriginIsolated (see the
-// COOP/COEP comment in next.config.mjs, which today keeps that permanently
-// false so bb.js stays on its single-threaded path). Read the live value at
-// construction time rather than hardcoding `threads: 1`, so this keeps
-// working correctly without changes if/when the multithreading fix lands.
+// Multithreading is only safe once the page is crossOriginIsolated (COOP/COEP
+// headers — see next.config.mjs). Read the live value at construction time
+// rather than caching it, so a proxy/CDN stripping those headers still falls
+// back correctly to the single-threaded path. Omitting `threads` when
+// isolated lets bb.js pick its own worker-pool size (it reads
+// navigator.hardwareConcurrency internally); logged once so the choice is
+// visible in the field.
+let loggedIsolation = false;
+
 function backendOptions(): { threads?: number } {
-  if (typeof window !== "undefined" && window.crossOriginIsolated) {
+  const isolated = typeof window !== "undefined" && window.crossOriginIsolated;
+  if (!loggedIsolation) {
+    loggedIsolation = true;
+    console.info(`[proof] crossOriginIsolated=${!!isolated}`);
+  }
+  if (isolated) {
     return {};
   }
   return { threads: 1 };

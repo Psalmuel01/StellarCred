@@ -31,6 +31,7 @@ import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
   submitProofsBatch,
+  MAX_BATCH_SIZE,
   parseContractError,
   type ContractError,
   type ProofSubmissionParams,
@@ -82,6 +83,7 @@ function CredCard({
   onRemove,
   onInspect,
   isPreview,
+  selection,
 }: {
   c: Credential;
   address: string;
@@ -89,6 +91,13 @@ function CredCard({
   onRemove: () => void;
   onInspect: () => void;
   isPreview?: boolean;
+  /** Batch selection controls — omitted on cards that can't be batched. */
+  selection?: {
+    checked: boolean;
+    /** Why this card can't currently be added, or null when it can. */
+    blockedReason: string | null;
+    onToggle: () => void;
+  };
 }) {
   const status = proofStatus(c);
 
@@ -248,13 +257,74 @@ function HolderInner() {
   const unprovedTypes = Array.from(new Set(unproved.map((c) => c.type)));
   useWarmProver(unprovedTypes, Boolean(address));
 
-  // Credentials eligible for "Prove all" (unproved or expired), capped at 5.
-  // Deduplicate by type: the contract writes one slot per (holder, credential_type),
-  // so two entries of the same type in a batch would silently overwrite each other.
-  const batchCandidates = unproved
-    .filter((c, idx, arr) => arr.findIndex((x) => x.type === c.type) === idx)
-    .slice(0, 5);
-  const canBatch = address && batchCandidates.length >= 2;
+  // ── Batch selection ────────────────────────────────────────────────────────
+  // The holder picks which unproved credentials go into one transaction. Both
+  // on-chain limits are enforced here, before anything is proved: at most
+  // MAX_BATCH_SIZE entries, and no two of the same credential type (the
+  // registry writes one slot per (holder, credential_type), so a duplicate
+  // would overwrite its sibling — the contract rejects the batch outright).
+  const [selectedCommitments, setSelectedCommitments] = useState<string[]>([]);
+
+  const selectedCreds = unproved.filter((c) => selectedCommitments.includes(c.commitment));
+  const selectedTypes = new Set(selectedCreds.map((c) => c.type));
+  const atBatchLimit = selectedCreds.length >= MAX_BATCH_SIZE;
+
+  // Drop selections that are no longer selectable — a credential that was
+  // removed, transferred away, or has just been proved. `unproved` is rebuilt
+  // on every render, so the effect keys off its commitments instead, and only
+  // ever sets state when something actually fell out of the list.
+  const unprovedKey = unproved.map((c) => c.commitment).join(",");
+  useEffect(() => {
+    const live = new Set(unprovedKey ? unprovedKey.split(",") : []);
+    setSelectedCommitments((prev) => {
+      const next = prev.filter((h) => live.has(h));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [unprovedKey]);
+
+  /** Why `c` cannot be added to the current selection, or null if it can. */
+  function blockedReason(c: Credential): string | null {
+    if (selectedCommitments.includes(c.commitment)) return null;
+    if (selectedTypes.has(c.type)) {
+      return `A batch can hold only one ${c.type} credential — the registry keeps one proof per credential type.`;
+    }
+    if (atBatchLimit) {
+      return `A batch holds at most ${MAX_BATCH_SIZE} credentials. Deselect one to swap it out.`;
+    }
+    return null;
+  }
+
+  function toggleSelected(c: Credential) {
+    if (selectedCommitments.includes(c.commitment)) {
+      setSelectedCommitments((prev) => prev.filter((h) => h !== c.commitment));
+      return;
+    }
+    const blocked = blockedReason(c);
+    if (blocked) {
+      toast.error(blocked);
+      return;
+    }
+    setSelectedCommitments((prev) => [...prev, c.commitment]);
+  }
+
+  /** Fill the selection with the first eligible credential of each type. */
+  function selectEligible() {
+    const picked: string[] = [];
+    const types = new Set<string>();
+    for (const c of unproved) {
+      if (picked.length >= MAX_BATCH_SIZE) break;
+      if (types.has(c.type)) continue;
+      types.add(c.type);
+      picked.push(c.commitment);
+    }
+    setSelectedCommitments(picked);
+  }
+
+  // Selecting is only offered when a batch is actually possible: a connected
+  // wallet and at least two credentials of distinct types.
+  const distinctUnprovedTypes = new Set(unproved.map((c) => c.type)).size;
+  const canBatch = Boolean(address) && distinctUnprovedTypes >= 2;
+  const canSubmitBatch = selectedCreds.length >= 2;
 
   return (
     <>
@@ -341,26 +411,69 @@ function HolderInner() {
                   onRemove={() => setCreds(removeCredential(c.commitment))}
                   onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
+                  selection={
+                    canBatch
+                      ? {
+                          checked: selectedCommitments.includes(c.commitment),
+                          blockedReason: blockedReason(c),
+                          onToggle: () => toggleSelected(c),
+                        }
+                      : undefined
+                  }
                 />
               ))}
 
-              {/* Prove all button — shown when there are 2+ unproved credentials */}
+              {/* Batch bar — select up to MAX_BATCH_SIZE credentials of
+                  distinct types and prove them in one transaction. */}
               {canBatch && (
-                <button
-                  id="prove-all-btn"
-                  className="btn btn-primary"
+                <div
+                  className="between"
                   style={{
-                    alignSelf: "flex-start",
-                    marginTop: "0.25rem",
-                    gap: "0.45rem",
-                    display: "inline-flex",
                     alignItems: "center",
+                    gap: "0.75rem",
+                    flexWrap: "wrap",
+                    marginTop: "0.25rem",
                   }}
-                  onClick={() => setView({ kind: "batch", creds: batchCandidates })}
                 >
-                  <IconStack2 size={15} />
-                  Prove all ({batchCandidates.length}) in one transaction
-                </button>
+                  <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+                    <button
+                      id="prove-all-btn"
+                      className="btn btn-primary"
+                      style={{ gap: "0.45rem", display: "inline-flex", alignItems: "center" }}
+                      disabled={!canSubmitBatch}
+                      title={
+                        canSubmitBatch
+                          ? undefined
+                          : "Select at least 2 credentials to prove them together"
+                      }
+                      onClick={() => setView({ kind: "batch", creds: selectedCreds })}
+                    >
+                      <IconStack2 size={15} />
+                      {selectedCreds.length > 0
+                        ? `Prove ${selectedCreds.length} selected in one transaction`
+                        : "Prove several in one transaction"}
+                    </button>
+                    {selectedCreds.length > 0 ? (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setSelectedCommitments([])}
+                      >
+                        Clear
+                      </button>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" onClick={selectEligible}>
+                        Select eligible
+                      </button>
+                    )}
+                  </div>
+                  <span className="faint" style={{ fontSize: "0.75rem" }}>
+                    {atBatchLimit
+                      ? `Batch full — ${MAX_BATCH_SIZE} of ${MAX_BATCH_SIZE} selected.`
+                      : selectedCreds.length === 0
+                        ? `Select up to ${MAX_BATCH_SIZE} credentials, one per credential type.`
+                        : `${selectedCreds.length} of ${MAX_BATCH_SIZE} selected · one per credential type.`}
+                  </span>
+                </div>
               )}
             </div>
           )}

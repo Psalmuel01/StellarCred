@@ -87,6 +87,7 @@ function VerifyInner() {
   const [selected, setSelected] = useState<CredentialType | null>(
     requiredClaim ?? TYPES[0]?.[0] ?? null,
   );
+  const radioRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [attributes, setAttributes] = useState<Record<string, string>>({
     date_of_birth: "1995-06-15",
     income: "250000",
@@ -498,7 +499,7 @@ function VerifyInner() {
                   </strong>
                 </div>
               )}
-              <label className="field-label">Credential type</label>
+              <label className="field-label" id="credential-type-label">Credential type</label>
               {locked && (
                 <p
                   className="faint"
@@ -513,6 +514,8 @@ function VerifyInner() {
               )}
               <div
                 className="stack"
+                role="radiogroup"
+                aria-labelledby="credential-type-label"
                 style={{
                   gap: "0.5rem",
                   marginTop: "0.5rem",
@@ -522,12 +525,41 @@ function VerifyInner() {
                 {TYPES.map(([key, m]) => {
                   const on = selected === key;
                   if (locked && key !== requiredClaim) return null;
+                  const visibleTypes = locked
+                    ? TYPES.filter(([k]) => k === requiredClaim)
+                    : TYPES;
                   return (
                     <div
                       key={key}
+                      ref={(el) => {
+                        radioRefs.current[key] = el;
+                      }}
                       onClick={() => {
                         if (!locked) setSelected(key);
                       }}
+                      onKeyDown={(e) => {
+                        if (locked) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelected(key);
+                        } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                          e.preventDefault();
+                          const i = visibleTypes.findIndex(([k]) => k === key);
+                          const [nextKey] = visibleTypes[(i + 1) % visibleTypes.length];
+                          setSelected(nextKey);
+                          radioRefs.current[nextKey]?.focus();
+                        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                          e.preventDefault();
+                          const i = visibleTypes.findIndex(([k]) => k === key);
+                          const [prevKey] = visibleTypes[(i - 1 + visibleTypes.length) % visibleTypes.length];
+                          setSelected(prevKey);
+                          radioRefs.current[prevKey]?.focus();
+                        }
+                      }}
+                      role="radio"
+                      aria-checked={on}
+                      aria-label={m.title}
+                      tabIndex={on ? 0 : -1}
                       style={{
                         padding: "0.75rem 0.9rem",
                         borderRadius: "var(--radius)",
@@ -604,8 +636,9 @@ function VerifyInner() {
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <label className="field-label">{m.attribute}</label>
+                          <label className="field-label" htmlFor="attr-date-of-birth">{m.attribute}</label>
                           <input
+                            id="attr-date-of-birth"
                             type="date"
                             value={attributes.date_of_birth}
                             onChange={(e) =>
@@ -619,8 +652,9 @@ function VerifyInner() {
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <label className="field-label">{m.attribute}</label>
+                          <label className="field-label" htmlFor="attr-income">{m.attribute}</label>
                           <input
+                            id="attr-income"
                             type="number"
                             value={attributes.income}
                             onChange={(e) => setAttr("income", e.target.value)}
@@ -632,8 +666,9 @@ function VerifyInner() {
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <label className="field-label">{m.attribute}</label>
+                          <label className="field-label" htmlFor="attr-net-worth">{m.attribute}</label>
                           <input
+                            id="attr-net-worth"
                             type="number"
                             value={attributes.net_worth}
                             onChange={(e) =>
@@ -771,8 +806,9 @@ function VerifyInner() {
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <label className="field-label">{m.attribute}</label>
+                          <label className="field-label" htmlFor="attr-country-code">{m.attribute}</label>
                           <select
+                            id="attr-country-code"
                             value={attributes.country_code}
                             onChange={(e) =>
                               setAttr("country_code", e.target.value)
@@ -791,8 +827,9 @@ function VerifyInner() {
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <label className="field-label">{m.attribute}</label>
+                          <label className="field-label" htmlFor="attr-seniority">{m.attribute}</label>
                           <input
+                            id="attr-seniority"
                             type="number"
                             value={attributes.seniority}
                             onChange={(e) =>
@@ -807,8 +844,9 @@ function VerifyInner() {
               </div>
 
               <div style={{ marginBottom: "1.5rem" }}>
-                <label className="field-label">Validity period</label>
+                <label className="field-label" htmlFor="validity-period">Validity period</label>
                 <select
+                  id="validity-period"
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                 >

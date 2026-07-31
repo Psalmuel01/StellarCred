@@ -97,3 +97,45 @@ jobs:
 
       - name: Run issuer tests (incl. cross-boundary circuit test)
         run: pnpm --filter @stellarcred/issuer test
+
+  a11y:
+    name: Accessibility (axe-core)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # Dummy values so the build doesn't error on missing env vars
+      NEXT_PUBLIC_PROOF_REGISTRY_ID: C000000000000000000000000000000000000000000000000000000000000001
+      NEXT_PUBLIC_ISSUER_REGISTRY_ID: C000000000000000000000000000000000000000000000000000000000000002
+      NEXT_PUBLIC_CREDENTIAL_VERIFIER_ID: C000000000000000000000000000000000000000000000000000000000000003
+      NEXT_PUBLIC_GATED_POOL_ID: C000000000000000000000000000000000000000000000000000000000000004
+      NEXT_PUBLIC_ISSUER_ADDRESS: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
+      NEXT_PUBLIC_STELLAR_NETWORK: testnet
+      NEXT_PUBLIC_RPC_URL: https://soroban-testnet.stellar.org
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run axe-core accessibility checks
+        run: pnpm test:e2e
