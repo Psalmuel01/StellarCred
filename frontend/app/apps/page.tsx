@@ -67,6 +67,15 @@ function ProtocolCard({
     <div
       className="card protocol-card"
       onClick={() => router.push(`/apps/${protocol.id}`)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          router.push(`/apps/${protocol.id}`);
+        }
+      }}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open ${protocol.name} — ${protocol.tagline}`}
       style={{ display: "flex", flexDirection: "column", gap: 0, cursor: "pointer" }}
     >
       <div className="between" style={{ marginBottom: "0.35rem" }}>
@@ -194,6 +203,8 @@ function AppsInner() {
           <input
             type="text"
             placeholder={t("searchPlaceholder")}
+            aria-label="Search apps by name, description, or tagline"
+            placeholder="Search apps by name, description, or tagline..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: "100%", padding: "0.65rem 0.75rem 0.65rem 2.25rem", borderRadius: "var(--radius)", border: "1px solid var(--border)", background: "var(--bg-raised)", color: "var(--text)", fontSize: "0.875rem" }}

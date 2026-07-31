@@ -57,6 +57,10 @@ export function configure(opts: {
   baseUrl?: string;
 }): void {
   _config = { ..._config, ...opts };
+  // The cached client is bound to the old config — drop it so the next read
+  // rebuilds against the new one.
+  _client = null;
+  _clientKey = "";
 }
 
 /**
@@ -144,6 +148,14 @@ export class TimeoutError extends Error {
 
 /** The credential types StellarCred supports. Matches the contract Symbols. */
 export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds", "accreditation"] as const;
+/**
+ * Union type representing every supported StellarCred credential.
+ *
+ * @example
+ * ```ts
+ * const claim: ClaimType = "kyc";
+ * ```
+ */
 export type ClaimType = (typeof CLAIM_TYPES)[number];
 
 /**
@@ -196,16 +208,53 @@ function getSdk(): Promise<StellarSDK> {
   return _sdk;
 }
 
+// The client is stateless per config, so one instance is shared across every
+// read. Cached as a promise so a fan-out of concurrent reads (see `fanOut`)
+// awaits a single construction instead of racing to build N clients.
+let _client: Promise<ProofRegistryClient> | null = null;
+let _clientKey = "";
+
 async function getClient(): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
   if (!registryId) return null;
-  const { rpc } = await getSdk();
-  return new ProofRegistryClient({
-    networkPassphrase,
-    contractId: registryId,
-    rpcUrl,
-    allowHttp: rpcUrl.startsWith("http://"),
+
+  const key = `${registryId}|${rpcUrl}|${networkPassphrase}`;
+  if (_client && _clientKey === key) return _client;
+
+  _clientKey = key;
+  _client = getSdk().then(
+    () =>
+      new ProofRegistryClient({
+        networkPassphrase,
+        contractId: registryId,
+        rpcUrl,
+        allowHttp: rpcUrl.startsWith("http://"),
+      }),
+  );
+  // Don't cache a failed SDK import — the next read should retry. `_sdk` holds
+  // the import promise itself, so it has to be cleared too: leaving a rejected
+  // promise there would make every later `getClient()` fail on the same
+  // rejection instead of re-attempting the import.
+  _client.catch(() => {
+    _sdk = null;
+    _client = null;
+    _clientKey = "";
   });
+  return _client;
+}
+
+/**
+ * Runs `fn` over `items` concurrently after priming the shared client, so a
+ * multi-claim read builds one `ProofRegistryClient` rather than one per item.
+ */
+async function fanOut<T, R>(
+  items: readonly T[],
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  // Priming is an optimisation only — if it fails, each read falls back to its
+  // own `getClient()` call and its own error handling.
+  await getClient().catch(() => null);
+  return Promise.all(items.map(fn));
 }
 
 async function readIsVerified(
@@ -298,17 +347,94 @@ export async function hasClaim(
 }
 
 /**
+ * Options accepted by {@link hasClaims}.
+ *
+ * Mirrors {@link ClaimOptions}, except the threshold is per claim type so one
+ * batched call can gate on several parameterised claims at once.
+ */
+export interface BatchClaimOptions {
+  /**
+   * Per-type minimum thresholds, e.g. `{ age: 21, funds: 50000 }`. A type with
+   * no entry here is checked as a binary claim (`is_verified`), exactly as
+   * {@link hasClaim} does when `minThreshold` is omitted.
+   */
+  minThresholds?: Partial<Record<ClaimType, number>>;
+  /**
+   * Restrict which issuer(s) every proof in this batch must come from. Same
+   * semantics as {@link ClaimOptions.trustedIssuers} — omit to accept any
+   * registered issuer, pass an empty array to reject every issuer.
+   */
+  trustedIssuers?: string[];
+}
+
+/**
+ * Batched form of {@link hasClaim}: checks several claim types for one wallet
+ * in a single fan-out that shares one `ProofRegistryClient`, instead of the
+ * caller issuing N independent `hasClaim` calls.
+ *
+ * Each type resolves independently — a read that fails (RPC error, missing
+ * config) resolves to `false` for that type rather than rejecting the whole
+ * batch. Duplicate types in `types` are read once and appear once in the
+ * result. The returned record contains a key for every requested type.
+ *
+ * @param wallet Stellar address to check.
+ * @param types Claim types to read.
+ * @param opts Per-type thresholds and issuer restrictions.
+ *
+ * @example
+ * // Gate on three claims at once
+ * const claims = await hasClaims("G1ABC…", ["kyc", "age", "funds"], {
+ *   minThresholds: { age: 21, funds: 50000 },
+ * });
+ * if (claims.kyc && claims.age) grantAccess();
+ */
+export async function hasClaims(
+  wallet: string,
+  types: readonly ClaimType[],
+  opts?: BatchClaimOptions,
+): Promise<Partial<Record<ClaimType, boolean>>> {
+  warnIfMissingRegistryIdOnce();
+
+  const unique = Array.from(new Set(types));
+  const results: Partial<Record<ClaimType, boolean>> = {};
+
+  await fanOut(unique, async (t) => {
+    try {
+      const minThreshold = opts?.minThresholds?.[t];
+      if (minThreshold !== undefined) {
+        results[t] = await readCheckClaim(wallet, t, minThreshold, opts?.trustedIssuers);
+        return;
+      }
+      const r = await readIsVerified(wallet, t, opts?.trustedIssuers);
+      results[t] = !!r && r.valid;
+    } catch {
+      results[t] = false;
+    }
+  });
+
+  return results;
+}
+
+/**
  * Returns every active claim a wallet has proven, across all known credential
  * types. Useful for profile pages and protocol dashboards.
+ *
+ * Uses the same batched fan-out as {@link hasClaims}, so all types are read
+ * through one shared client.
  */
 export async function getClaims(wallet: string): Promise<Claim[]> {
   warnIfMissingRegistryIdOnce();
-  const results = await Promise.all(
-    CLAIM_TYPES.map(async (t) => {
+  const results = await fanOut(CLAIM_TYPES, async (t) => {
+    // Same isolation as `hasClaims`: `readIsVerified` swallows read errors, but
+    // its own `getClient()` await can still reject (a failed SDK import), which
+    // would otherwise reject the whole fan-out instead of dropping one type.
+    try {
       const r = await readIsVerified(wallet, t);
       return r && r.valid ? { type: t, verifiedAt: r.verifiedAt, expiry: r.expiry } : null;
-    }),
-  );
+    } catch {
+      return null;
+    }
+  });
   return results.filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
@@ -569,6 +695,7 @@ export const StellarCred = {
   healthCheck,
   isConfigured,
   hasClaim,
+  hasClaims,
   getClaims,
   buildVerifyUrl,
   parseReturnParams,

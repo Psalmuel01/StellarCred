@@ -10,9 +10,36 @@
 //! `jurisdiction`, `income`, `human`, `employer`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    BytesN, Env, Symbol, Vec,
 };
+
+// ── Event types ──────────────────────────────────────────────────────────────
+// Topics follow the convention: (contract, action, credential_type_or_unit).
+// `contract` is always `symbol_short!("iss_reg")` for IssuerRegistry events.
+// `action`   identifies the operation.
+// For events that are not credential-type-specific, the third topic is omitted
+// (tuple length 2).
+
+/// Payload emitted when an issuer is registered or updated.
+/// Topics: ("iss_reg", "register")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventIssuerRegistered {
+    /// The address of the newly registered issuer.
+    pub issuer: Address,
+    /// The issuer's secp256k1 public key (x || y, 32 bytes each).
+    pub pubkey: BytesN<64>,
+}
+
+/// Payload emitted when an issuer is revoked.
+/// Topics: ("iss_reg", "revoked")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventIssuerRevoked {
+    /// The address of the revoked issuer.
+    pub issuer: Address,
+}
 
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -59,6 +86,10 @@ impl IssuerRegistry {
     }
 
     /// Register (or overwrite) a trusted issuer. Admin-only.
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
+    // value-based publish to stay consistent with the rest of the codebase.
+    #[allow(deprecated)]
     pub fn register_issuer(
         env: Env,
         issuer_id: Address,
@@ -67,7 +98,7 @@ impl IssuerRegistry {
     ) {
         Self::require_admin(&env);
         let issuer = Issuer {
-            pubkey,
+            pubkey: pubkey.clone(),
             credential_types,
             revoked: false,
         };
@@ -83,16 +114,30 @@ impl IssuerRegistry {
             .get(&DataKey::IssuerList)
             .unwrap_or_else(|| Vec::new(&env));
         if !list.contains(&issuer_id) {
-            list.push_back(issuer_id);
+            list.push_back(issuer_id.clone());
             env.storage().instance().set(&DataKey::IssuerList, &list);
         }
+
+        // Emit: topics = ("iss_reg", "register")
+        //       data   = EventIssuerRegistered { issuer, pubkey }
+        env.events().publish(
+            (symbol_short!("iss_reg"), symbol_short!("register")),
+            EventIssuerRegistered {
+                issuer: issuer_id,
+                pubkey,
+            },
+        );
     }
 
     /// Mark an issuer as revoked. Admin-only. Existing proofs are not affected
     /// here — revocation propagates through `is_valid_issuer` checks.
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
+    // value-based publish to stay consistent with the rest of the codebase.
+    #[allow(deprecated)]
     pub fn revoke_issuer(env: Env, issuer_id: Address) {
         Self::require_admin(&env);
-        let key = DataKey::Issuer(issuer_id);
+        let key = DataKey::Issuer(issuer_id.clone());
         let mut issuer: Issuer = env
             .storage()
             .persistent()
@@ -103,6 +148,13 @@ impl IssuerRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&key, BUMP_THRESHOLD, ENTRY_TTL);
+
+        // Emit: topics = ("iss_reg", "revoked")
+        //       data   = EventIssuerRevoked { issuer }
+        env.events().publish(
+            (symbol_short!("iss_reg"), symbol_short!("revoked")),
+            EventIssuerRevoked { issuer: issuer_id },
+        );
     }
 
     /// All registered issuer addresses (including revoked).
