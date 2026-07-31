@@ -49,21 +49,25 @@ const nextConfig = {
     return config;
   },
 
-  // NOTE: We intentionally do NOT set Cross-Origin-Opener/Embedder-Policy.
-  // Those headers enable SharedArrayBuffer (crossOriginIsolated), which makes
-  // bb.js take its *multithreaded* path. That path spawns a Web Worker from
-  // @aztec/bb.js's prebuilt main.worker.js bundle via `new Worker(new URL(...))`.
-  // Next.js's webpack re-wraps that already-bundled file and corrupts its inner
-  // module runtime, throwing "Object.defineProperty called on non-object" the
-  // moment you generate a proof. Without these headers, getSharedMemoryAvailable()
-  // is false, so bb.js runs single-threaded: it only loads barretenberg.js (a
-  // trivial one-line module exporting the wasm as a data URI) and never touches
-  // the worker. Slower proving, but it actually runs. See lib/proof.ts.
+  // Cross-Origin-Opener/Embedder-Policy make the page crossOriginIsolated,
+  // which unlocks SharedArrayBuffer and lets bb.js take its *multithreaded*
+  // proving path (lib/proof.ts picks navigator.hardwareConcurrency threads
+  // when crossOriginIsolated, else falls back to 1).
   //
-  // The security headers below are separate from COOP/COEP and safe to add.
+  // This used to corrupt proving: @aztec/bb.js's UltraHonkBackend spawns a Web
+  // Worker from its prebuilt main.worker.js bundle via
+  // `new Worker(new URL("./main.worker.js", import.meta.url))`, and if
+  // Next.js/webpack re-processed that already-bundled file it corrupted its
+  // inner module runtime ("Object.defineProperty called on non-object"). That
+  // no longer applies: scripts/copy-bb.mjs copies bb.js's browser bundle to
+  // /public/bb, and lib/proof.ts loads it with a webpackIgnore dynamic import,
+  // so webpack never touches it regardless of these headers. All bb.js assets
+  // (main.worker.js, barretenberg.js, the .wasm) are served same-origin from
+  // /public/bb, so COEP's same-origin exemption covers them without needing
+  // extra Cross-Origin-Resource-Policy headers.
+  //
   // 'wasm-unsafe-eval' in script-src is required for WASM instantiation and
-  // is unrelated to cross-origin isolation, so it does not re-enable the
-  // multithreaded path above.
+  // is unrelated to cross-origin isolation.
   async headers() {
     return [
       {
@@ -91,20 +95,16 @@ const nextConfig = {
             value: "max-age=63072000; includeSubDomains",
           },
           { key: "X-Frame-Options", value: "DENY" },
+          // components/QrScanner.tsx uses getUserMedia() for camera-based QR
+          // scanning (/verify and /holder). Explicitly scoped to this origin —
+          // no embedding context should be able to request it.
+          { key: "Permissions-Policy", value: "camera=(self)" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
         ],
       },
-      {
-        source: "/api/:path*",
-        headers: [
-          {
-            key: "Access-Control-Allow-Origin",
-            value: process.env.APP_ORIGIN || "http://localhost:3000",
-          },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization" },
-          { key: "Vary", value: "Origin" },
-        ],
-      },
+      // CORS headers for /api/* are handled by middleware.ts (OPTIONS preflight
+      // returns 204, all other methods get headers appended to the response).
     ];
   },
 };

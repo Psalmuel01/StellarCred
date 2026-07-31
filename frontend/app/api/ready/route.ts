@@ -8,10 +8,14 @@ interface DependencyStatus {
   message?: string;
 }
 
+interface SignerStatus extends DependencyStatus {
+  /** "demo" = signing with the public demo issuer key; "configured" = ISSUER_PRIVATE_KEY set. */
+  issuer: "demo" | "configured";
+}
+
 interface ReadyResponse {
   ready: boolean;
-  issuer: "demo" | "configured";
-  signer: DependencyStatus;
+  signer: SignerStatus;
   contracts: DependencyStatus;
   rpc: DependencyStatus;
   persona: DependencyStatus;
@@ -34,11 +38,15 @@ async function checkRpc(): Promise<DependencyStatus> {
   }
 }
 
-function checkSigner(): DependencyStatus {
+function checkSigner(): SignerStatus {
   if (!process.env.ISSUER_PRIVATE_KEY) {
-    return { status: "error", message: "ISSUER_PRIVATE_KEY not set" };
+    return {
+      status: "error",
+      message: "ISSUER_PRIVATE_KEY not set — signing with the public demo issuer key",
+      issuer: "demo",
+    };
   }
-  return { status: "ok" };
+  return { status: "ok", issuer: "configured" };
 }
 
 function checkContracts(): DependencyStatus {

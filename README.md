@@ -101,6 +101,8 @@ frontend/               Next.js 14 app (App Router)
   packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
 scripts/deploy.sh       deploy + wire + register issuer + install all VKs on testnet
+scripts/benchmark.sh    measure instruction budget for every public function on testnet
+BENCHMARKS.md           per-function instruction counts, ledger I/O, and fee estimates
 ```
 
 All five credential circuits share one commitment scheme,
@@ -313,7 +315,12 @@ Deploy and wire the contracts on the Stellar Mainnet:
 
 - **ZK verification is real**, on soroban-sdk 26 with host-native BN254
   (`soroban_sdk::crypto::bn254`) — on-chain verification fits the resource budget
-  (~0.014 XLM/verify on testnet per the reference repo).
+  (~0.014 XLM/verify on testnet). See [BENCHMARKS.md](BENCHMARKS.md) for the
+  full per-function instruction budget and fee breakdown.
+- **All public functions benchmarked.** `submit_proof` uses ~13.5M instructions
+  (~13.5% of the 100M per-transaction budget), confirming the protocol fits
+  comfortably within Soroban's limits. Read-only functions (`is_verified`,
+  `check_claim`) use <400K instructions (<0.4%). See [BENCHMARKS.md](BENCHMARKS.md).
 - **21 contract tests pass**, including real proof verification for all credential
   types, in-circuit ECDSA, untrusted-issuer and wrong-issuer-key rejections, and
   a proof-expiry test that advances ledger time.

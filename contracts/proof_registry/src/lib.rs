@@ -16,7 +16,7 @@
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec,
+    symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Val, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -76,6 +76,18 @@ pub struct ProofRecord {
     /// `legacy_record_missing_issuer_key_fails_to_read` in test.rs). A real
     /// migration is required before redeploying over existing stored proofs.
     pub issuer: Option<Address>,
+}
+
+/// A legacy 4-field record shape from before `ProofRecord` gained the `issuer`
+/// field. Used by `migrate_record` to read records stored under the old schema
+/// and rewrite them into the current 5-field `ProofRecord` layout.
+#[contracttype]
+#[derive(Clone)]
+pub struct LegacyProofRecord {
+    pub verified_at: u64,
+    pub expiry: u64,
+    pub threshold: Option<u64>,
+    pub revoked: bool,
 }
 
 /// A single proof submission inside a batch. Mirrors the individual parameters
@@ -432,6 +444,58 @@ impl ProofRegistry {
         );
     }
 
+    /// Admin-only migration from the legacy 4-field `ProofRecord` layout (no
+    /// `issuer` field) to the current 5-field layout. Reads the stored map
+    /// as a generic `Map<Symbol, Val>` to determine the field count without
+    /// triggering the struct-deserialisation panic that would occur on a
+    /// shape mismatch.
+    ///
+    /// - Idempotent: records already in the current 5-field shape are a no-op.
+    /// - Migrated records are written with `issuer: None` so they fail closed
+    ///   under an active `trusted_issuers` filter (there is no issuer to check
+    ///   against).
+    /// - Only the contract admin may call this function.
+    pub fn migrate_record(env: Env, holder: Address, credential_type: Symbol) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+
+        let key = DataKey::Proof(holder.clone(), credential_type.clone());
+
+        // Read the stored value as a generic map so we can check the field
+        // count without panicking on a shape mismatch.
+        let raw_map: Map<Symbol, Val> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
+
+        if raw_map.len() == 4 {
+            // Legacy 4-field record — safe to deserialise as LegacyProofRecord.
+            let legacy: LegacyProofRecord = env
+                .storage()
+                .persistent()
+                .get(&key)
+                .unwrap();
+
+            let record = ProofRecord {
+                verified_at: legacy.verified_at,
+                expiry: legacy.expiry,
+                threshold: legacy.threshold,
+                revoked: legacy.revoked,
+                issuer: None,
+            };
+            env.storage().persistent().set(&key, &record);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+        }
+        // If raw_map.len() == 5, the record is already current — idempotent no-op.
+    }
+
     pub fn verifier_address(env: Env) -> Address {
         Self::verifier(&env)
     }
@@ -454,6 +518,7 @@ impl ProofRegistry {
         } else if *credential_type == symbol_short!("income")
             || *credential_type == symbol_short!("funds")
             || *credential_type == Symbol::new(env, "accreditation")
+            || *credential_type == Symbol::new(env, "employment")
         {
             // field 65, bytes 2080-2111, u64 in last 8 bytes
             Some(Self::read_u64_field(public_inputs, 65))

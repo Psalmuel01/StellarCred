@@ -67,9 +67,17 @@ pnpm dev
 1. **Fork** the repo and create a branch from `main`.
 2. Make your changes. Keep commits focused — one logical change per commit.
 3. For contract changes: run `cargo test` and confirm all tests pass.
-4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts.
+4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts, then regenerate the regression test vectors with `node circuits/scripts/testvectors.js update` (see `circuits/README.md` — "Test Vectors") and commit the result. CI runs `node circuits/scripts/testvectors.js check` and fails if a circuit or toolchain change silently altered proof output without the vectors being updated.
 5. For frontend changes: run `pnpm tsc --noEmit` (zero errors required) and `pnpm build`.
 6. Open a pull request against `main` with a clear description of what changed and why.
+
+## Preview Deployments
+
+Every Pull Request automatically triggers a live preview deployment via GitHub Actions.
+
+- **URL Generation:** Once CI runs, the deployment URL will be automatically posted as a comment on your PR.
+- **Environment Configuration:** Preview builds automatically ingest safe **testnet/dummy contract IDs**. No production secrets are exposed or required for PR previews.
+- **Lifecycle:** The preview environment updates automatically with every new commit pushed to the PR and is torn down when the PR is closed or merged.
 
 ## Areas open for contribution
 
