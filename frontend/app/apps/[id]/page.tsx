@@ -10,6 +10,7 @@ import {
   IconCircle,
   IconArrowRight,
   IconArrowLeft,
+  IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
@@ -18,6 +19,7 @@ import { ConfigBanner } from "@/components/ConfigBanner";
 import { usePreviewMode } from "@/lib/wallet-context";
 import { checkClaim } from "@/lib/contracts";
 import { getProtocol } from "@/lib/protocols";
+import { QrCodeModal } from "@/components/QrCodeModal";
 
 function ProtocolDetailInner() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +37,7 @@ function ProtocolDetailInner() {
   const [statuses, setStatuses] = useState<boolean[]>([]);
   const [checked, setChecked] = useState(false);
   const [inputValue, setInputValue] = useState(protocol?.inputDefault ?? "");
+  const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
     if (!protocol) return;
@@ -186,14 +189,32 @@ function ProtocolDetailInner() {
           )}
           {!activeWallet && (
           {checked && !eligible && !isPreview && (
-            <Link
-              href={protocol.verifyUrl}
-              className="btn btn-secondary"
-              style={{ width: "100%" }}
-            >
-              Get verified
-              <IconArrowRight size={14} />
-            </Link>
+            <div className="row" style={{ gap: "0.5rem" }}>
+              <Link
+                href={protocol.verifyUrl}
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+              >
+                Get verified
+                <IconArrowRight size={14} />
+              </Link>
+              <button
+                className="btn btn-secondary btn-sm"
+                title="Scan to verify on another device"
+                onClick={() => setShowQr(true)}
+              >
+                <IconQrcode size={16} />
+              </button>
+            </div>
+          )}
+
+          {showQr && (
+            <QrCodeModal
+              title="Verify on another device"
+              value={typeof window !== "undefined" ? new URL(protocol.verifyUrl, window.location.origin).toString() : protocol.verifyUrl}
+              hint={`Scan with a phone to continue this ${protocol.name} verification request there.`}
+              onClose={() => setShowQr(false)}
+            />
           )}
 
           {!activeWallet && !isPreview && (
@@ -220,8 +241,9 @@ function ProtocolDetailInner() {
             )}
           </div>
 
-          <label className="field-label">{protocol.inputLabel}</label>
+          <label className="field-label" htmlFor="protocol-input">{protocol.inputLabel}</label>
           <input
+            id="protocol-input"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             disabled={!eligible}

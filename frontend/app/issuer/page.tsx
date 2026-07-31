@@ -31,6 +31,7 @@ const DEFAULT_ATTR: Record<CredentialType, string> = {
   jurisdiction: "566",
   funds: "50000",
   accreditation: "1500000",
+  employment: "5",
 };
 
 const COUNTRIES = [
@@ -134,6 +135,8 @@ export default function IssuerPage() {
       else if (type === "funds") attributes.balance = attribute;
       else if (type === "accreditation") attributes.net_worth = attribute;
       else if (type === "jurisdiction") attributes.country_code = attribute;
+      // employment: the value is the binary status tag (set server-side to "1"),
+      // the user-supplied attribute is the holder's seniority in years.
 
       const res = await fetch("/api/issue", {
         method: "POST",
@@ -165,6 +168,10 @@ export default function IssuerPage() {
         <div>
           <span className="eyebrow">{t("eyebrow")}</span>
           <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
+          <span className="eyebrow">Issuer admin · demo</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>
+            Issue a credential
+          </h1>
         </div>
         <WalletButton />
       </div>
@@ -172,9 +179,30 @@ export default function IssuerPage() {
       <div style={{ marginBottom: "1.75rem", padding: "0.75rem 1rem", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", fontSize: "0.8125rem", color: "var(--muted)", lineHeight: 1.6 }}>
         <strong style={{ color: "var(--text)" }}>{t("simulationStrong")}</strong>{" "}
         {t("simulationNote")}
+      <div
+        style={{
+          marginBottom: "1.75rem",
+          padding: "0.75rem 1rem",
+          borderRadius: "var(--radius)",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--border)",
+          fontSize: "0.8125rem",
+          color: "var(--muted)",
+          lineHeight: 1.6,
+        }}
+      >
+        <strong style={{ color: "var(--text)" }}>
+          Simulates the issuer's side.
+        </strong>{" "}
+        In production this would be a separate authenticated app run by the
+        institution — KYC provider, bank, employer — after verifying the holder
+        off-chain. The holder would never see this interface.
       </div>
 
-      <div className="grid grid-2" style={{ alignItems: "start", gap: "1.5rem" }}>
+      <div
+        className="grid grid-2"
+        style={{ alignItems: "start", gap: "1.5rem" }}
+      >
         <div className="card">
           <label className="field-label">{t("holderAddress")}</label>
           <input value={holder} onChange={(e) => setHolder(e.target.value)} placeholder={t("holderPlaceholder")} />
@@ -185,6 +213,7 @@ export default function IssuerPage() {
               <select value={type} onChange={(e) => onType(e.target.value as CredentialType)}>
                 {TYPES.map(([key, m]) => (
           <label className="field-label">Registered issuer</label>
+          <label className="field-label" htmlFor="registered-issuer">Registered issuer</label>
           {issuersLoading ? (
             <p className="faint" style={{ fontSize: "0.8125rem", marginTop: "0.35rem" }}>
               Loading issuers from IssuerRegistry…
@@ -197,6 +226,7 @@ export default function IssuerPage() {
           ) : (
             <>
               <select
+                id="registered-issuer"
                 value={selectedIssuerId}
                 onChange={(e) => setSelectedIssuerId(e.target.value)}
               >
@@ -226,15 +256,19 @@ export default function IssuerPage() {
             </>
           )}
 
-          <label className="field-label" style={{ marginTop: "1.25rem" }}>
+          <label className="field-label" htmlFor="holder-address" style={{ marginTop: "1.25rem" }}>
             Holder address
           </label>
-          <input value={holder} onChange={(e) => setHolder(e.target.value)} placeholder="G…" />
+          <input id="holder-address" value={holder} onChange={(e) => setHolder(e.target.value)} placeholder="G…" />
 
-          <div className="grid grid-2" style={{ marginTop: "1.25rem", gap: "1rem" }}>
+          <div
+            className="grid grid-2"
+            style={{ marginTop: "1.25rem", gap: "1rem" }}
+          >
             <div>
-              <label className="field-label">Credential type</label>
+              <label className="field-label" htmlFor="credential-type">Credential type</label>
               <select
+                id="credential-type"
                 value={type}
                 onChange={(e) => onType(e.target.value as CredentialType)}
                 disabled={availableTypes.length === 0}
@@ -251,6 +285,14 @@ export default function IssuerPage() {
               <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
                 {([["30 days", t("expiry30")], ["90 days", t("expiry90")], ["1 year", t("expiry1year")]] as [string, string][]).map(([val, label]) => (
                   <option key={val} value={val}>{label}</option>
+              <label className="field-label" htmlFor="issuer-expiry">Expiry</label>
+              <select
+                id="issuer-expiry"
+                value={expiry}
+                onChange={(e) => setExpiry(e.target.value)}
+              >
+                {["30 days", "90 days", "1 year"].map((t) => (
+                  <option key={t}>{t}</option>
                 ))}
               </select>
             </div>
@@ -258,11 +300,20 @@ export default function IssuerPage() {
 
           {needsAttr && (
             <div style={{ marginTop: "1.25rem" }}>
-              <label className="field-label">{meta.attribute}</label>
+              <label className="field-label" htmlFor="issuer-attribute">{meta.attribute}</label>
               {type === "age" ? (
-                <input type="date" value={attribute} onChange={(e) => setAttribute(e.target.value)} />
+                <input
+                  id="issuer-attribute"
+                  type="date"
+                  value={attribute}
+                  onChange={(e) => setAttribute(e.target.value)}
+                />
               ) : type === "jurisdiction" ? (
-                <select value={attribute} onChange={(e) => setAttribute(e.target.value)}>
+                <select
+                  id="issuer-attribute"
+                  value={attribute}
+                  onChange={(e) => setAttribute(e.target.value)}
+                >
                   {COUNTRIES.map((c) => (
                     <option key={c.code} value={c.code}>
                       {c.name} ({c.code})
@@ -271,6 +322,7 @@ export default function IssuerPage() {
                 </select>
               ) : (
                 <input
+                  id="issuer-attribute"
                   type="number"
                   value={attribute}
                   onChange={(e) => setAttribute(e.target.value)}
@@ -279,7 +331,10 @@ export default function IssuerPage() {
             </div>
           )}
 
-          <div className="row faint" style={{ marginTop: "1.25rem", fontSize: "0.8125rem" }}>
+          <div
+            className="row faint"
+            style={{ marginTop: "1.25rem", fontSize: "0.8125rem" }}
+          >
             <IconKey size={14} />
             <span>
               {needsAttr ? t("poseidonAttr") : t("poseidonSecret")}
@@ -319,7 +374,13 @@ export default function IssuerPage() {
             </p>
           )}
           {error && (
-            <p style={{ marginTop: "0.6rem", fontSize: "0.8125rem", color: "var(--danger)" }}>
+            <p
+              style={{
+                marginTop: "0.6rem",
+                fontSize: "0.8125rem",
+                color: "var(--danger)",
+              }}
+            >
               {error}
             </p>
           )}
@@ -354,6 +415,21 @@ export default function IssuerPage() {
             <div style={{ height: 200, display: "grid", placeItems: "center", textAlign: "center" }}>
               <p className="faint" style={{ maxWidth: 280, fontSize: "0.875rem" }}>
                 {t("emptyIssuer")}
+            <div
+              style={{
+                height: 200,
+                display: "grid",
+                placeItems: "center",
+                textAlign: "center",
+              }}
+            >
+              <p
+                className="faint"
+                style={{ maxWidth: 280, fontSize: "0.875rem" }}
+              >
+                Issue a credential to generate signed JSON. It is saved to this
+                browser&rsquo;s wallet and ready to prove on the Holder page —
+                we never store it server-side.
               </p>
             </div>
           )}

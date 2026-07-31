@@ -1,0 +1,226 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>@stellarcred/sdk</title><meta name="description" content="Documentation for @stellarcred/sdk"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<div class="tsd-toolbar-contents container"><a href="index.html" class="title">@stellarcred/sdk</a>
+<div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
+<ul role="listbox" id="tsd-search-results"></ul>
+<div id="tsd-search-status" aria-live="polite" aria-atomic="true">
+<div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header>
+<div class="container container-main">
+<div class="col-content">
+<div class="tsd-page-title">
+<h1>@stellarcred/sdk</h1></div>
+<div class="tsd-panel tsd-typography"><h1 id="stellarcredsdk" class="tsd-anchor-link">@stellarcred/sdk<a href="#stellarcredsdk" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1>
+<p>Read-only client for <a href="https://github.com/Psalmuel01/StellarCred">StellarCred</a> — check zero-knowledge credential proofs on Stellar from any protocol, frontend, or backend.</p>
+<p>Protocols call one function. No API key, no backend, no personal data handling — the only thing you trust is the on-chain ProofRegistry.</p>
+<h2 id="install" class="tsd-anchor-link">Install<a href="#install" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">@stellarcred/sdk</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="api-reference" class="tsd-anchor-link">API Reference<a href="#api-reference" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Generate the SDK API documentation locally:</p>
+<pre><code class="bash"><span class="hl-0">pnpm</span><span class="hl-1"> </span><span class="hl-2">docs:api</span>
+</code><button type="button">Copy</button></pre>
+
+<p>The generated documentation is written to:</p>
+<pre><code><span class="hl-3">docs</span><span class="hl-1">/</span><span class="hl-3">api</span><span class="hl-1">/</span>
+</code><button>Copy</button></pre>
+
+<h2 id="quick-start" class="tsd-anchor-link">Quick start<a href="#quick-start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="ts"><span class="hl-4">import</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1"> </span><span class="hl-4">from</span><span class="hl-1"> </span><span class="hl-2">&quot;@stellarcred/sdk&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">// Configure once at startup</span><br/><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">configure</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">registryId:</span><span class="hl-1"> </span><span class="hl-3">process</span><span class="hl-1">.</span><span class="hl-3">env</span><span class="hl-1">.</span><span class="hl-6">PROOF_REGISTRY_ID</span><span class="hl-1">,</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// Check a claim — returns true/false</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">eligible</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">walletAddress</span><span class="hl-1">, </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1">);</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="configuration" class="tsd-anchor-link">Configuration<a href="#configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Call <code>configure()</code> once before any other call, or set environment variables — both approaches work in Node.js, Next.js, and edge runtimes.</p>
+<pre><code class="ts"><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">configure</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">registryId:</span><span class="hl-1"> </span><span class="hl-2">&quot;C...&quot;</span><span class="hl-1">,                              </span><span class="hl-5">// ProofRegistry contract ID</span><br/><span class="hl-1">  </span><span class="hl-3">rpcUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://soroban-testnet.stellar.org&quot;</span><span class="hl-1">,   </span><span class="hl-5">// defaults to testnet</span><br/><span class="hl-1">  </span><span class="hl-3">networkPassphrase:</span><span class="hl-1"> </span><span class="hl-2">&quot;Test SDF Network ; September 2015&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">baseUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://stellarcred.xyz&quot;</span><span class="hl-1">,              </span><span class="hl-5">// used by buildVerifyUrl</span><br/><span class="hl-1">});</span>
+</code><button type="button">Copy</button></pre>
+
+<p><strong>Environment variables</strong> (auto-read at import time, no <code>configure()</code> needed):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Next.js alias</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>STELLARCRED_REGISTRY_ID</code></td>
+<td><code>NEXT_PUBLIC_PROOF_REGISTRY_ID</code></td>
+</tr>
+<tr>
+<td><code>STELLARCRED_RPC_URL</code></td>
+<td><code>NEXT_PUBLIC_RPC_URL</code></td>
+</tr>
+<tr>
+<td><code>STELLARCRED_NETWORK_PASSPHRASE</code></td>
+<td><code>NEXT_PUBLIC_NETWORK_PASSPHRASE</code></td>
+</tr>
+<tr>
+<td><code>STELLARCRED_BASE_URL</code></td>
+<td><code>NEXT_PUBLIC_STELLARCRED_BASE_URL</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="api" class="tsd-anchor-link">API<a href="#api" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<h3 id="_" class="tsd-anchor-link"><code>hasClaim(wallet, claimType, opts?)</code><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Returns <code>true</code> if <code>wallet</code> has a currently valid, unexpired proof of <code>claimType</code>.</p>
+<p>For parameterised claims (age, income, funds), pass <code>minThreshold</code> to enforce the threshold on-chain. A proof generated with threshold=200,000 satisfies <code>minThreshold: 50000</code> — the check is <code>stored &gt;= required</code>.</p>
+<pre><code class="ts"><span class="hl-5">// Binary claims — no threshold needed</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">kycOk</span><span class="hl-1">   = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1">);</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">jurisOk</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;jurisdiction&quot;</span><span class="hl-1">);</span><br/><br/><span class="hl-5">// Threshold claims — enforced on-chain, fully trustless</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">ageOk</span><span class="hl-1">   = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;age&quot;</span><span class="hl-1">,    { </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">21</span><span class="hl-1"> });</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">incOk</span><span class="hl-1">   = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;income&quot;</span><span class="hl-1">, { </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">200000</span><span class="hl-1"> });</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">fundsOk</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;funds&quot;</span><span class="hl-1">,  { </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">50000</span><span class="hl-1"> });</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Pass <code>trustedIssuers</code> to restrict which issuer(s) a proof must come from — e.g. accept <code>kyc</code> only from Persona or Jumio, not a self-attested issuer. This is enforced on-chain by <code>ProofRegistry</code>; omit it (or leave it <code>undefined</code>) to accept a proof from any registered issuer, matching current behaviour. An empty array rejects every issuer.</p>
+<pre><code class="ts"><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">kycOk</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1">, {</span><br/><span class="hl-1">  </span><span class="hl-3">trustedIssuers:</span><span class="hl-1"> [</span><span class="hl-2">&quot;G...PERSONA_ISSUER&quot;</span><span class="hl-1">, </span><span class="hl-2">&quot;G...JUMIO_ISSUER&quot;</span><span class="hl-1">],</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// Combine with a threshold — both must hold</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">incomeOk</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;income&quot;</span><span class="hl-1">, {</span><br/><span class="hl-1">  </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">100000</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">trustedIssuers:</span><span class="hl-1"> [</span><span class="hl-2">&quot;G...PLAID_ISSUER&quot;</span><span class="hl-1">],</span><br/><span class="hl-1">});</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="_-1" class="tsd-anchor-link"><code>getClaims(wallet)</code><a href="#_-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Returns all active claims a wallet has proved, across all known credential types.</p>
+<pre><code class="ts"><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">claims</span><span class="hl-1"> = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">getClaims</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">);</span><br/><span class="hl-5">// [{ type: &quot;kyc&quot;, verifiedAt: 1719000000, expiry: 1726776000 }, ...]</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="_-2" class="tsd-anchor-link"><code>watchClaim(wallet, claimType, opts?)</code><a href="#_-2" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>A polling helper that checks <code>hasClaim</code> on an interval. It either resolves a Promise or fires a callback when the claim is verified. Works with <code>minThreshold</code> for parameterised claims.</p>
+<p><strong>Promise form</strong> — resolves <code>true</code> when verified, or rejects with <code>TimeoutError</code> after a timeout:</p>
+<pre><code class="ts"><span class="hl-4">try</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">watchClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&#39;kyc&#39;</span><span class="hl-1">, { </span><br/><span class="hl-1">    </span><span class="hl-3">pollMs:</span><span class="hl-1"> </span><span class="hl-8">3000</span><span class="hl-1">, </span><br/><span class="hl-1">    </span><span class="hl-3">timeoutMs:</span><span class="hl-1"> </span><span class="hl-8">120_000</span><span class="hl-1"> </span><br/><span class="hl-1">  });</span><br/><span class="hl-1">  </span><span class="hl-3">console</span><span class="hl-1">.</span><span class="hl-0">log</span><span class="hl-1">(</span><span class="hl-2">&quot;Verified!&quot;</span><span class="hl-1">);</span><br/><span class="hl-1">} </span><span class="hl-4">catch</span><span class="hl-1"> (</span><span class="hl-3">err</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-3">console</span><span class="hl-1">.</span><span class="hl-0">error</span><span class="hl-1">(</span><span class="hl-2">&quot;Timeout waiting for verification&quot;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<p><strong>Callback form</strong> — fires <code>onChange</code> whenever the status changes. Returns a <code>stop()</code> function to cancel polling:</p>
+<pre><code class="ts"><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">stop</span><span class="hl-1"> = </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">watchClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&#39;funds&#39;</span><span class="hl-1">, {</span><br/><span class="hl-1">  </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">50000</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">pollMs:</span><span class="hl-1"> </span><span class="hl-8">3000</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">timeoutMs:</span><span class="hl-1"> </span><span class="hl-8">120_000</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-0">onChange</span><span class="hl-3">:</span><span class="hl-1"> (</span><span class="hl-3">verified</span><span class="hl-1">) </span><span class="hl-7">=&gt;</span><span class="hl-1"> </span><span class="hl-3">console</span><span class="hl-1">.</span><span class="hl-0">log</span><span class="hl-1">(</span><span class="hl-2">&#39;verified:&#39;</span><span class="hl-1">, </span><span class="hl-3">verified</span><span class="hl-1">),</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// Cancel polling manually (e.g. on component unmount)</span><br/><span class="hl-5">// stop();</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="_-3" class="tsd-anchor-link"><code>buildVerifyUrl(options)</code><a href="#_-3" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Builds a StellarCred verification URL to redirect users to. After verifying, StellarCred returns the user to <code>returnUrl</code> with <code>?sc_verified=true&amp;sc_wallet=&lt;address&gt;&amp;sc_claims=&lt;claim-types&gt;</code> appended. <code>sc_claims</code> is a comma-separated list of the claim types issued in the current session (not all-time claims), allowing protocols to optimistically update their UI before an on-chain read completes.</p>
+<pre><code class="ts"><span class="hl-5">// Basic — redirect to verify KYC</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">url</span><span class="hl-1"> = </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">buildVerifyUrl</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">returnUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://yourapp.xyz/deposit&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claim:</span><span class="hl-1"> </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// With threshold — user proves balance &gt;= $50,000</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">url</span><span class="hl-1"> = </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">buildVerifyUrl</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">returnUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://yourapp.xyz/vault&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claim:</span><span class="hl-1"> </span><span class="hl-2">&quot;funds&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claimParams:</span><span class="hl-1"> { </span><span class="hl-3">threshold:</span><span class="hl-1"> </span><span class="hl-2">&quot;50000&quot;</span><span class="hl-1"> },</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// Age gate — require 21+</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">url</span><span class="hl-1"> = </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">buildVerifyUrl</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">returnUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://yourapp.xyz/markets&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claim:</span><span class="hl-1"> </span><span class="hl-2">&quot;age&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claimParams:</span><span class="hl-1"> { </span><span class="hl-3">threshold_years:</span><span class="hl-1"> </span><span class="hl-2">&quot;21&quot;</span><span class="hl-1"> },</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">// Jurisdiction — block specific countries (ISO 3166-1 numeric codes)</span><br/><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">url</span><span class="hl-1"> = </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">buildVerifyUrl</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-3">returnUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://yourapp.xyz/app&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claim:</span><span class="hl-1"> </span><span class="hl-2">&quot;jurisdiction&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">claimParams:</span><span class="hl-1"> { </span><span class="hl-3">restricted:</span><span class="hl-1"> [</span><span class="hl-2">&quot;840&quot;</span><span class="hl-1">, </span><span class="hl-2">&quot;364&quot;</span><span class="hl-1">] },</span><br/><span class="hl-1">});</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="claim-types" class="tsd-anchor-link">Claim types<a href="#claim-types" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Proves</th>
+<th>Threshold parameter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kyc</code></td>
+<td>Identity verified by a KYC provider</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>age</code></td>
+<td>Holder is at least N years old</td>
+<td><code>threshold_years</code> (years)</td>
+</tr>
+<tr>
+<td><code>income</code></td>
+<td>Annual income exceeds threshold</td>
+<td><code>threshold</code> (USD)</td>
+</tr>
+<tr>
+<td><code>jurisdiction</code></td>
+<td>Country is not in a restricted list</td>
+<td><code>restricted</code> (country codes)</td>
+</tr>
+<tr>
+<td><code>funds</code></td>
+<td>Liquid balance exceeds threshold</td>
+<td><code>threshold</code> (USD)</td>
+</tr>
+<tr>
+<td><code>accreditation</code></td>
+<td>Holder meets an accredited-investor threshold</td>
+<td><code>threshold</code> (USD)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="types" class="tsd-anchor-link">Types<a href="#types" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>The package exports its public types so you can type your own wrappers without
+duplicating the union. They appear in <code>dist/index.d.ts</code> after <code>pnpm build</code> and
+are available from <code>@stellarcred/sdk</code> directly.</p>
+<pre><code class="ts"><span class="hl-4">import</span><span class="hl-1"> </span><span class="hl-4">type</span><span class="hl-1"> { </span><span class="hl-3">ClaimType</span><span class="hl-1">, </span><span class="hl-3">ClaimOptions</span><span class="hl-1"> } </span><span class="hl-4">from</span><span class="hl-1"> </span><span class="hl-2">&quot;@stellarcred/sdk&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">// `ClaimType` is exactly the credential union published with the SDK.</span><br/><span class="hl-5">// `ClaimOptions.minThreshold` / `.trustedIssuers` are forwarded to `hasClaim`&#39;s</span><br/><span class="hl-5">// on-chain `check_claim` / `is_verified` checks.</span><br/><span class="hl-7">function</span><span class="hl-1"> </span><span class="hl-0">gate</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">: </span><span class="hl-9">string</span><span class="hl-1">, </span><span class="hl-3">claim</span><span class="hl-1">: </span><span class="hl-9">ClaimType</span><span class="hl-1">, </span><span class="hl-3">opts</span><span class="hl-1">?: </span><span class="hl-9">ClaimOptions</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-4">return</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-3">claim</span><span class="hl-1">, </span><span class="hl-3">opts</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<table>
+<thead>
+<tr>
+<th>Export</th>
+<th>Kind</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClaimType</code></td>
+<td><code>&quot;kyc&quot; | &quot;age&quot; | &quot;income&quot; | &quot;jurisdiction&quot; | &quot;funds&quot; | &quot;accreditation&quot;</code></td>
+<td>The credential types StellarCred supports. Mirrors the on-chain <code>CLAIM_TYPES</code> constant.</td>
+</tr>
+<tr>
+<td><code>ClaimOptions</code></td>
+<td><code>{ minThreshold?: number; trustedIssuers?: string[] }</code></td>
+<td>Optional settings for <code>hasClaim</code>. <code>minThreshold</code> is forwarded to the on-chain <code>check_claim</code> for parameterised claim types and ignored for binary claims (<code>kyc</code>, <code>jurisdiction</code>). <code>trustedIssuers</code> restricts which issuer(s) the proof must come from, for any claim type — omit to accept any registered issuer.</td>
+</tr>
+<tr>
+<td><code>Claim</code></td>
+<td><code>{ type: string; verifiedAt: number; expiry: number }</code></td>
+<td>Shape returned by <code>getClaims</code>.</td>
+</tr>
+<tr>
+<td><code>CLAIM_TYPES</code></td>
+<td><code>readonly ClaimType[]</code></td>
+<td>The runtime constant. Use <code>as const</code> strings for compile-time narrowing.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="full-integration-example" class="tsd-anchor-link">Full integration example<a href="#full-integration-example" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="ts"><span class="hl-4">import</span><span class="hl-1"> </span><span class="hl-3">StellarCred</span><span class="hl-1"> </span><span class="hl-4">from</span><span class="hl-1"> </span><span class="hl-2">&quot;@stellarcred/sdk&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">configure</span><span class="hl-1">({ </span><span class="hl-3">registryId:</span><span class="hl-1"> </span><span class="hl-3">process</span><span class="hl-1">.</span><span class="hl-3">env</span><span class="hl-1">.</span><span class="hl-6">PROOF_REGISTRY_ID</span><span class="hl-1"> });</span><br/><br/><span class="hl-7">async</span><span class="hl-1"> </span><span class="hl-7">function</span><span class="hl-1"> </span><span class="hl-0">handleDeposit</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">: </span><span class="hl-9">string</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-5">// Check all required claims</span><br/><span class="hl-1">  </span><span class="hl-7">const</span><span class="hl-1"> [</span><span class="hl-6">kycOk</span><span class="hl-1">, </span><span class="hl-6">fundsOk</span><span class="hl-1">] = </span><span class="hl-4">await</span><span class="hl-1"> </span><span class="hl-9">Promise</span><span class="hl-1">.</span><span class="hl-0">all</span><span class="hl-1">([</span><br/><span class="hl-1">    </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1">),</span><br/><span class="hl-1">    </span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">hasClaim</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">, </span><span class="hl-2">&quot;funds&quot;</span><span class="hl-1">, { </span><span class="hl-3">minThreshold:</span><span class="hl-1"> </span><span class="hl-8">50000</span><span class="hl-1"> }),</span><br/><span class="hl-1">  ]);</span><br/><br/><span class="hl-1">  </span><span class="hl-4">if</span><span class="hl-1"> (!</span><span class="hl-3">kycOk</span><span class="hl-1"> || !</span><span class="hl-3">fundsOk</span><span class="hl-1">) {</span><br/><span class="hl-1">    </span><span class="hl-5">// Redirect to verify the missing claim</span><br/><span class="hl-1">    </span><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">missing</span><span class="hl-1"> = !</span><span class="hl-3">kycOk</span><span class="hl-1"> ? </span><span class="hl-2">&quot;kyc&quot;</span><span class="hl-1"> : </span><span class="hl-2">&quot;funds&quot;</span><span class="hl-1">;</span><br/><span class="hl-1">    </span><span class="hl-7">const</span><span class="hl-1"> </span><span class="hl-6">opts</span><span class="hl-1"> = </span><span class="hl-3">missing</span><span class="hl-1"> === </span><span class="hl-2">&quot;funds&quot;</span><span class="hl-1"> ? { </span><span class="hl-3">claimParams:</span><span class="hl-1"> { </span><span class="hl-3">threshold:</span><span class="hl-1"> </span><span class="hl-2">&quot;50000&quot;</span><span class="hl-1"> } } : {};</span><br/><span class="hl-1">    </span><span class="hl-4">return</span><span class="hl-1"> </span><span class="hl-0">redirect</span><span class="hl-1">(</span><span class="hl-3">StellarCred</span><span class="hl-1">.</span><span class="hl-0">buildVerifyUrl</span><span class="hl-1">({</span><br/><span class="hl-1">      </span><span class="hl-3">returnUrl:</span><span class="hl-1"> </span><span class="hl-2">&quot;https://yourapp.xyz/deposit&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">      </span><span class="hl-3">claim:</span><span class="hl-1"> </span><span class="hl-3">missing</span><span class="hl-1">,</span><br/><span class="hl-1">      ...</span><span class="hl-3">opts</span><span class="hl-1">,</span><br/><span class="hl-1">    }));</span><br/><span class="hl-1">  }</span><br/><br/><span class="hl-1">  </span><span class="hl-5">// All claims verified — proceed</span><br/><span class="hl-1">  </span><span class="hl-0">processDeposit</span><span class="hl-1">(</span><span class="hl-3">wallet</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="peer-dependency" class="tsd-anchor-link">Peer dependency<a href="#peer-dependency" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Requires <code>@stellar/stellar-sdk &gt;= 13.0.0</code> as a peer dependency.</p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">@stellar/stellar-sdk</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="how-it-works" class="tsd-anchor-link">How it works<a href="#how-it-works" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>StellarCred stores ZK proofs on Stellar. A holder proves a claim once (in their browser, using UltraHonk / Barretenberg); the result is cached in the <code>ProofRegistry</code> contract. Your protocol reads it with a single free simulation — no wallet connection, no fee, no personal data.</p>
+<p>The <code>minThreshold</code> check calls <code>ProofRegistry.check_claim</code> on-chain, which compares the threshold stored in the proof's public inputs against your required minimum. It is not a frontend check — the contract enforces it.</p>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>MIT</p>
+</div></div>
+<div class="col-sidebar">
+<div class="page-menu">
+<div class="tsd-navigation settings">
+<details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg>
+<h3>Settings</h3></summary>
+<div class="tsd-accordion-details">
+<div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span>
+<ul id="tsd-filter-options">
+<li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li>
+<li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div>
+<div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div>
+<details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg>
+<h3>On This Page</h3></summary>
+<div class="tsd-accordion-details"><a href="#stellarcredsdk"><span>@stellarcred/sdk</span></a>
+<ul>
+<li><a href="#install"><span>Install</span></a></li>
+<li><a href="#api-reference"><span>API <wbr/>Reference</span></a></li>
+<li><a href="#quick-start"><span>Quick start</span></a></li>
+<li><a href="#configuration"><span>Configuration</span></a></li>
+<li><a href="#api"><span>API</span></a></li>
+<li>
+<ul>
+<li><a href="#_"><span></span></a></li>
+<li><a href="#_-1"><span></span></a></li>
+<li><a href="#_-2"><span></span></a></li>
+<li><a href="#_-3"><span></span></a></li></ul></li>
+<li><a href="#claim-types"><span>Claim types</span></a></li>
+<li><a href="#types"><span>Types</span></a></li>
+<li><a href="#full-integration-example"><span>Full integration example</span></a></li>
+<li><a href="#peer-dependency"><span>Peer dependency</span></a></li>
+<li><a href="#how-it-works"><span>How it works</span></a></li>
+<li><a href="#license"><span>License</span></a></li></ul></div></details></div>
+<div class="site-menu">
+<nav class="tsd-navigation"><a href="modules.html">@stellarcred/sdk</a>
+<ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+<li>Loading...</li></ul></nav></div></div></div><footer>
+<p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer>
+<div class="overlay"></div></body></html>

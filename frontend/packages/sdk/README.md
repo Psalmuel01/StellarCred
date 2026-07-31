@@ -9,7 +9,19 @@ Protocols call one function. No API key, no backend, no personal data handling â
 ```bash
 npm install @stellarcred/sdk
 ```
+## API Reference
 
+Generate the SDK API documentation locally:
+
+```bash
+pnpm docs:api
+```
+
+The generated documentation is written to:
+
+```
+docs/api/
+```
 ## Quick start
 
 ```ts

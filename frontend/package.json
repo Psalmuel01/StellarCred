@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aztec/bb.js": "0.87.0",
@@ -24,22 +25,28 @@
     "@tabler/icons-react": "^3.21.0",
     "blakejs": "^1.2.1",
     "buffer": "^6.0.3",
+    "jsqr": "^1.4.0",
     "next": "14.2.15",
     "next-intl": "^3.26.5",
     "pino": "^10.3.1",
     "process": "^0.11.10",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
     "typescript": "^5",
     "vitest": "^2.1.9"
-  }
+  },
+  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
 }

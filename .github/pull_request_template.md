@@ -12,11 +12,10 @@ Closes #
 - [ ] Docs
 - [ ] CI / tooling
 
-## Checklist
+## Merge requirements
 
-- [ ] `cargo test` passes (contracts)
-- [ ] `pnpm tsc --noEmit` passes (frontend)
-- [ ] `pnpm build` passes (frontend)
+- [ ] **CI is green** — `cargo test` (contracts), `pnpm tsc --noEmit` (frontend), `pnpm build` (frontend), circuit tests — all green
+- [ ] **Greptile confidence ≥ 4/5** — all review comments addressed, no unresolved threads
 - [ ] Circuit changes: `fixtures/<type>/` artifacts updated
 - [ ] No `NEXT_PUBLIC_` prefix on server-only env vars
 - [ ] No identity fields stored or logged after KYC provider call

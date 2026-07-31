@@ -1,34 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { InputMap } from "@noir-lang/noir_js";
 import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
+import { readJsonBody, bodyErrorResponse } from "../../../lib/request-limits";
+import {
+  normalizeRestricted,
+  validateWitnessCredential,
+  type ClaimParams,
+} from "../../../lib/witness-input";
 import ageCircuit from "../../../public/circuits/age.json";
 import fundsCircuit from "../../../public/circuits/funds.json";
 import incomeCircuit from "../../../public/circuits/income.json";
 import jurisdictionCircuit from "../../../public/circuits/jurisdiction.json";
 import kycCircuit from "../../../public/circuits/kyc.json";
 import accreditationCircuit from "../../../public/circuits/accreditation.json";
+import employmentCircuit from "../../../public/circuits/employment.json";
 
-// Default claim params — used when a credential has no protocol-specific values.
+// Default claim params -- used when a credential has no protocol-specific values.
 const DEFAULT_THRESHOLD_YEARS = "18";
 const DEFAULT_INCOME_THRESHOLD = "200000";
 const DEFAULT_FUNDS_THRESHOLD = "10000";
 const DEFAULT_ACCREDITATION_THRESHOLD = "1000000";
-const DEFAULT_RESTRICTED = ["840", "364", "408", "0", "0", "0", "0", "0"];
+// Padded to RESTRICTED_LEN by the same helper the request path uses.
+const DEFAULT_RESTRICTED = normalizeRestricted(["840", "364", "408"]);
 
-const RESTRICTED_LEN = 8;
-
-function normalizeRestricted(list: string[]): string[] {
-  // The circuit expects exactly RESTRICTED_LEN entries; pad with "0".
-  const trimmed = list.slice(0, RESTRICTED_LEN);
-  while (trimmed.length < RESTRICTED_LEN) trimmed.push("0");
-  return trimmed;
-}
-
-interface ClaimParams {
-  threshold_years?: string;
-  threshold?: string;
-  restricted?: string[];
-}
+// Validation accepts a threshold as a number as well as a decimal string; the
+// circuits take field elements as strings, so normalize on the way in.
+const asFieldString = (v: string | number | undefined, fallback: string): string =>
+  v === undefined ? fallback : String(v);
 
 function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
   const value = String(cred.value);
@@ -48,7 +46,7 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         ...sigInputs,
         commitment,
         current_date: String(Math.floor(Date.now() / 86_400_000)),
-        threshold_years: params.threshold_years ?? DEFAULT_THRESHOLD_YEARS,
+        threshold_years: asFieldString(params.threshold_years, DEFAULT_THRESHOLD_YEARS),
       };
     case "income":
       return {
@@ -56,7 +54,7 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        threshold: params.threshold ?? DEFAULT_INCOME_THRESHOLD,
+        threshold: asFieldString(params.threshold, DEFAULT_INCOME_THRESHOLD),
       };
     case "jurisdiction":
       return {
@@ -64,7 +62,9 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        restricted: normalizeRestricted(params.restricted ?? DEFAULT_RESTRICTED),
+        restricted: normalizeRestricted(
+          params.restricted ?? DEFAULT_RESTRICTED,
+        ),
       };
     case "funds":
       return {
@@ -72,7 +72,7 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        threshold: params.threshold ?? DEFAULT_FUNDS_THRESHOLD,
+        threshold: asFieldString(params.threshold, DEFAULT_FUNDS_THRESHOLD),
       };
     case "accreditation":
       return {
@@ -80,7 +80,20 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         salt,
         ...sigInputs,
         commitment,
-        threshold: params.threshold ?? DEFAULT_ACCREDITATION_THRESHOLD,
+        threshold: asFieldString(params.threshold, DEFAULT_ACCREDITATION_THRESHOLD),
+      };
+    case "employment":
+      return {
+        // employment_status is the binary "is employed" tag; seniority is the
+        // specific tenure the issuer committed to. Both must come from the
+        // stored credential (issuer-signed) -- NOT from request params -- so the
+        // holder can't claim a seniority they weren't actually issued.
+        employment_status: value,
+        seniority: String(cred.seniority ?? "0"),
+        salt,
+        ...sigInputs,
+        commitment,
+        min_seniority: params.threshold ?? String(cred.seniority ?? "3"),
       };
     case "kyc":
     default:
@@ -90,13 +103,21 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
 
 function circuitFor(type: string) {
   switch (type) {
-    case "age": return ageCircuit;
-    case "funds": return fundsCircuit;
-    case "accreditation": return accreditationCircuit;
-    case "income": return incomeCircuit;
-    case "jurisdiction": return jurisdictionCircuit;
+    case "age":
+      return ageCircuit;
+    case "funds":
+      return fundsCircuit;
+    case "accreditation":
+      return accreditationCircuit;
+    case "income":
+      return incomeCircuit;
+    case "jurisdiction":
+      return jurisdictionCircuit;
+    case "employment":
+      return employmentCircuit;
     case "kyc":
-    default: return kycCircuit;
+    default:
+      return kycCircuit;
   }
 }
 
@@ -108,19 +129,47 @@ export async function POST(req: NextRequest) {
     return response;
   };
 
-  let body: { type?: string; credential?: Record<string, unknown> };
-  try {
-    body = await req.json();
-  } catch {
-    return sendResponse(NextResponse.json({ error: "Invalid JSON" }, { status: 400 }));
+  // Size-guarded read — an oversized payload is refused before it is parsed,
+  // and the body is never logged.
+  const parsed = await readJsonBody<{ type?: string; credential?: Record<string, unknown> }>(req);
+  if (!parsed.ok) {
+    logger.warn(stripSensitiveFields({
+      event: "witness_request_rejected",
+      outcome: parsed.error.code,
+      requestId,
+    }));
+    return sendResponse(bodyErrorResponse(parsed.error));
   }
 
-  const { type, credential } = body;
+  const { type, credential } = parsed.body;
   if (!type || !credential) {
-    return sendResponse(NextResponse.json({ error: "type and credential are required" }, { status: 400 }));
+    return sendResponse(NextResponse.json(
+      { error: "type and credential are required", code: "invalid_request" },
+      { status: 400 },
+    ));
   }
 
   logger.info(stripSensitiveFields({ event: "witness_request_received", credentialType: type, requestId }));
+
+  // Circuit-shape validation before building the InputMap: a wrong-length
+  // signature or a non-numeric field would otherwise fail deep inside Noir.
+  const invalid = validateWitnessCredential(type, credential);
+  if (invalid) {
+    logger.warn(stripSensitiveFields({
+      event: "witness_request_rejected",
+      credentialType: type,
+      outcome: "invalid_credential",
+      requestId,
+    }));
+    return sendResponse(NextResponse.json(
+      {
+        error: `${invalid.field} ${invalid.message}`,
+        code: "invalid_credential",
+        field: invalid.field,
+      },
+      { status: 400 },
+    ));
+  }
 
   try {
     const { Noir } = await import("@noir-lang/noir_js");

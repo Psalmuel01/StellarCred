@@ -104,11 +104,16 @@ export default function RootLayout({
           </footer>
         </WalletProvider>
         </LocaleProvider>
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
         <ToastProvider>
           <WalletProvider>
             <SiteNav />
             <NetworkBanner />
-            <main className="container">{children}</main>
+            <main id="main-content" tabIndex={-1} className="container">
+              {children}
+            </main>
             <footer className="site-footer">
               <div className="site-footer-inner">
                 <span className="faint" style={{ fontSize: "0.8125rem" }}>
