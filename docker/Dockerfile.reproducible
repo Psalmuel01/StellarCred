@@ -1,0 +1,97 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# Reproducible WASM build image for StellarCred contracts.
+#
+# Design goals:
+#   • Byte-identical output across machines and CI runs.
+#   • No unverified installer scripts — uses the official rust Docker image
+#     (rust:1.93.1-slim-bookworm) which is published and signed by the Rust
+#     project, eliminating the rustup installer fetch-and-exec attack surface.
+#   • Cargo dependencies are pre-fetched in a dedicated layer so the compile
+#     step runs --offline (no network) and is cache-friendly.
+#   • The image does NOT pre-compile WASM — compilation is done at container
+#     run time so two independent `docker run` calls produce independently
+#     built artifacts that can be diffed for reproducibility.
+#
+# Usage (from repo root):
+#   docker build -f docker/Dockerfile.reproducible -t stellarcred-build .
+#   mkdir -p out
+#   docker run --rm -v "$(pwd)/out:/out" --env SOURCE_DATE_EPOCH=0 \
+#     stellarcred-build \
+#     sh -c "cargo build --release --target wasm32v1-none --locked --offline \
+#            && cp target/wasm32v1-none/release/*.wasm /out/"
+# ---------------------------------------------------------------------------
+
+# Official Rust image — compiler is already installed, no rustup script needed.
+# Pinned to a specific manifest digest so the base layer is immutable between
+# CI runs. To update: docker pull rust:1.93.1-slim-bookworm && \
+#   docker inspect --format='{{index .RepoDigests 0}}' rust:1.93.1-slim-bookworm
+FROM rust:1.93.1-slim-bookworm@sha256:81ca81aaf083572c3ddfb8d6f290d74ccbd4d0bda9e0f56ac4e48fd380359466 AS base
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add the WASM target required for Soroban contracts.
+RUN rustup target add wasm32v1-none \
+    && rustc --version \
+    && cargo --version
+
+# ---------------------------------------------------------------------------
+# Dependency-fetch layer — copy only manifests + lockfile and stub lib.rs
+# files so Cargo can resolve the workspace, then pre-fetch all crates.
+# This layer is invalidated only when Cargo.lock / Cargo.toml change,
+# not when contract source changes.
+# ---------------------------------------------------------------------------
+WORKDIR /workspace
+
+COPY Cargo.toml Cargo.lock ./
+COPY contracts/credential_verifier/Cargo.toml  contracts/credential_verifier/
+COPY contracts/issuer_registry/Cargo.toml      contracts/issuer_registry/
+COPY contracts/proof_registry/Cargo.toml       contracts/proof_registry/
+COPY contracts/gated_pool/Cargo.toml           contracts/gated_pool/
+
+# Stub lib.rs so `cargo fetch` can resolve the workspace without real sources.
+RUN for d in credential_verifier issuer_registry proof_registry gated_pool; do \
+        mkdir -p "contracts/$d/src" && \
+        printf '#![no_std]\n' > "contracts/$d/src/lib.rs"; \
+    done
+
+# Fetch all dependencies into the Cargo registry cache (network access here only).
+RUN cargo fetch --locked
+
+# ---------------------------------------------------------------------------
+# Final image — adds the full contract source on top of the dep-fetch layer.
+# cargo build is intentionally NOT run here; compilation happens at run time
+# so each `docker run` is a genuinely independent build.
+# ---------------------------------------------------------------------------
+FROM base AS compiler
+
+# Copy real contract sources (replaces the stubs from the fetcher layer).
+COPY contracts/ contracts/
+
+# Source date epoch is set at run time via --env SOURCE_DATE_EPOCH=0 to strip
+# any timestamp that could differ between independent builds.
+
+# Default command: build and copy WASM artifacts to /out.
+# The caller is expected to bind-mount a host directory at /out.
+# Each step is intentionally left to fail loudly — no error suppression —
+# so a failed cargo build surfaces as a non-zero exit code, not a false success.
+CMD ["sh", "-c", \
+     "SOURCE_DATE_EPOCH=0 cargo build \
+        --release \
+        --target wasm32v1-none \
+        --locked \
+        --offline \
+     && echo '=== SHA-256 hashes ===' \
+     && sha256sum \
+          target/wasm32v1-none/release/credential_verifier.wasm \
+          target/wasm32v1-none/release/issuer_registry.wasm \
+          target/wasm32v1-none/release/proof_registry.wasm \
+          target/wasm32v1-none/release/gated_pool.wasm \
+     && cp target/wasm32v1-none/release/credential_verifier.wasm \
+            target/wasm32v1-none/release/issuer_registry.wasm \
+            target/wasm32v1-none/release/proof_registry.wasm \
+            target/wasm32v1-none/release/gated_pool.wasm \
+         /out/"]
