@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
 use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
@@ -98,6 +99,39 @@ fn withdraw_is_open() {
     h.pool.deposit(&user, &100);
     h.pool.withdraw(&user, &40);
     assert_eq!(h.pool.get_balance(&user), 60);
+}
+
+// ── Property-based tests ──────────────────────────────────
+
+/// Property: Deposits are gated behind a valid KYC proof.
+/// For any holder, if no valid KYC proof exists, deposit must fail.
+/// After submitting a valid proof, deposit must succeed.
+#[test]
+fn prop_deposit_gated_by_kyc() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let h = deploy(&env);
+            let user = Address::generate(&env);
+
+            // Without a KYC proof, deposit must be rejected.
+            let res = h.pool.try_deposit(&user, &100);
+            prop_assert!(res.is_err(), "Deposit without KYC must fail");
+            prop_assert_eq!(h.pool.get_balance(&user), 0);
+
+            // After getting KYC, deposit must succeed.
+            prove_kyc(&env, &h, &user);
+            h.pool.deposit(&user, &100);
+            prop_assert_eq!(h.pool.get_balance(&user), 100);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]

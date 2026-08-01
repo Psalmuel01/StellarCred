@@ -15,6 +15,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
 import { useToast } from "@/components/Toast";
+import { validateVerifyParams } from "@/lib/verifyParams";
 import { QrScanner } from "@/components/QrScanner";
 
 const TYPES = Object.entries(TYPE_META) as [
@@ -63,6 +64,16 @@ function VerifyInner() {
     claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
   const locked = !!requiredClaim;
 
+  // Validate all query params up-front; block the flow on any invalid value.
+  const paramValidation = validateVerifyParams({
+    returnUrl,
+    claim: claimParam,
+    thresholdYears: searchParams.get("threshold_years"),
+    threshold: searchParams.get("threshold"),
+    restricted: searchParams.get("restricted"),
+    currentOrigin: typeof window !== "undefined" ? window.location.origin : undefined,
+  });
+
   // Protocol-supplied proof parameters. These flow into the issued credential
   // so the witness route can use them at prove time instead of hardcoded values.
   const minThresholdParam = searchParams.get("min_threshold") ?? undefined;
@@ -97,6 +108,13 @@ function VerifyInner() {
   const [error, setError] = useState("");
   const [urlError, setUrlError] = useState("");
   const [requestingDomain, setRequestingDomain] = useState("");
+  // Param validation errors surfaced from validateVerifyParams
+  const paramErrors = [
+    paramValidation.claimError,
+    paramValidation.thresholdYearsError,
+    paramValidation.thresholdError,
+    paramValidation.restrictedError,
+  ].filter(Boolean) as string[];
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
   const justIssuedClaims = useRef<string[]>([]);
@@ -162,32 +180,30 @@ function VerifyInner() {
 
   useEffect(() => {
     if (returnUrl) {
-      try {
-        let isRelative = false;
-        try {
-          new URL(returnUrl);
-        } catch {
-          if (returnUrl.startsWith("/")) {
-            isRelative = true;
-          }
-        }
+      // Use the extracted validator so error messages are consistent and testable.
+      const result = validateVerifyParams({
+        returnUrl,
+        claim: null,
+        thresholdYears: null,
+        threshold: null,
+        restricted: null,
+        currentOrigin: window.location.origin,
+      });
 
-        if (isRelative) {
-          setUrlError("");
-          setRequestingDomain(window.location.hostname);
-        } else {
-          const parsed = new URL(returnUrl);
-          if (parsed.protocol !== "https:") {
-            setUrlError("Invalid return URL: Must use HTTPS protocol.");
-            setRequestingDomain("");
-          } else {
-            setUrlError("");
-            setRequestingDomain(parsed.hostname);
-          }
-        }
-      } catch {
-        setUrlError("Invalid return URL: Must be a well-formed URL.");
+      if (result.returnUrlError) {
+        setUrlError(result.returnUrlError);
         setRequestingDomain("");
+      } else {
+        setUrlError("");
+        try {
+          if (returnUrl.startsWith("/")) {
+            setRequestingDomain(window.location.hostname);
+          } else {
+            setRequestingDomain(new URL(returnUrl).hostname);
+          }
+        } catch {
+          setRequestingDomain("");
+        }
       }
     } else {
       setUrlError("");
@@ -529,6 +545,21 @@ function VerifyInner() {
                   }}
                 >
                   {urlError}
+              {(urlError || paramErrors.length > 0) && (
+                <div style={{
+                  padding: "0.75rem 1rem",
+                  borderRadius: "var(--radius)",
+                  background: "rgba(240, 96, 77, 0.1)",
+                  border: "1px solid rgba(240, 96, 77, 0.2)",
+                  color: "var(--danger)",
+                  fontSize: "0.8125rem",
+                  marginBottom: "1rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.3rem",
+                }}>
+                  {urlError && <span>{urlError}</span>}
+                  {paramErrors.map((e, i) => <span key={i}>{e}</span>)}
                 </div>
               )}
               {requestingDomain && !urlError && (
@@ -965,7 +996,7 @@ function VerifyInner() {
               <button
                 className="btn btn-primary"
                 style={{ width: "100%" }}
-                disabled={busy || !selected || !!urlError}
+                disabled={busy || !selected || !!urlError || paramErrors.length > 0}
                 onClick={onRequest}
               >
                 {busy ? (

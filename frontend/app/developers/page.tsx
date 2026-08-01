@@ -113,6 +113,25 @@ const ageOk = await StellarCred.hasClaim(wallet, "age", { minThreshold: 21 });
 const fundsOk = await StellarCred.hasClaim(wallet, "funds", { minThreshold: 50000 });`}</Code>
       </Section>
 
+      <Section title="Fetching all claims">
+        <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
+          Protocols that gate on multiple claims simultaneously benefit from fetching everything at once rather than making N separate <span className="mono">hasClaim</span> calls.
+        </p>
+        <Code>{`import { StellarCred } from "@stellarcred/sdk";
+
+const claims = await StellarCred.getClaims(wallet);
+// {
+//   kyc:          { verified: true,  expiry: 1780000000 },
+//   age:          { verified: true,  threshold: 21, expiry: 1780000000 },
+//   income:       { verified: false },
+//   jurisdiction: { verified: true,  expiry: 1780000000 },
+//   funds:        { verified: false },
+// }
+
+// Gate on multiple claims at once
+const canAccess = claims.kyc.verified && claims.age.verified;`}</Code>
+      </Section>
+
       <Section title="Configuration">
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
           Call <span className="mono">configure()</span> once at startup, or set env vars.
