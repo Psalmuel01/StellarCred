@@ -18,6 +18,7 @@ import {
   IconCpu,
   IconCloudUpload,
   IconStack2,
+  IconInfoCircle,
   IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
@@ -50,6 +51,7 @@ import {
 import { PREVIEW_CREDENTIALS } from "@/lib/preview-fixtures";
 import { usePreviewMode } from "@/lib/wallet-context";
 import CopyButton from "@/components/CopyButton";
+import CredentialDetailModal from "@/components/CredentialDetailModal";
 import { useToast } from "@/components/Toast";
 import { QrScanner } from "@/components/QrScanner";
 import { TransferExportModal } from "@/components/TransferExportModal";
@@ -82,6 +84,7 @@ function CredCard({
   address,
   onProve,
   onRemove,
+  onInspect,
   onTransfer,
   isPreview,
   selection,
@@ -90,7 +93,8 @@ function CredCard({
   address: string;
   onProve: () => void;
   onRemove: () => void;
-  onTransfer: () => void;
+  onInspect: () => void;
+  onTransfer?: () => void;
   isPreview?: boolean;
   /** Batch selection controls — omitted on cards that can't be batched. */
   selection?: {
@@ -114,11 +118,22 @@ function CredCard({
           </div>
           <div style={{ fontSize: "0.75rem", color: "var(--faint)", marginTop: "0.15rem" }}>
             {c.issuer} · <span>{truncateHash(c.commitment)}</span>
+          <div style={{ fontSize: "0.75rem", color: "var(--faint)", marginTop: "0.15rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            {c.issuer} · <span>{truncateHash(c.commitment)}</span>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={onInspect}
+              title="View details"
+              style={{ padding: "0.1rem 0.2rem", color: "var(--faint)", lineHeight: 0 }}
+            >
+              <IconInfoCircle size={12} />
+            </button>
             {status === "proved" && (
               <>
                 {" · "}
                 <span style={{ color: "var(--accent)", opacity: 0.75 }}>
                   {t("expiresIn", { days: daysRemaining(c) })}
+                  expires in {daysRemaining(c)}d
                 </span>
                 {c.provedTxHash && (
                   <>
@@ -191,6 +206,8 @@ function CredCard({
                 <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
               )}
             </div>
+              <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
+            )}
           </div>
         </div>
 
@@ -221,6 +238,16 @@ function CredCard({
           >
             <IconQrcode size={13} />
           </button>
+          {onTransfer && (
+            <button
+              className="btn btn-ghost btn-sm"
+              title="Transfer to another device"
+              onClick={onTransfer}
+              style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
+            >
+              <IconQrcode size={13} />
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-sm"
             title="Remove"
@@ -284,6 +311,7 @@ function HolderInner() {
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importScanning, setImportScanning] = useState(false);
   const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [detailCred, setDetailCred] = useState<Credential | null>(null);
 
   useEffect(() => setCreds(loadCredentials()), []);
 
@@ -462,7 +490,8 @@ function HolderInner() {
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
-                  onTransfer={() => setTransferCred(c)}
+                  onInspect={() => setDetailCred(c)}
+                  onTransfer={() => {}}
                   isPreview={isPreview}
                   selection={
                     canBatch
@@ -542,7 +571,8 @@ function HolderInner() {
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
-                  onTransfer={() => setTransferCred(c)}
+                  onInspect={() => setDetailCred(c)}
+                  onTransfer={() => {}}
                   isPreview={isPreview}
                 />
               ))}
@@ -579,7 +609,7 @@ function HolderInner() {
               </button>
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => setImportScanning(true)}
+                onClick={() => setImporting(true)}
               >
                 <IconQrcode size={14} />
                 Scan QR
@@ -589,41 +619,13 @@ function HolderInner() {
         </div>
       )}
 
-      {transferCred && (
-        <TransferExportModal cred={transferCred} onClose={() => setTransferCred(null)} />
-      )}
-
-      {importScanning && (
-        <QrScanner
-          title="Scan a transfer code"
-          hint="Point your camera at a StellarCred credential-transfer QR code."
-          onScan={(text) => {
-            setImportScanning(false);
-            let payload: string | null = null;
-            try {
-              payload = new URL(text, window.location.origin).searchParams.get(IMPORT_PARAM);
-            } catch {
-              // not a URL — fall through, payload stays null
-            }
-            if (!payload) {
-              toast.error("That QR code isn't a valid credential-transfer code.");
-              return;
-            }
-            setImportPayload(payload);
+      {detailCred && (
+        <CredentialDetailModal
+          credential={{
+            ...detailCred,
+            claimParams: detailCred.claimParams as Record<string, unknown> | undefined,
           }}
-          onClose={() => setImportScanning(false)}
-        />
-      )}
-
-      {importPayload && (
-        <TransferImportModal
-          payload={importPayload}
-          onImported={(c) => {
-            setCreds(saveCredential(c));
-            setImportPayload(null);
-            toast.success(`${c.title} imported`);
-          }}
-          onClose={() => setImportPayload(null)}
+          onClose={() => setDetailCred(null)}
         />
       )}
     </>
@@ -689,6 +691,7 @@ function ProofFlow({
   const [proof, setProof] = useState<{ proof: Uint8Array; publicInputs: Uint8Array } | null>(null);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
+  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -731,6 +734,7 @@ function ProofFlow({
         if (!cancelled) {
           const parsed = parseContractError((e as Error).message);
           setError(parsed);
+          setErrorPhase("proving");
           setStage("error");
           toast.error(`Proof generation failed: ${parsed.friendly}`);
         }
@@ -763,9 +767,18 @@ function ProofFlow({
     } catch (e) {
       const parsed = parseContractError((e as Error).message);
       setError(parsed);
+      setErrorPhase("submitting");
       setStage("error");
       toast.error(`Submission failed: ${parsed.friendly}`);
     }
+  }
+
+  // Re-submit an already-generated proof without re-proving.
+  async function onRetrySubmit() {
+    if (!proof) return;
+    setError(null);
+    setErrorPhase(null);
+    await onSubmit();
   }
 
   const proofDone = stage === "generated" || stage === "submitting" || stage === "confirmed";
@@ -923,6 +936,11 @@ function ProofFlow({
             <div className="row" style={{ gap: "0.5rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.875rem" }}>
               <IconAlertTriangle size={15} />
               {error.code !== null ? t("contractError", { code: error.code }) : t("couldNotComplete")}
+              {errorPhase === "proving"
+                ? "Proof generation failed"
+                : errorPhase === "submitting"
+                  ? "Submission failed — proof is ready to retry"
+                  : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
             <div style={{ fontSize: "0.8125rem", marginTop: "0.45rem", lineHeight: 1.65, color: "var(--text)" }}>
               {error.friendly}
@@ -957,6 +975,17 @@ function ProofFlow({
                   </pre>
                 )}
               </div>
+            )}
+            {/* Retry submission without re-proving when the proof exists */}
+            {errorPhase === "submitting" && proof && (
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: "1rem", width: "100%" }}
+                onClick={onRetrySubmit}
+              >
+                Retry submission
+                <IconArrowRight size={15} />
+              </button>
             )}
           </div>
         )}

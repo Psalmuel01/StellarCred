@@ -742,6 +742,7 @@ dependencies = [
  "credential_verifier",
  "issuer_registry",
  "proof_registry",
+ "proptest",
  "soroban-sdk",
 ]
 
@@ -936,6 +937,7 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 name = "issuer_registry"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "soroban-sdk",
 ]
 

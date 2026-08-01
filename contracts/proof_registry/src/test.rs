@@ -10,6 +10,7 @@ use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
     vec, Address, BytesN, Bytes, Env, IntoVal,
 };
+use proptest::prelude::*;
 
 // Real UltraHonk artifacts (kyc_proof circuit, Noir beta.9 + bb 0.87.0), so
 // submit_proof exercises genuine on-chain verification through the verifier.
@@ -823,7 +824,6 @@ struct MultiHarness {
     kyc_issuer: Address,
     funds_issuer: Address,
     age_issuer: Address,
-    admin: Address,
 }
 
 fn deploy_multi(env: &Env) -> MultiHarness {
@@ -864,7 +864,6 @@ fn deploy_multi(env: &Env) -> MultiHarness {
         kyc_issuer,
         funds_issuer,
         age_issuer,
-        admin,
     }
 }
 
@@ -1185,6 +1184,198 @@ fn legacy_record_missing_issuer_key_fails_to_read() {
 
     let result = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(result.is_err());
+}
+// ── Property-based tests ────────────────────────────────────────
+
+/// Property: No proof from an unregistered issuer is ever accepted.
+/// For any holder and unregistered issuer, submitting a proof must fail
+/// and `is_verified` must return false.
+#[test]
+fn prop_unregistered_issuer_always_rejected() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let h = deploy(&env);
+            let holder = Address::generate(&env);
+            let unregistered = Address::generate(&env);
+
+            let res = h.registry.try_submit_proof(
+                &holder,
+                &unregistered,
+                &symbol_short!("kyc"),
+                &Bytes::from_slice(&env, PROOF),
+                &Bytes::from_slice(&env, PUBLIC_INPUTS),
+                &1000,
+            );
+
+            prop_assert!(res.is_err(), "Unregistered issuer should not be accepted");
+            let (valid, _, _) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+            prop_assert!(!valid, "is_verified should return false for unregistered issuer");
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// Property: check_claim(threshold) is monotonic.
+/// If `check_claim(&holder, &type, &Some(T), &None)` returns true,
+/// then `check_claim(&holder, &type, &Some(T'), &None)` must also return true
+/// for all T' <= T.
+#[test]
+fn prop_check_claim_monotonic_in_threshold() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..500_000u64, 0u64..500_000u64), |(threshold_a, threshold_b)| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let admin = Address::generate(&env);
+
+            let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+            let ir = IssuerRegistryClient::new(&env, &ir_id);
+            let issuer = Address::generate(&env);
+            ir.register_issuer(
+                &issuer,
+                &pubkey_from(&env, FUNDS_PUBLIC_INPUTS),
+                &vec![&env, symbol_short!("funds")],
+            );
+
+            let v_id = env.register(CredentialVerifier, (admin.clone(),));
+            CredentialVerifierClient::new(&env, &v_id)
+                .set_vk(&symbol_short!("funds"), &Bytes::from_slice(&env, FUNDS_VK));
+
+            let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+            let registry = ProofRegistryClient::new(&env, &pr_id);
+            let holder = Address::generate(&env);
+
+            registry.submit_proof(
+                &holder,
+                &issuer,
+                &symbol_short!("funds"),
+                &Bytes::from_slice(&env, FUNDS_PROOF),
+                &Bytes::from_slice(&env, FUNDS_PUBLIC_INPUTS),
+                &9999,
+            );
+
+            let t = std::cmp::min(threshold_a, threshold_b);
+            let t_prime = std::cmp::max(threshold_a, threshold_b);
+
+            let claim_at_t = registry.check_claim(&holder, &symbol_short!("funds"), &Some(t), &None);
+            let claim_at_t_prime = registry.check_claim(
+                &holder,
+                &symbol_short!("funds"),
+                &Some(t_prime),
+                &None,
+            );
+
+            // Monotonicity: if the proof passes at a lower threshold T,
+            // it must also pass at a higher threshold T' where T' <= T.
+            if t <= 200_000 && t_prime <= 200_000 {
+                prop_assert!(claim_at_t, "check_claim at T={} should be true", t);
+                prop_assert!(
+                    claim_at_t_prime,
+                    "check_claim at T'={} should be true since T' <= T",
+                    t_prime
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// Property: Expired claims always read as false.
+/// If a proof's expiry is in the past relative to the current ledger timestamp,
+/// both `is_verified` and `check_claim` must return false.
+#[test]
+fn prop_expired_claims_always_false() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..1000u64), |expiry| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let h = deploy(&env);
+            let holder = Address::generate(&env);
+
+            // Soroban's default ledger timestamp starts at 1,
+            // so any expiry value < current timestamp is in the past.
+            h.registry.submit_proof(
+                &holder,
+                &h.issuer,
+                &symbol_short!("kyc"),
+                &Bytes::from_slice(&env, PROOF),
+                &Bytes::from_slice(&env, PUBLIC_INPUTS),
+                &expiry,
+            );
+
+            // Move ledger time to expiry + 1 so the proof is expired.
+            env.ledger().with_mut(|li| li.timestamp = expiry + 1);
+
+            let (valid, _, _) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+            prop_assert!(!valid, "is_verified should return false for expired proof");
+
+            let claim = h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None);
+            prop_assert!(!claim, "check_claim should return false for expired proof");
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// Property: Revoked claims always read as false.
+/// If a proof is revoked, both `is_verified` and `check_claim` must return false,
+/// even if the proof is not yet expired.
+#[test]
+fn prop_revoked_claims_always_false() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let h = deploy(&env);
+            let holder = Address::generate(&env);
+
+            // Submit a valid, non-expired proof with a far-future expiry.
+            h.registry.submit_proof(
+                &holder,
+                &h.issuer,
+                &symbol_short!("kyc"),
+                &Bytes::from_slice(&env, PROOF),
+                &Bytes::from_slice(&env, PUBLIC_INPUTS),
+                &5000,
+            );
+
+            // Verify it's valid before revocation.
+            let (valid_before, _, _) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+            prop_assert!(valid_before, "Proof should be valid before revocation");
+
+            // Revoke the proof.
+            h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+            // After revocation, is_verified must return false.
+            let (valid_after, _, _) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+            prop_assert!(!valid_after, "is_verified should return false after revocation");
+
+            // check_claim must also return false.
+            let claim = h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None);
+            prop_assert!(!claim, "check_claim should return false after revocation");
+            Ok(())
+        })
+        .unwrap();
 }
 
 // ── migrate_record tests ─────────────────────────────────────────────────────

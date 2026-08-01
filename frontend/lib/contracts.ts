@@ -36,6 +36,9 @@ const PROOF_REGISTRY_ERRORS: Record<number, string> = {
   3: "Not authorised — wallet signature missing or wrong account.",
   4: "Issuer not trusted — the issuer address isn't registered for this credential type.",
   5: "Issuer key mismatch — this credential was signed with a key that doesn't match what's registered on-chain. Re-issue the credential and try again.",
+  6: "Duplicate credential type — a proof for this claim type is already on-chain for this wallet. Revoke or wait for expiry before submitting again.",
+  7: "Credential revoked — the issuer has revoked this credential. Re-issue through the verify flow.",
+  8: "Credential expired — the on-chain proof has passed its validity window. Re-issue to get a fresh proof.",
 };
 
 export interface ContractError {
