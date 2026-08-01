@@ -17,6 +17,7 @@ import {
   IconCloudUpload,
   IconStack2,
   IconInfoCircle,
+  IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
@@ -82,6 +83,7 @@ function CredCard({
   onProve,
   onRemove,
   onInspect,
+  onTransfer,
   isPreview,
   selection,
 }: {
@@ -90,6 +92,7 @@ function CredCard({
   onProve: () => void;
   onRemove: () => void;
   onInspect: () => void;
+  onTransfer?: () => void;
   isPreview?: boolean;
   /** Batch selection controls — omitted on cards that can't be batched. */
   selection?: {
@@ -162,14 +165,16 @@ function CredCard({
              status === "expired" ? "Re-prove" :
                                     "Generate proof"}
           </button>
-          <button
-            className="btn btn-ghost btn-sm"
-            title="Transfer to another device"
-            onClick={onTransfer}
-            style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
-          >
-            <IconQrcode size={13} />
-          </button>
+          {onTransfer && (
+            <button
+              className="btn btn-ghost btn-sm"
+              title="Transfer to another device"
+              onClick={onTransfer}
+              style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
+            >
+              <IconQrcode size={13} />
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-sm"
             title="Remove"
@@ -229,6 +234,7 @@ function HolderInner() {
   const [creds, setCreds] = useState<Credential[]>([]);
   const [view, setView] = useState<PageView>({ kind: "list" });
   const [importing, setImporting] = useState(false);
+  const [importPayload, setImportPayload] = useState<string | null>(null);
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
 
   useEffect(() => setCreds(loadCredentials()), []);
@@ -410,6 +416,7 @@ function HolderInner() {
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
                   onInspect={() => setDetailCred(c)}
+                  onTransfer={() => {}}
                   isPreview={isPreview}
                   selection={
                     canBatch
@@ -490,6 +497,7 @@ function HolderInner() {
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
                   onInspect={() => setDetailCred(c)}
+                  onTransfer={() => {}}
                   isPreview={isPreview}
                 />
               ))}
@@ -518,7 +526,7 @@ function HolderInner() {
               </button>
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => setImportScanning(true)}
+                onClick={() => setImporting(true)}
               >
                 <IconQrcode size={14} />
                 Scan QR
@@ -530,7 +538,10 @@ function HolderInner() {
 
       {detailCred && (
         <CredentialDetailModal
-          credential={detailCred}
+          credential={{
+            ...detailCred,
+            claimParams: detailCred.claimParams as Record<string, unknown> | undefined,
+          }}
           onClose={() => setDetailCred(null)}
         />
       )}
