@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, BytesN, Env};
+use soroban_sdk::{symbol_short, testutils::{Address as _, Events as _}, vec, Address, BytesN, Env, IntoVal};
 
 fn setup(env: &Env) -> (Address, IssuerRegistryClient<'_>) {
     let admin = Address::generate(env);

@@ -279,23 +279,52 @@ fn issuer_revoke_emits_event() {
     let h = deploy(&env);
     let holder = Address::generate(&env);
 
+    // Assert the submitted event immediately after submit — the snapshot
+    // framework drains env.events().all() after each contract invocation.
     submit(&env, &h, &holder, 1000);
-    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
-
     assert_eq!(
-        env.events().all(),
+        env.events().all().filter_by_contract(&h.registry.address),
         vec![
             &env,
             (
-                h.registry_id.clone(),
-                (symbol_short!("revoked"),).into_val(&env),
+                h.registry.address.clone(),
                 (
-                    holder.clone(),
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
                     symbol_short!("kyc"),
-                    h.issuer.clone(),
-                    env.ledger().timestamp()
                 )
                     .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 1000,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+
+    // Assert the revoked event immediately after revoke.
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+    assert_eq!(
+        env.events().all().filter_by_contract(&h.registry.address),
+        vec![
+            &env,
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("revoked"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofRevoked {
+                    holder: holder.clone(),
+                    issuer: h.issuer.clone(),
+                    revoked_at: env.ledger().timestamp(),
+                }
+                .into_val(&env),
             ),
         ],
     );
@@ -1126,19 +1155,6 @@ fn set_admin_by_non_admin_panics() {
     assert!(res.is_err());
 }
 
-// A record shaped like `ProofRecord` before the `issuer` field was added —
-// same storage key, one fewer map entry. Used to prove (not just assert)
-// what actually happens when the current contract reads a proof stored under
-// the old schema.
-#[contracttype]
-#[derive(Clone)]
-struct LegacyProofRecord {
-    pub verified_at: u64,
-    pub expiry: u64,
-    pub threshold: Option<u64>,
-    pub revoked: bool,
-}
-
 /// `Option<Address>` on `ProofRecord::issuer` does NOT make a record written
 /// before that field existed readable. Soroban's derived struct decoding
 /// unpacks the stored map by exact field count (`map_unpack_to_slice` errors
@@ -1169,4 +1185,162 @@ fn legacy_record_missing_issuer_key_fails_to_read() {
 
     let result = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(result.is_err());
+}
+
+// ── migrate_record tests ─────────────────────────────────────────────────────
+
+/// After `migrate_record` rewrites a 4-field legacy record into the current
+/// 5-field layout, `is_verified` reads it without panicking and returns the
+/// original data.
+#[test]
+fn migrate_record_makes_legacy_readable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Write a legacy 4-field record directly into the contract's storage.
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    // Before migration, reading as ProofRecord panics.
+    let before = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(before.is_err());
+
+    // Admin migrates.
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // After migration the record is readable.
+    let (valid, verified_at, expiry) =
+        h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+    assert_eq!(verified_at, 500);
+    assert_eq!(expiry, 1000);
+}
+
+/// A migrated record has `issuer = None` so it must be rejected under an
+/// active `trusted_issuers` filter.
+#[test]
+fn migrated_record_rejected_under_trusted_issuers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // Without a trusted_issuers filter the record is valid.
+    assert!(h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None)
+        .0);
+    assert!(h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+
+    // With a trusted_issuers filter the migrated record (issuer = None) is
+    // rejected — fails closed.
+    assert!(!h.registry.check_claim(
+        &holder,
+        &symbol_short!("kyc"),
+        &None,
+        &Some(vec![&env, h.issuer.clone()]),
+    ));
+    let (valid, _at, _expiry) = h.registry.is_verified(
+        &holder,
+        &symbol_short!("kyc"),
+        &Some(vec![&env, h.issuer.clone()]),
+    );
+    assert!(!valid);
+}
+
+/// Only the contract admin may call `migrate_record`.
+#[test]
+fn migrate_record_only_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    // Call with no auth — must fail.
+    let res = h
+        .registry
+        .mock_auths(&[])
+        .try_migrate_record(&holder, &symbol_short!("kyc"));
+    assert!(res.is_err());
+
+    // Verify the legacy record is still unreadable (migration did NOT happen).
+    let after = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(after.is_err());
+}
+
+/// Calling `migrate_record` on an already-migrated (5-field) record is a
+/// no-op — the call succeeds without error.
+#[test]
+fn migrate_record_idempotent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit a proof normally — this writes a 5-field current-format record.
+    submit(&env, &h, &holder, 1000);
+    assert!(h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None)
+        .0);
+
+    // Migrate on an already-current record — must succeed (no-op).
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // Record is still valid and unchanged.
+    let (valid, _at, expiry) =
+        h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+    assert_eq!(expiry, 1000);
+}
+
+/// Calling `migrate_record` for a holder that has no stored proof must fail
+/// with `ProofNotFound`.
+#[test]
+fn migrate_record_no_proof_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let res = h
+        .registry
+        .try_migrate_record(&holder, &symbol_short!("kyc"));
+    assert!(res.is_err());
 }

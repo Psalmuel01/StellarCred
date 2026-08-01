@@ -272,8 +272,10 @@ cp frontend/.env.example frontend/.env.local
 cd frontend && pnpm install && pnpm dev
 ```
 
-In the browser: install **Freighter**, switch it to **testnet**, and fund the
-account (https://lab.stellar.org or friendbot).
+In the browser: install a Stellar wallet (**Freighter**, Albedo, xBull, and
+others via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)
+are supported), switch it to **testnet**, and fund the account
+(https://lab.stellar.org or friendbot).
 
 - **Verify** — pick one or more claims; the app issues the credentials to your
   wallet (saved locally, never server-side).

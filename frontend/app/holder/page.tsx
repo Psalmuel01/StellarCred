@@ -750,7 +750,7 @@ function ProofFlow({
           <ProofStep
             icon={<IconCloudUpload size={14} stroke={1.8} />}
             title="Submit to Stellar"
-            subtitle="ProofRegistry.submit_proof · Freighter signature"
+            subtitle="ProofRegistry.submit_proof · wallet signature"
             state={
               stage === "submitting" ? "active" :
               submitDone             ? "done"   : "idle"
@@ -1104,7 +1104,7 @@ function BatchProofFlow({
         <ProofStep
           icon={<IconCloudUpload size={14} stroke={1.8} />}
           title="Submit batch to Stellar"
-          subtitle={`ProofRegistry.submit_proofs_batch · ${creds.length} credentials · single Freighter signature`}
+          subtitle={`ProofRegistry.submit_proofs_batch · ${creds.length} credentials · single wallet signature`}
           state={
             isSubmitting ? "active" :
             isConfirmed  ? "done"   : "idle"

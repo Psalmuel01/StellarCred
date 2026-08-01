@@ -758,7 +758,7 @@ export default function DocsPage() {
                 body: (
                   <>
                     The holder submits the proof to <Code>ProofRegistry.submit_proof</Code> via a
-                    Freighter-signed Stellar transaction. The registry checks the issuer is trusted
+                    wallet-signed Stellar transaction. The registry checks the issuer is trusted
                     via <Code>IssuerRegistry</Code>, verifies the on-chain public key matches the
                     one in the proof's public inputs, and forwards to <Code>CredentialVerifier</Code>{" "}
                     which runs the BN254 UltraHonk verifier as a Soroban host function. If all pass,
@@ -1161,8 +1161,9 @@ SOURCE=deployer ./scripts/deploy.sh
               }}
             >
               <li>
-                Install <strong style={{color:"var(--text)"}}>Freighter wallet</strong> and
-                switch it to <strong style={{color:"var(--text)"}}>Testnet</strong>
+                Install a <strong style={{color:"var(--text)"}}>Stellar wallet</strong> (Freighter,
+                Albedo, xBull, and others are supported) and switch it to{" "}
+                <strong style={{color:"var(--text)"}}>Testnet</strong>
               </li>
               <li>
                 Fund your address via{" "}
@@ -1179,7 +1180,7 @@ SOURCE=deployer ./scripts/deploy.sh
               </li>
               <li>
                 Click <strong style={{color:"var(--text)"}}>Submit to Stellar</strong>,
-                approve in Freighter, and check the <strong style={{color:"var(--text)"}}>Apps</strong>{" "}
+                approve in your wallet, and check the <strong style={{color:"var(--text)"}}>Apps</strong>{" "}
                 page to see your eligibility update live
               </li>
             </ol>

@@ -1,6 +1,7 @@
 "use client";
 
-// Thin wrapper around Stellar Wallets Kit (Freighter, xBull, etc.).
+// Thin wrapper around Stellar Wallets Kit (Freighter, Albedo, xBull, Rabet,
+// Lobstr, Hana, HotWallet, Klever, WalletConnect, ...).
 // The kit's `network` option configures which network the kit signs for; it does
 // NOT switch the wallet extension's own selected network. Network mismatches are
 // therefore not treated as connect-time failures here — wallet-context.tsx polls
@@ -12,23 +13,50 @@ import {
   WalletNetwork,
   allowAllModules,
   FREIGHTER_ID,
+  type ModuleInterface,
 } from "@creit.tech/stellar-wallets-kit";
+// Not re-exported from the package root: unlike the browser-extension modules
+// allowAllModules() already covers, WalletConnect needs a projectId before it
+// can be constructed, so the kit excludes it from "modules that just work".
+import {
+  WalletConnectModule,
+  WalletConnectAllowedMethods,
+  WALLET_CONNECT_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/walletconnect.module";
 import { NETWORK, NETWORK_PASSPHRASE } from "./stellar";
 
 const APP_NETWORK =
   NETWORK === "public" ? WalletNetwork.PUBLIC : WalletNetwork.TESTNET;
 
 const CONNECT_TIMEOUT_MS = 30_000;
-const FREIGHTER_URL = "https://freighter.app";
+const APP_BASE_URL = process.env.NEXT_PUBLIC_STELLARCRED_BASE_URL ?? "https://stellarcred.xyz";
+// Get a free project ID at https://cloud.reown.com — WalletConnect is omitted
+// from the wallet-picker modal entirely when unset (see getKit() below), it
+// isn't a hard error.
+const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+
+function walletConnectModule(): ModuleInterface | null {
+  if (!WALLETCONNECT_PROJECT_ID) return null;
+  return new WalletConnectModule({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    name: "StellarCred",
+    description: "Privacy-preserving on-chain credentials for Stellar",
+    url: APP_BASE_URL,
+    icons: [`${APP_BASE_URL}/icon.svg`],
+    method: WalletConnectAllowedMethods.SIGN,
+    network: APP_NETWORK,
+  });
+}
 
 let kit: StellarWalletsKit | null = null;
 
 export function getKit(): StellarWalletsKit {
   if (!kit) {
+    const wc = walletConnectModule();
     kit = new StellarWalletsKit({
       network: APP_NETWORK,
       selectedWalletId: FREIGHTER_ID,
-      modules: allowAllModules(),
+      modules: wc ? [...allowAllModules(), wc] : allowAllModules(),
     });
   }
   return kit;
@@ -38,21 +66,30 @@ export type WalletErrorKind = "not-installed" | "dismissed" | "rejected" | "time
 
 export class WalletConnectError extends Error {
   kind: WalletErrorKind;
-  constructor(kind: WalletErrorKind, message: string) {
+  /** Display name of the wallet the user was connecting when this failed, if known. */
+  walletName?: string;
+  /** Where to send the user to install/get the wallet, if known. */
+  installUrl?: string;
+  constructor(kind: WalletErrorKind, message: string, opts?: { walletName?: string; installUrl?: string }) {
     super(message);
     this.name = "WalletConnectError";
     this.kind = kind;
+    this.walletName = opts?.walletName;
+    this.installUrl = opts?.installUrl;
   }
 }
-
-export const FREIGHTER_INSTALL_URL = FREIGHTER_URL;
 
 // Map whatever the kit/wallet extension throws into one of our known error
 // kinds. There's no stable, documented string for "user declined in the
 // extension popup" (it's internal to each wallet extension, not the npm
 // package), so any post-selection failure that isn't the well-known
 // "not installed" message is treated as a cancellation.
-function toWalletError(e: unknown): WalletConnectError {
+//
+// `wallet` carries the id/name/install-url of whichever wallet was being
+// connected (from the kit's own ISupportedWallet), so the resulting error —
+// and the UI showing it — refers to the wallet the user actually picked
+// instead of assuming Freighter.
+function toWalletError(e: unknown, wallet?: { id: string; name: string; url: string }): WalletConnectError {
   if (e instanceof WalletConnectError) return e;
   const message =
     e instanceof Error
@@ -60,10 +97,17 @@ function toWalletError(e: unknown): WalletConnectError {
       : typeof e === "object" && e && "message" in e
         ? String((e as { message: unknown }).message)
         : String(e);
-  if (/not connected|not available/i.test(message)) {
+  // WalletConnect isn't a browser extension — there's nothing to "install".
+  // Its own "not connected" errors are relay/session failures (dropped
+  // socket, expired session, peer rejection), so it's excluded from the
+  // not-installed classification and falls through to "rejected" instead.
+  if (wallet?.id !== WALLET_CONNECT_ID && /not connected|not available/i.test(message)) {
     return new WalletConnectError(
       "not-installed",
-      "No Stellar wallet extension found. Install Freighter to continue.",
+      wallet
+        ? `${wallet.name} isn't available. Install it to continue.`
+        : "No Stellar wallet extension found. Install one to continue.",
+      wallet ? { walletName: wallet.name, installUrl: wallet.url } : undefined,
     );
   }
   return new WalletConnectError("rejected", "Connection cancelled");
@@ -113,7 +157,7 @@ export async function connect(): Promise<Connection> {
           const { address } = await k.getAddress();
           resolve({ address, walletId: option.id });
         } catch (e) {
-          reject(toWalletError(e));
+          reject(toWalletError(e, { id: option.id, name: option.name, url: option.url }));
         }
       },
       onClosed: () => reject(new WalletConnectError("dismissed", "Connection cancelled")),

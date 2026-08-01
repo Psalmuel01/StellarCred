@@ -55,7 +55,7 @@ export function parseContractError(raw: string): ContractError {
     };
   }
   if (raw.includes("Error(Auth")) {
-    return { code: null, friendly: "Wallet authorisation failed — approve the transaction in Freighter.", raw };
+    return { code: null, friendly: "Wallet authorisation failed — approve the transaction in your wallet.", raw };
   }
   if (raw.includes("Error(WasmVm")) {
     return { code: null, friendly: "Contract execution failed — the proof or inputs were malformed.", raw };

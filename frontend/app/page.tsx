@@ -364,7 +364,7 @@ const canDeposit = await StellarCred.hasClaim(wallet, "kyc");`}</CodeBlock>
             className="muted"
             style={{ marginBottom: "2rem", maxWidth: 440, margin: "0 auto 2rem" }}
           >
-            Connect a Freighter wallet on testnet, get a credential, generate
+            Connect a Stellar wallet on testnet, get a credential, generate
             your first on-chain ZK proof in under a minute.
           </p>
           <div className="row" style={{ justifyContent: "center", gap: "0.65rem", flexWrap: "wrap" }}>
