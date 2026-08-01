@@ -10,8 +10,8 @@
 //! `jurisdiction`, `income`, `human`, `employer`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
-    String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    BytesN, Env, String, Symbol, Vec,
 };
 
 // ── Event types ──────────────────────────────────────────────────────────────
