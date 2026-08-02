@@ -7,12 +7,15 @@ import {
   IconLoader2,
   IconCheck,
   IconBuildingBank,
+  IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
 import { useToast } from "@/components/Toast";
+import { validateVerifyParams } from "@/lib/verifyParams";
+import { QrScanner } from "@/components/QrScanner";
 
 const TYPES = Object.entries(TYPE_META) as [
   CredentialType,
@@ -31,6 +34,22 @@ const DEMO_ISSUER_ID = process.env.NEXT_PUBLIC_ISSUER_ADDRESS ?? "";
 
 const VALID_CLAIMS = TYPES.map(([k]) => k);
 
+// One id per verify session, sent as `x-request-id` on every /api/issue and
+// /api/plaid-balance call so server logs for a single issuance — including
+// across the Persona redirect round-trip — can be correlated together.
+function getOrCreateRequestId(): string {
+  if (typeof window === "undefined") return "";
+  const KEY = "sc_request_id";
+  let id = sessionStorage.getItem(KEY);
+  if (!id) {
+    id = window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
 function VerifyInner() {
   const router = useRouter();
   const { address } = useWallet();
@@ -44,63 +63,150 @@ function VerifyInner() {
   const returnUrl = searchParams.get("return_url");
   const personaInquiryId = searchParams.get("inquiry-id");
   const claimParam = searchParams.get("claim") as CredentialType | null;
-  const requiredClaim = claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
+  const requiredClaim =
+    claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
   const locked = !!requiredClaim;
+
+  // Validate all query params up-front; block the flow on any invalid value.
+  const paramValidation = validateVerifyParams({
+    returnUrl,
+    claim: claimParam,
+    thresholdYears: searchParams.get("threshold_years"),
+    threshold: searchParams.get("threshold"),
+    restricted: searchParams.get("restricted"),
+    currentOrigin: typeof window !== "undefined" ? window.location.origin : undefined,
+  });
 
   // Protocol-supplied proof parameters. These flow into the issued credential
   // so the witness route can use them at prove time instead of hardcoded values.
   const minThresholdParam = searchParams.get("min_threshold") ?? undefined;
   const claimParamsFromUrl = {
-    threshold_years: searchParams.get("threshold_years") ?? (claimParam === "age" ? minThresholdParam : undefined),
-    threshold: searchParams.get("threshold") ?? (claimParam === "funds" || claimParam === "income" ? minThresholdParam : undefined),
-    restricted: searchParams.get("restricted")?.split(",").filter(Boolean) ?? undefined,
+    threshold_years:
+      searchParams.get("threshold_years") ??
+      (claimParam === "age" ? minThresholdParam : undefined),
+    threshold:
+      searchParams.get("threshold") ??
+      (["funds", "income", "accreditation", "employment"].includes(
+        claimParam ?? "",
+      )
+        ? minThresholdParam
+        : undefined),
+    restricted:
+      searchParams.get("restricted")?.split(",").filter(Boolean) ?? undefined,
   };
 
   const [selected, setSelected] = useState<CredentialType | null>(
-    requiredClaim ?? (TYPES[0]?.[0] ?? null),
+    requiredClaim ?? TYPES[0]?.[0] ?? null,
   );
+  const radioRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [attributes, setAttributes] = useState<Record<string, string>>({
     date_of_birth: "1995-06-15",
     income: "250000",
     net_worth: "1500000",
     country_code: "566",
+    seniority: "5",
   });
   const [expiry, setExpiry] = useState("90 days");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [urlError, setUrlError] = useState("");
   const [requestingDomain, setRequestingDomain] = useState("");
+  // Param validation errors surfaced from validateVerifyParams
+  const paramErrors = [
+    paramValidation.claimError,
+    paramValidation.thresholdYearsError,
+    paramValidation.thresholdError,
+    paramValidation.restrictedError,
+  ].filter(Boolean) as string[];
   const [done, setDone] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const justIssuedClaims = useRef<string[]>([]);
+
+  // A protocol can display this scanned code instead of a clickable link
+  // (e.g. on a kiosk or a screen the phone doesn't have a direct link to) —
+  // it's the exact same /verify?return_url=...&claim=... URL buildVerifyUrl
+  // produces, so scanning it just navigates there like clicking the link would.
+  function onScanRequest(text: string) {
+    setScanning(false);
+    let dest: URL;
+    try {
+      dest = new URL(text, window.location.origin);
+    } catch {
+      toast.error("That QR code isn't a valid StellarCred verify request.");
+      return;
+    }
+    // A real verify request always has return_url — reject anything else
+    // outright rather than treating an arbitrary scanned URL as trustworthy.
+    if (dest.pathname !== "/verify" || !dest.searchParams.has("return_url")) {
+      toast.error("That QR code isn't a valid StellarCred verify request.");
+      return;
+    }
+    if (dest.origin === window.location.origin) {
+      // The scanned URL itself is same-origin, but its embedded return_url
+      // is where the wallet address ends up after issuance — a QR can stay
+      // on stellarcred.xyz throughout and still smuggle in a cross-origin
+      // return_url, so that param needs the same confirmation the top-level
+      // origin check gets below.
+      const embeddedReturnUrl = dest.searchParams.get("return_url");
+      if (embeddedReturnUrl && !embeddedReturnUrl.startsWith("/")) {
+        let returnDest: URL | null = null;
+        try {
+          returnDest = new URL(embeddedReturnUrl);
+        } catch {
+          toast.error("That QR code isn't a valid StellarCred verify request.");
+          return;
+        }
+        if (returnDest.protocol !== "https:") {
+          toast.error("That QR code isn't a valid StellarCred verify request.");
+          return;
+        }
+        if (returnDest.origin !== window.location.origin) {
+          if (!window.confirm(`This code will request verification on behalf of ${returnDest.hostname}, and your wallet address will be sent there once you finish. Continue?`)) {
+            return;
+          }
+        }
+      }
+      router.push(dest.pathname + dest.search);
+    } else if (dest.protocol === "https:") {
+      // Leaving the app entirely on a scanned code's say-so is exactly the
+      // shape of an open-redirect/phishing risk (a malicious QR could point
+      // anywhere) — confirm the destination with the user first instead of
+      // silently redirecting.
+      if (!window.confirm(`This code will take you to ${dest.hostname} to continue verification there. Continue?`)) {
+        return;
+      }
+      window.location.href = dest.toString();
+    } else {
+      toast.error("That QR code isn't a valid StellarCred verify request.");
+    }
+  }
 
   useEffect(() => {
     if (returnUrl) {
-      try {
-        let isRelative = false;
-        try {
-          new URL(returnUrl);
-        } catch {
-          if (returnUrl.startsWith("/")) {
-            isRelative = true;
-          }
-        }
+      // Use the extracted validator so error messages are consistent and testable.
+      const result = validateVerifyParams({
+        returnUrl,
+        claim: null,
+        thresholdYears: null,
+        threshold: null,
+        restricted: null,
+        currentOrigin: window.location.origin,
+      });
 
-        if (isRelative) {
-          setUrlError("");
-          setRequestingDomain(window.location.hostname);
-        } else {
-          const parsed = new URL(returnUrl);
-          if (parsed.protocol !== "https:") {
-            setUrlError("Invalid return URL: Must use HTTPS protocol.");
-            setRequestingDomain("");
-          } else {
-            setUrlError("");
-            setRequestingDomain(parsed.hostname);
-          }
-        }
-      } catch {
-        setUrlError("Invalid return URL: Must be a well-formed URL.");
+      if (result.returnUrlError) {
+        setUrlError(result.returnUrlError);
         setRequestingDomain("");
+      } else {
+        setUrlError("");
+        try {
+          if (returnUrl.startsWith("/")) {
+            setRequestingDomain(window.location.hostname);
+          } else {
+            setRequestingDomain(new URL(returnUrl).hostname);
+          }
+        } catch {
+          setRequestingDomain("");
+        }
       }
     } else {
       setUrlError("");
@@ -108,22 +214,31 @@ function VerifyInner() {
     }
   }, [returnUrl]);
   const [plaidBalance, setPlaidBalance] = useState<number | null>(null);
-  const [plaidAccounts, setPlaidAccounts] = useState<{ name: string; available: number }[]>([]);
+  const [plaidAccounts, setPlaidAccounts] = useState<
+    { name: string; available: number }[]
+  >([]);
   const [plaidMock, setPlaidMock] = useState(false);
 
   const fundsSelected = selected === "funds";
   useEffect(() => {
     if (!fundsSelected) return;
     setPlaidBalance(null);
-    fetch("/api/plaid-balance")
+    fetch("/api/plaid-balance", { headers: { "x-request-id": getOrCreateRequestId() } })
       .then((r) => r.json())
-      .then((d: { balance?: number; accounts?: { name: string; available: number }[]; mock?: boolean; error?: string }) => {
-        if (d.balance !== undefined) {
-          setPlaidBalance(d.balance);
-          setPlaidAccounts(d.accounts ?? []);
-          setPlaidMock(!!d.mock);
-        }
-      })
+      .then(
+        (d: {
+          balance?: number;
+          accounts?: { name: string; available: number }[];
+          mock?: boolean;
+          error?: string;
+        }) => {
+          if (d.balance !== undefined) {
+            setPlaidBalance(d.balance);
+            setPlaidAccounts(d.accounts ?? []);
+            setPlaidMock(!!d.mock);
+          }
+        },
+      )
       .catch(() => {});
   }, [fundsSelected]);
 
@@ -135,20 +250,31 @@ function VerifyInner() {
     if (!raw) return;
     sessionStorage.removeItem("sc_persona_pending");
     let pending: Record<string, unknown>;
-    try { pending = JSON.parse(raw); } catch { return; }
+    try {
+      pending = JSON.parse(raw);
+    } catch {
+      return;
+    }
     setBusy(true);
     setError("");
+    const requestId = getOrCreateRequestId();
     fetch("/api/issue", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-request-id": requestId },
       body: JSON.stringify({ ...pending, persona_inquiry_id: personaInquiryId }),
     })
       .then(async (res) => {
         if (!res.ok) {
-          const d = await res.json().catch(() => null) as { error?: string } | null;
-          throw new Error(d?.error ?? "Issuing failed after identity verification");
+          const d = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(
+            d?.error ?? "Issuing failed after identity verification",
+          );
         }
-        return res.json() as Promise<{ credentials: import("@/lib/credential").Credential[] }>;
+        return res.json() as Promise<{
+          credentials: import("@/lib/credential").Credential[];
+        }>;
       })
       .then(({ credentials }) => {
         credentials.forEach((c) => saveCredential(c));
@@ -156,17 +282,19 @@ function VerifyInner() {
 
         setDone(true);
         toast.success(
-          credentials.length > 1 ? "Credentials issued successfully" : "Credential issued successfully",
+          credentials.length > 1
+            ? "Credentials issued successfully"
+            : "Credential issued successfully",
         );
         setTimeout(redirectAfterIssue, 1500);
       })
       .catch((e) => {
         const message = (e as Error).message;
-        setError(message);
+        setError(`${message} (ref: ${requestId})`);
         toast.error(`Credential issuance failed: ${message}`);
       })
       .finally(() => setBusy(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personaInquiryId, address]);
 
   function setAttr(key: string, val: string) {
@@ -185,7 +313,10 @@ function VerifyInner() {
         }
 
         // Validate protocol for safety
-        if (dest.protocol !== "https:" && dest.origin !== window.location.origin) {
+        if (
+          dest.protocol !== "https:" &&
+          dest.origin !== window.location.origin
+        ) {
           setUrlError("Invalid return URL: Must use HTTPS protocol.");
           router.push("/holder");
           return;
@@ -216,9 +347,12 @@ function VerifyInner() {
     if (!address || !selected) return;
     setBusy(true);
     setError("");
+    const requestId = getOrCreateRequestId();
     try {
       if (!DEMO_ISSUER_ID) {
-        throw new Error("NEXT_PUBLIC_ISSUER_ADDRESS is not set — cannot issue credentials");
+        throw new Error(
+          "NEXT_PUBLIC_ISSUER_ADDRESS is not set — cannot issue credentials",
+        );
       }
       const payload = {
         credential_types: [selected],
@@ -231,7 +365,7 @@ function VerifyInner() {
       };
       const res = await fetch("/api/issue", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-request-id": requestId },
         body: JSON.stringify({
           ...payload,
           returnUrl: returnUrl ?? undefined,
@@ -245,20 +379,26 @@ function VerifyInner() {
         return; // don't clear busy — page is navigating away
       }
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        const data = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
         throw new Error(data?.error ?? "Issuing failed");
       }
-      const { credentials } = (await res.json()) as { credentials: Credential[] };
+      const { credentials } = (await res.json()) as {
+        credentials: Credential[];
+      };
       credentials.forEach((c) => saveCredential(c));
       justIssuedClaims.current = credentials.map((c) => c.type).filter((t) => VALID_CLAIMS.includes(t as CredentialType));
       setDone(true);
       toast.success(
-        credentials.length > 1 ? "Credentials issued successfully" : "Credential issued successfully",
+        credentials.length > 1
+          ? "Credentials issued successfully"
+          : "Credential issued successfully",
       );
       setTimeout(redirectAfterIssue, 1500);
     } catch (e) {
       const message = (e as Error).message;
-      setError(message);
+      setError(`${message} (ref: ${requestId})`);
       toast.error(`Credential issuance failed: ${message}`);
     } finally {
       setBusy(false);
@@ -270,22 +410,48 @@ function VerifyInner() {
       <div className="between" style={{ marginBottom: "2rem" }}>
         <div>
           <span className="eyebrow">Verify</span>
-          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Get verified</h1>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>
+            Get verified
+          </h1>
         </div>
         <WalletButton />
       </div>
 
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
+        {!locked && (
+          <div style={{ textAlign: "right", marginBottom: "0.75rem" }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setScanning(true)}>
+              <IconQrcode size={14} />
+              Scan QR
+            </button>
+          </div>
+        )}
+
+        {scanning && (
+          <QrScanner
+            title="Scan a verify request"
+            hint="Point your camera at the QR code a protocol displayed."
+            onScan={onScanRequest}
+            onClose={() => setScanning(false)}
+          />
+        )}
+
         <div className="card">
           {!address ? (
             <div style={{ textAlign: "center", padding: "2rem 0" }}>
-              <p className="muted" style={{ marginBottom: "1.25rem", fontSize: "0.9rem" }}>
+              <p
+                className="muted"
+                style={{ marginBottom: "1.25rem", fontSize: "0.9rem" }}
+              >
                 Connect your wallet to request credentials for your address.
               </p>
               <WalletButton />
             </div>
           ) : done ? (
-            <div className="reveal" style={{ textAlign: "center", padding: "2rem 0" }}>
+            <div
+              className="reveal"
+              style={{ textAlign: "center", padding: "2rem 0" }}
+            >
               <span
                 style={{
                   display: "inline-flex",
@@ -301,9 +467,14 @@ function VerifyInner() {
                 <IconCheck size={24} color="var(--accent)" stroke={2.5} />
               </span>
               <div style={{ fontWeight: 500 }}>
-                {requestingDomain && !urlError ? "Verified" : "Credential saved"}
+                {requestingDomain && !urlError
+                  ? "Verified"
+                  : "Credential saved"}
               </div>
-              <div className="muted" style={{ fontSize: "0.85rem", marginTop: "0.3rem" }}>
+              <div
+                className="muted"
+                style={{ fontSize: "0.85rem", marginTop: "0.3rem" }}
+              >
                 {requestingDomain && !urlError
                   ? `Returning to ${requestingDomain}…`
                   : "Credential saved — redirecting to your wallet…"}
@@ -311,7 +482,7 @@ function VerifyInner() {
             </div>
           ) : (
             <>
-              {urlError && (
+              {(urlError || paramErrors.length > 0) && (
                 <div style={{
                   padding: "0.75rem 1rem",
                   borderRadius: "var(--radius)",
@@ -319,45 +490,104 @@ function VerifyInner() {
                   border: "1px solid rgba(240, 96, 77, 0.2)",
                   color: "var(--danger)",
                   fontSize: "0.8125rem",
-                  marginBottom: "1rem"
+                  marginBottom: "1rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.3rem",
                 }}>
-                  {urlError}
+                  {urlError && <span>{urlError}</span>}
+                  {paramErrors.map((e, i) => <span key={i}>{e}</span>)}
                 </div>
               )}
               {requestingDomain && !urlError && (
-                <div style={{
-                  padding: "0.6rem 0.8rem",
-                  borderRadius: "var(--radius-xs)",
-                  background: "rgba(62, 207, 142, 0.05)",
-                  border: "1px solid rgba(62, 207, 142, 0.15)",
-                  fontSize: "0.8125rem",
-                  marginBottom: "1.25rem",
-                  color: "var(--muted)"
-                }}>
-                  Requested by <strong style={{ color: "var(--accent)" }}>{requestingDomain}</strong>
+                <div
+                  style={{
+                    padding: "0.6rem 0.8rem",
+                    borderRadius: "var(--radius-xs)",
+                    background: "rgba(62, 207, 142, 0.05)",
+                    border: "1px solid rgba(62, 207, 142, 0.15)",
+                    fontSize: "0.8125rem",
+                    marginBottom: "1.25rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Requested by{" "}
+                  <strong style={{ color: "var(--accent)" }}>
+                    {requestingDomain}
+                  </strong>
                 </div>
               )}
-              <label className="field-label">Credential type</label>
+              <label className="field-label" id="credential-type-label">Credential type</label>
               {locked && (
-                <p className="faint" style={{ fontSize: "0.8125rem", margin: "0.4rem 0 0" }}>
-                  A protocol requested the <strong style={{ color: "var(--accent)" }}>{requiredClaim}</strong> credential.
+                <p
+                  className="faint"
+                  style={{ fontSize: "0.8125rem", margin: "0.4rem 0 0" }}
+                >
+                  A protocol requested the{" "}
+                  <strong style={{ color: "var(--accent)" }}>
+                    {requiredClaim}
+                  </strong>{" "}
+                  credential.
                 </p>
               )}
-              <div className="stack" style={{ gap: "0.5rem", marginTop: "0.5rem", marginBottom: "1.25rem" }}>
+              <div
+                className="stack"
+                role="radiogroup"
+                aria-labelledby="credential-type-label"
+                style={{
+                  gap: "0.5rem",
+                  marginTop: "0.5rem",
+                  marginBottom: "1.25rem",
+                }}
+              >
                 {TYPES.map(([key, m]) => {
                   const on = selected === key;
                   if (locked && key !== requiredClaim) return null;
+                  const visibleTypes = locked
+                    ? TYPES.filter(([k]) => k === requiredClaim)
+                    : TYPES;
                   return (
                     <div
                       key={key}
-                      onClick={() => { if (!locked) setSelected(key); }}
+                      ref={(el) => {
+                        radioRefs.current[key] = el;
+                      }}
+                      onClick={() => {
+                        if (!locked) setSelected(key);
+                      }}
+                      onKeyDown={(e) => {
+                        if (locked) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelected(key);
+                        } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                          e.preventDefault();
+                          const i = visibleTypes.findIndex(([k]) => k === key);
+                          const [nextKey] = visibleTypes[(i + 1) % visibleTypes.length];
+                          setSelected(nextKey);
+                          radioRefs.current[nextKey]?.focus();
+                        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                          e.preventDefault();
+                          const i = visibleTypes.findIndex(([k]) => k === key);
+                          const [prevKey] = visibleTypes[(i - 1 + visibleTypes.length) % visibleTypes.length];
+                          setSelected(prevKey);
+                          radioRefs.current[prevKey]?.focus();
+                        }
+                      }}
+                      role="radio"
+                      aria-checked={on}
+                      aria-label={m.title}
+                      tabIndex={on ? 0 : -1}
                       style={{
                         padding: "0.75rem 0.9rem",
                         borderRadius: "var(--radius)",
                         border: `1px solid ${on ? "rgba(62,207,142,0.4)" : "var(--border)"}`,
-                        background: on ? "rgba(62,207,142,0.05)" : "transparent",
+                        background: on
+                          ? "rgba(62,207,142,0.05)"
+                          : "transparent",
                         cursor: locked ? "default" : "pointer",
-                        transition: "border-color 0.2s var(--ease), background 0.2s var(--ease)",
+                        transition:
+                          "border-color 0.2s var(--ease), background 0.2s var(--ease)",
                       }}
                     >
                       <div className="between" style={{ alignItems: "center" }}>
@@ -373,42 +603,76 @@ function VerifyInner() {
                               flexShrink: 0,
                             }}
                           >
-                            {on && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)" }} />}
+                            {on && (
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: "50%",
+                                  background: "var(--accent)",
+                                }}
+                              />
+                            )}
                           </span>
-                          <span style={{ fontWeight: 500, fontSize: "0.9rem" }}>{m.title}</span>
+                          <span style={{ fontWeight: 500, fontSize: "0.9rem" }}>
+                            {m.title}
+                          </span>
                         </span>
-                        <span className="mono faint" style={{ fontSize: "0.72rem" }}>
+                        <span
+                          className="mono faint"
+                          style={{ fontSize: "0.72rem" }}
+                        >
                           {key === "funds" && claimParamsFromUrl.threshold
                             ? `balance > $${Number(claimParamsFromUrl.threshold).toLocaleString("en-US")}`
-                            : key === "age" && claimParamsFromUrl.threshold_years
+                            : key === "age" &&
+                                claimParamsFromUrl.threshold_years
                               ? `age ≥ ${claimParamsFromUrl.threshold_years}`
                               : key === "income" && claimParamsFromUrl.threshold
                                 ? `income > $${Number(claimParamsFromUrl.threshold).toLocaleString("en-US")}`
-                                : key === "accreditation" && claimParamsFromUrl.threshold
+                                : key === "accreditation" &&
+                                    claimParamsFromUrl.threshold
                                   ? `net worth ≥ $${Number(claimParamsFromUrl.threshold).toLocaleString("en-US")}`
-                                  : m.claim}
+                                  : key === "employment" &&
+                                      claimParamsFromUrl.threshold
+                                    ? `seniority ≥ ${claimParamsFromUrl.threshold} yrs`
+                                    : m.claim}
                         </span>
                       </div>
 
                       {on && key === "kyc" && (
-                        <p className="faint" style={{ fontSize: "0.75rem", margin: "0.5rem 0 0" }}>
-                          You&rsquo;ll be taken to a secure identity verification flow. No personal data is stored by StellarCred.
+                        <p
+                          className="faint"
+                          style={{ fontSize: "0.75rem", margin: "0.5rem 0 0" }}
+                        >
+                          You&rsquo;ll be taken to a secure identity
+                          verification flow. No personal data is stored by
+                          StellarCred.
                         </p>
                       )}
                       {on && key === "age" && (
-                        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
-                          <label className="field-label">{m.attribute}</label>
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="field-label" htmlFor="attr-date-of-birth">{m.attribute}</label>
                           <input
+                            id="attr-date-of-birth"
                             type="date"
                             value={attributes.date_of_birth}
-                            onChange={(e) => setAttr("date_of_birth", e.target.value)}
+                            onChange={(e) =>
+                              setAttr("date_of_birth", e.target.value)
+                            }
                           />
                         </div>
                       )}
                       {on && key === "income" && (
-                        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
-                          <label className="field-label">{m.attribute}</label>
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="field-label" htmlFor="attr-income">{m.attribute}</label>
                           <input
+                            id="attr-income"
                             type="number"
                             value={attributes.income}
                             onChange={(e) => setAttr("income", e.target.value)}
@@ -416,65 +680,180 @@ function VerifyInner() {
                         </div>
                       )}
                       {on && key === "accreditation" && (
-                        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
-                          <label className="field-label">{m.attribute}</label>
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="field-label" htmlFor="attr-net-worth">{m.attribute}</label>
                           <input
+                            id="attr-net-worth"
                             type="number"
                             value={attributes.net_worth}
-                            onChange={(e) => setAttr("net_worth", e.target.value)}
+                            onChange={(e) =>
+                              setAttr("net_worth", e.target.value)
+                            }
                           />
                         </div>
                       )}
                       {on && key === "funds" && (
-                        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {plaidBalance === null ? (
-                            <p className="faint" style={{ fontSize: "0.75rem", margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                            <p
+                              className="faint"
+                              style={{
+                                fontSize: "0.75rem",
+                                margin: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.4rem",
+                              }}
+                            >
                               <IconLoader2 size={12} className="spin" />
                               Reading balance from Plaid…
                             </p>
                           ) : (
-                            <div style={{ padding: "0.65rem 0.9rem", borderRadius: "var(--radius)", background: "rgba(62,207,142,0.05)", border: "1px solid rgba(62,207,142,0.2)" }}>
-                              <div className="between" style={{ alignItems: "center", marginBottom: plaidAccounts.length > 1 ? "0.5rem" : 0 }}>
-                                <span className="row" style={{ gap: "0.4rem", fontSize: "0.75rem", color: "var(--faint)" }}>
+                            <div
+                              style={{
+                                padding: "0.65rem 0.9rem",
+                                borderRadius: "var(--radius)",
+                                background: "rgba(62,207,142,0.05)",
+                                border: "1px solid rgba(62,207,142,0.2)",
+                              }}
+                            >
+                              <div
+                                className="between"
+                                style={{
+                                  alignItems: "center",
+                                  marginBottom:
+                                    plaidAccounts.length > 1 ? "0.5rem" : 0,
+                                }}
+                              >
+                                <span
+                                  className="row"
+                                  style={{
+                                    gap: "0.4rem",
+                                    fontSize: "0.75rem",
+                                    color: "var(--faint)",
+                                  }}
+                                >
                                   <IconBuildingBank size={12} stroke={1.6} />
-                                  {plaidMock ? "Mock balance" : "Verified balance (Plaid)"}
+                                  {plaidMock
+                                    ? "Mock balance"
+                                    : "Verified balance (Plaid)"}
                                 </span>
-                                <span style={{ fontWeight: 600, fontSize: "1rem", color: "var(--text)" }}>
+                                <span
+                                  style={{
+                                    fontWeight: 600,
+                                    fontSize: "1rem",
+                                    color: "var(--text)",
+                                  }}
+                                >
                                   ${plaidBalance.toLocaleString("en-US")}
                                 </span>
                               </div>
                               {plaidAccounts.length > 1 && (
-                                <div className="stack" style={{ gap: "0.2rem" }}>
+                                <div
+                                  className="stack"
+                                  style={{ gap: "0.2rem" }}
+                                >
                                   {plaidAccounts.map((a) => (
-                                    <div key={a.name} className="between" style={{ fontSize: "0.72rem" }}>
+                                    <div
+                                      key={a.name}
+                                      className="between"
+                                      style={{ fontSize: "0.72rem" }}
+                                    >
                                       <span className="faint">{a.name}</span>
-                                      <span className="mono" style={{ color: "var(--muted)" }}>${a.available.toLocaleString("en-US")}</span>
+                                      <span
+                                        className="mono"
+                                        style={{ color: "var(--muted)" }}
+                                      >
+                                        ${a.available.toLocaleString("en-US")}
+                                      </span>
                                     </div>
                                   ))}
                                 </div>
                               )}
-                              <hr style={{ margin: "0.5rem 0", borderColor: "rgba(62,207,142,0.15)" }} />
-                              <div className="between" style={{ alignItems: "center" }}>
-                                <span className="faint" style={{ fontSize: "0.72rem" }}>Proof will certify</span>
-                                <span style={{ fontSize: "0.8rem", fontWeight: 500, color: "var(--accent)" }}>
-                                  balance ≥ ${Number(claimParamsFromUrl.threshold ?? "10000").toLocaleString("en-US")}
+                              <hr
+                                style={{
+                                  margin: "0.5rem 0",
+                                  borderColor: "rgba(62,207,142,0.15)",
+                                }}
+                              />
+                              <div
+                                className="between"
+                                style={{ alignItems: "center" }}
+                              >
+                                <span
+                                  className="faint"
+                                  style={{ fontSize: "0.72rem" }}
+                                >
+                                  Proof will certify
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "0.8rem",
+                                    fontWeight: 500,
+                                    color: "var(--accent)",
+                                  }}
+                                >
+                                  balance ≥ $
+                                  {Number(
+                                    claimParamsFromUrl.threshold ?? "10000",
+                                  ).toLocaleString("en-US")}
                                 </span>
                               </div>
-                              <p className="faint" style={{ fontSize: "0.72rem", margin: "0.35rem 0 0" }}>
-                                Your exact balance is never stored or revealed on-chain — only this threshold is public.
+                              <p
+                                className="faint"
+                                style={{
+                                  fontSize: "0.72rem",
+                                  margin: "0.35rem 0 0",
+                                }}
+                              >
+                                Your exact balance is never stored or revealed
+                                on-chain — only this threshold is public.
                               </p>
                             </div>
                           )}
                         </div>
                       )}
                       {on && key === "jurisdiction" && (
-                        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
-                          <label className="field-label">{m.attribute}</label>
-                          <select value={attributes.country_code} onChange={(e) => setAttr("country_code", e.target.value)}>
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="field-label" htmlFor="attr-country-code">{m.attribute}</label>
+                          <select
+                            id="attr-country-code"
+                            value={attributes.country_code}
+                            onChange={(e) =>
+                              setAttr("country_code", e.target.value)
+                            }
+                          >
                             {COUNTRIES.map((c) => (
-                              <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                              <option key={c.code} value={c.code}>
+                                {c.name} ({c.code})
+                              </option>
                             ))}
                           </select>
+                        </div>
+                      )}
+                      {on && key === "employment" && (
+                        <div
+                          style={{ marginTop: "0.75rem" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="field-label" htmlFor="attr-seniority">{m.attribute}</label>
+                          <input
+                            id="attr-seniority"
+                            type="number"
+                            value={attributes.seniority}
+                            onChange={(e) =>
+                              setAttr("seniority", e.target.value)
+                            }
+                          />
                         </div>
                       )}
                     </div>
@@ -483,8 +862,12 @@ function VerifyInner() {
               </div>
 
               <div style={{ marginBottom: "1.5rem" }}>
-                <label className="field-label">Validity period</label>
-                <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+                <label className="field-label" htmlFor="validity-period">Validity period</label>
+                <select
+                  id="validity-period"
+                  value={expiry}
+                  onChange={(e) => setExpiry(e.target.value)}
+                >
                   {["30 days", "90 days", "1 year"].map((t) => (
                     <option key={t}>{t}</option>
                   ))}
@@ -504,7 +887,10 @@ function VerifyInner() {
                 <span className="faint" style={{ fontSize: "0.8125rem" }}>
                   Issued to
                 </span>
-                <span className="mono" style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>
+                <span
+                  className="mono"
+                  style={{ fontSize: "0.8125rem", color: "var(--muted)" }}
+                >
                   {address.slice(0, 6)}…{address.slice(-4)}
                 </span>
               </div>
@@ -512,13 +898,15 @@ function VerifyInner() {
               <button
                 className="btn btn-primary"
                 style={{ width: "100%" }}
-                disabled={busy || !selected || !!urlError}
+                disabled={busy || !selected || !!urlError || paramErrors.length > 0}
                 onClick={onRequest}
               >
                 {busy ? (
                   <>
                     <IconLoader2 size={15} className="spin" />
-                    {selected === "kyc" ? "Redirecting to verification…" : "Creating credential…"}
+                    {selected === "kyc"
+                      ? "Redirecting to verification…"
+                      : "Creating credential…"}
                   </>
                 ) : (
                   <>
@@ -529,19 +917,31 @@ function VerifyInner() {
               </button>
 
               {(error || urlError) && (
-                <p style={{ marginTop: "0.75rem", fontSize: "0.8125rem", color: "var(--danger)" }}>
+                <p
+                  style={{
+                    marginTop: "0.75rem",
+                    fontSize: "0.8125rem",
+                    color: "var(--danger)",
+                  }}
+                >
                   {error || urlError}
                 </p>
               )}
 
-              <p className="faint" style={{ marginTop: "1.25rem", fontSize: "0.8125rem", lineHeight: 1.6 }}>
-                Each claim is committed with Poseidon2 and stays private. You prove a statement about
-                it — never the underlying value.
+              <p
+                className="faint"
+                style={{
+                  marginTop: "1.25rem",
+                  fontSize: "0.8125rem",
+                  lineHeight: 1.6,
+                }}
+              >
+                Each claim is committed with Poseidon2 and stays private. You
+                prove a statement about it — never the underlying value.
               </p>
             </>
           )}
         </div>
-
       </div>
     </>
   );

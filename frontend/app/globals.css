@@ -27,6 +27,7 @@
   --accent-dim: #2ba870;
   --accent-soft: rgba(62, 207, 142, 0.1);
   --accent-glow: rgba(62, 207, 142, 0.18);
+  --on-accent: #021a0c;
 
   /* Semantic */
   --warn: #e3b341;
@@ -58,13 +59,14 @@
   --card-hover: #f3f3f1;
   --text: #111110;
   --muted: #6f6e6b;
-  --faint: #a8a49e;
+  --faint: #736f69;
   --border: #e5e3de;
   --border-strong: #c8c6c1;
   --accent: #1a7a4a;
   --accent-dim: #135c37;
   --accent-soft: rgba(26, 122, 74, 0.06);  /* Light green surface tint */
   --accent-glow: rgba(26, 122, 74, 0.12);
+  --on-accent: #ffffff;
 }
 :root .sun-icon {
   display: block;
@@ -262,6 +264,24 @@ p {
   .docs-layout {
     grid-template-columns: 1fr !important;
     gap: 2rem !important;
+  }
+}
+
+/* Documentation Anchor Links */
+.heading-group .anchor-link-icon {
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+}
+
+.heading-group:hover .anchor-link-icon,
+.heading-group a:focus .anchor-link-icon,
+.anchor-link-icon:focus {
+  opacity: 0.85;
+}
+
+@media (max-width: 640px) {
+  .heading-group .anchor-link-icon {
+    opacity: 0.5;
   }
 }
 
@@ -578,7 +598,7 @@ p {
 /* Green primary - branded */
 .btn-primary {
   background: var(--accent);
-  color: #021a0c;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -665,8 +685,36 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: rgba(62, 207, 142, 0.35);
-  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.08);
+  border-color: rgba(62, 207, 142, 0.6);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.35);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(62, 207, 142, 0.9);
+  outline-offset: 1px;
+}
+
+/* ---- Skip link ---------------------------------------------------------------- */
+
+.skip-link {
+  position: absolute;
+  top: -3rem;
+  left: 0.5rem;
+  z-index: 1000;
+  padding: 0.6rem 1rem;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: 0.5rem;
 }
 
 /* ---- Badge ------------------------------------------------------------------ */
@@ -900,11 +948,21 @@ textarea:focus {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 
   .check circle,
   .check path {
     stroke-dashoffset: 0;
+  }
+
+  .card-link:hover,
+  .protocol-card:hover,
+  .protocol-card:active,
+  .btn:active {
+    transform: none !important;
   }
 }
 
@@ -1038,6 +1096,50 @@ textarea:focus {
   from {
     opacity: 0;
     transform: translateX(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Modal --------------------------------------------------------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: modal-overlay-in 0.15s var(--ease) both;
+}
+
+.modal {
+  width: 100%;
+  max-width: 360px;
+  max-height: calc(100vh - 2.5rem);
+  overflow-y: auto;
+  box-shadow: var(--shadow-card);
+  animation: modal-in 0.2s var(--ease) both;
+  /* Programmatically focused on open (for the Tab trap) — a focus ring
+     around the whole dialog on open would look like a rendering glitch. */
+  outline: none;
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
   }
 
   to {

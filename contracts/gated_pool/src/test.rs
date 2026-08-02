@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
 use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
@@ -98,4 +99,86 @@ fn withdraw_is_open() {
     h.pool.deposit(&user, &100);
     h.pool.withdraw(&user, &40);
     assert_eq!(h.pool.get_balance(&user), 60);
+}
+
+// ── Property-based tests ──────────────────────────────────
+
+/// Property: Deposits are gated behind a valid KYC proof.
+/// For any holder, if no valid KYC proof exists, deposit must fail.
+/// After submitting a valid proof, deposit must succeed.
+#[test]
+fn prop_deposit_gated_by_kyc() {
+    let config = proptest::test_runner::Config {
+        cases: 10,
+        ..proptest::test_runner::Config::default()
+    };
+    let mut runner = proptest::test_runner::TestRunner::new(config);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let h = deploy(&env);
+            let user = Address::generate(&env);
+
+            // Without a KYC proof, deposit must be rejected.
+            let res = h.pool.try_deposit(&user, &100);
+            prop_assert!(res.is_err(), "Deposit without KYC must fail");
+            prop_assert_eq!(h.pool.get_balance(&user), 0);
+
+            // After getting KYC, deposit must succeed.
+            prove_kyc(&env, &h, &user);
+            h.pool.deposit(&user, &100);
+            prop_assert_eq!(h.pool.get_balance(&user), 100);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn withdraw_rejects_amount_exceeding_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &100);
+
+    let res = h.pool.try_withdraw(&user, &101);
+    assert!(res.is_err());
+    // Balance is unaffected by the rejected withdrawal.
+    assert_eq!(h.pool.get_balance(&user), 100);
+}
+
+#[test]
+fn registry_address_matches_constructor_provided_registry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    assert_eq!(h.pool.registry_address(), h.registry.address);
+}
+
+#[test]
+fn deposit_uses_constructor_provided_registry_not_an_unrelated_one() {
+    // Deploys a SECOND, independent ProofRegistry (with its own issuer/verifier)
+    // and proves KYC there for `user` — while the pool remains wired to the
+    // FIRST registry from `deploy()`, where `user` has no proof. This proves the
+    // gate actually consults the constructor-provided `registry` address, not
+    // some other reachable/default registry.
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let other = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &other, &user);
+
+    let res = h.pool.try_deposit(&user, &100);
+    assert!(res.is_err());
+    assert_eq!(h.pool.get_balance(&user), 0);
+
+    // Sanity: the same proof against the pool's OWN registry succeeds.
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &100);
+    assert_eq!(h.pool.get_balance(&user), 100);
 }

@@ -170,7 +170,7 @@ describe("no logging or persistence", () => {
 });
 
 describe("CREDENTIAL_TYPES", () => {
-  it("matches the six supported credential types", () => {
+  it("matches the supported credential types", () => {
     expect(CREDENTIAL_TYPES).toEqual([
       "kyc",
       "age",
@@ -178,6 +178,7 @@ describe("CREDENTIAL_TYPES", () => {
       "income",
       "funds",
       "accreditation",
+      "employment",
     ]);
   });
 });

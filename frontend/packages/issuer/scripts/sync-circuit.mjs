@@ -1,11 +1,11 @@
-// Copies the compiled commit circuit (Poseidon2::hash([value, salt], 2)) from
-// the app's public/circuits/ output into src/ so tsup/esbuild can inline it
+// Copies the compiled commit circuits (Poseidon2 2-arity and 3-arity) from
+// the app's public/circuits/ output into src/ so tsup/esbuild can inline them
 // directly into dist/index.{js,mjs} — the published package ships fully
 // self-contained, with no dependency on this repo's file layout.
 //
-// The circuit itself is compiled from circuits/commit/src/main.nr via
-// circuits/scripts/build.sh; this script only copies the already-built
-// artifact, it doesn't compile Noir.
+// The circuits themselves are compiled from circuits/{commit,commit3}/src/main.nr
+// via circuits/scripts/build.sh; this script only copies the already-built
+// artifacts, it doesn't compile Noir.
 //
 // Runs automatically on prebuild so the copy can never drift from the
 // currently-built circuit.
@@ -15,8 +15,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = join(here, "..", "..", "..", "public", "circuits", "commit.json");
-const dest = join(here, "..", "src", "commit-circuit.json");
+const publicCircuits = join(here, "..", "..", "..", "public", "circuits");
 
-copyFileSync(src, dest);
-console.log(`[sync-circuit] copied ${src} -> ${dest}`);
+function sync(name) {
+  const src = join(publicCircuits, `${name}.json`);
+  const dest = join(here, "..", "src", `${name}-circuit.json`);
+  copyFileSync(src, dest);
+  console.log(`[sync-circuit] copied ${src} -> ${dest}`);
+}
+
+sync("commit");
+sync("commit3");
