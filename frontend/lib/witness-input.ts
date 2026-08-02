@@ -108,6 +108,19 @@ function checkThreshold(value: unknown, field: string): WitnessValidationError |
   return null;
 }
 
+/**
+ * The PoC aggregate circuit asserts `num_credentials == 2`, so a wrong count
+ * must be rejected here with a precise message rather than surfacing as an
+ * opaque Noir assertion failure. Accepts "2" or the number 2.
+ */
+function checkAggregateCount(value: unknown): WitnessValidationError | null {
+  const asString = typeof value === "number" ? String(value) : value;
+  if (asString !== "2") {
+    return err("credential.num_credentials", "must be \"2\" for the N=2 aggregate circuit");
+  }
+  return null;
+}
+
 /** The restricted-country list: at most RESTRICTED_LEN numeric ISO 3166-1 codes. */
 function checkRestricted(value: unknown): WitnessValidationError | null {
   const field = "credential.claimParams.restricted";
@@ -141,6 +154,35 @@ export function validateWitnessCredential(
   type: string,
   cred: Record<string, unknown>,
 ): WitnessValidationError | null {
+  // The aggregate payload uses prefixed keys that mirror the circuit's
+  // parameter names (see computeAggregateWitness in lib/proof.ts) instead of
+  // the single-proof value/salt/commitment shape, so it is validated against
+  // its own full set of 15 inputs: 6 private fields (secrets, salts,
+  // signatures) + 9 public fields (commitments, issuer pubkeys, age
+  // date/threshold, num_credentials).
+  if (type === "aggregate") {
+    return (
+      checkField(cred.kyc_secret, "credential.kyc_secret") ??
+      checkField(cred.kyc_salt, "credential.kyc_salt") ??
+      checkByteArray(cred.kyc_sig, "credential.kyc_sig", SIG_LEN) ??
+      checkField(cred.kyc_commitment, "credential.kyc_commitment") ??
+      checkByteArray(cred.kyc_issuer_x, "credential.kyc_issuer_x", PUBKEY_COORD_LEN) ??
+      checkByteArray(cred.kyc_issuer_y, "credential.kyc_issuer_y", PUBKEY_COORD_LEN) ??
+      checkField(cred.age_date_of_birth, "credential.age_date_of_birth") ??
+      checkField(cred.age_salt, "credential.age_salt") ??
+      checkByteArray(cred.age_sig, "credential.age_sig", SIG_LEN) ??
+      checkField(cred.age_commitment, "credential.age_commitment") ??
+      checkByteArray(cred.age_issuer_x, "credential.age_issuer_x", PUBKEY_COORD_LEN) ??
+      checkByteArray(cred.age_issuer_y, "credential.age_issuer_y", PUBKEY_COORD_LEN) ??
+      // age_current_date is deliberately NOT required here: the route derives
+      // it server-side (like the single-proof age path), so a client-supplied
+      // value would only ever be discarded.
+      checkField(cred.age_threshold_years, "credential.age_threshold_years") ??
+      checkField(cred.num_credentials, "credential.num_credentials") ??
+      checkAggregateCount(cred.num_credentials)
+    );
+  }
+
   // Common to every circuit: the committed value, its salt, the commitment, and
   // the issuer signature over that commitment.
   const common =

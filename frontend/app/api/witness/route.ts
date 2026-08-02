@@ -14,6 +14,7 @@ import jurisdictionCircuit from "../../../public/circuits/jurisdiction.json";
 import kycCircuit from "../../../public/circuits/kyc.json";
 import accreditationCircuit from "../../../public/circuits/accreditation.json";
 import employmentCircuit from "../../../public/circuits/employment.json";
+import aggregateCircuit from "../../../public/circuits/aggregate.json";
 
 // Default claim params -- used when a credential has no protocol-specific values.
 const DEFAULT_THRESHOLD_YEARS = "18";
@@ -95,6 +96,30 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         commitment,
         min_seniority: params.threshold ?? String(cred.seniority ?? "3"),
       };
+    case "aggregate":
+      // The aggregate payload uses prefixed keys that mirror the circuit's
+      // parameter names (see computeAggregateWitness in lib/proof.ts) rather
+      // than the single-proof value/salt/commitment shape. Field elements
+      // arrive as decimal strings; byte arrays pass through as-is. The current
+      // date is derived server-side (like the single-proof age path) so a
+      // caller can't game the age threshold with a client-chosen clock.
+      return {
+        kyc_secret: String(cred.kyc_secret),
+        kyc_salt: String(cred.kyc_salt),
+        kyc_sig: cred.kyc_sig as number[],
+        kyc_commitment: String(cred.kyc_commitment),
+        kyc_issuer_x: cred.kyc_issuer_x as number[],
+        kyc_issuer_y: cred.kyc_issuer_y as number[],
+        age_date_of_birth: String(cred.age_date_of_birth),
+        age_salt: String(cred.age_salt),
+        age_sig: cred.age_sig as number[],
+        age_commitment: String(cred.age_commitment),
+        age_issuer_x: cred.age_issuer_x as number[],
+        age_issuer_y: cred.age_issuer_y as number[],
+        age_current_date: String(Math.floor(Date.now() / 86_400_000)),
+        age_threshold_years: String(cred.age_threshold_years),
+        num_credentials: String(cred.num_credentials),
+      };
     case "kyc":
     default:
       return { secret: value, salt, ...sigInputs, commitment };
@@ -115,6 +140,8 @@ function circuitFor(type: string) {
       return jurisdictionCircuit;
     case "employment":
       return employmentCircuit;
+    case "aggregate":
+      return aggregateCircuit;
     case "kyc":
     default:
       return kycCircuit;

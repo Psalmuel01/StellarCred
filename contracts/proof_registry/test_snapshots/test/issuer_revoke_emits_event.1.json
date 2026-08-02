@@ -535,22 +535,40 @@
           "v0": {
             "topics": [
               {
+                "symbol": "proof_reg"
+              },
+              {
                 "symbol": "revoked"
+              },
+              {
+                "symbol": "kyc"
               }
             ],
             "data": {
-              "vec": [
+              "map": [
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  "key": {
+                    "symbol": "holder"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
                 },
                 {
-                  "symbol": "kyc"
+                  "key": {
+                    "symbol": "issuer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "u64": "0"
+                  "key": {
+                    "symbol": "revoked_at"
+                  },
+                  "val": {
+                    "u64": "0"
+                  }
                 }
               ]
             }

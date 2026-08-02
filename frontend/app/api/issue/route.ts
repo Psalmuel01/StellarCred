@@ -14,6 +14,16 @@ import {
   resolveRequestId,
 } from "../../../lib/logger";
 import { fetchPlaidBalance } from "../../../lib/plaid";
+import {
+  idempotencyGet,
+  idempotencySet,
+  idempotencyInFlightBegin,
+  idempotencyInFlightSettle,
+  idempotencyInFlightFail,
+  isValidIdempotencyKey,
+  MAX_KEY_LENGTH_BYTES,
+  type CachedResponse,
+} from "../../../lib/idempotency";
 
 // Server-side only — never shipped to the browser.
 // Set ISSUER_PRIVATE_KEY in .env.local to the 64-char hex secp256k1 private
@@ -183,15 +193,111 @@ const VALID_TYPES: readonly string[] = CREDENTIAL_TYPES;
 
 export async function POST(req: NextRequest) {
   const requestId = resolveRequestId(req.headers.get("x-request-id"));
+
+  // ── Idempotency-Key support ────────────────────────────────────────────────
+  // A retried /api/issue request (network blip, double-click) can trigger
+  // duplicate signing/provider calls. Accept an Idempotency-Key header so
+  // identical retries return the cached original result without re-processing.
+  // Keys are validated (non-empty, printable, ≤ 256 bytes) before use so an
+  // oversized header cannot be stored verbatim and amplify memory usage.
+  const rawKey = req.headers.get("Idempotency-Key")?.trim() || undefined;
+  const idempotencyKey =
+    rawKey && isValidIdempotencyKey(rawKey) ? rawKey : undefined;
+  if (rawKey && !idempotencyKey) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "idempotency_key_rejected",
+        requestId,
+        reason:
+          new TextEncoder().encode(rawKey).length > MAX_KEY_LENGTH_BYTES
+            ? "too_long"
+            : "invalid",
+      }),
+    );
+  }
+
+  if (idempotencyKey) {
+    // Cache hit — replay the original response (X-Idempotent: true so clients
+    // can tell this is a replayed, not fresh, result).
+    const cached = idempotencyGet(idempotencyKey);
+    if (cached) {
+      logger.info(stripSensitiveFields({ event: "idempotency_hit", requestId }));
+      return replayCached(cached, requestId);
+    }
+
+    // Concurrent duplicate — another request with this key is already
+    // executing. Await its result and replay it instead of running the
+    // provider calls / signing a second time.
+    const inFlight = idempotencyInFlightBegin(idempotencyKey);
+    if (inFlight) {
+      logger.info(
+        stripSensitiveFields({ event: "idempotency_inflight_hit", requestId }),
+      );
+      try {
+        return replayCached(await inFlight, requestId);
+      } catch {
+        // The leader failed before producing a response — process this
+        // request normally instead of replaying the leader's error. Re-acquire
+        // the in-flight slot so a third concurrent duplicate joining while we
+        // execute is still de-duplicated instead of running in parallel.
+        idempotencyInFlightBegin(idempotencyKey);
+      }
+    }
+  }
+
+  try {
+    return await executeRequest(req, requestId, idempotencyKey);
+  } catch (e) {
+    // Release any duplicate waiting on this key so it can retry itself.
+    if (idempotencyKey) idempotencyInFlightFail(idempotencyKey, e);
+    throw e;
+  }
+}
+
+/** Reconstruct a NextResponse from a cached entry, tagging it as replayed. */
+function replayCached(cached: CachedResponse, requestId: string): NextResponse {
+  const headers = new Headers(cached.headers as Record<string, string>);
+  headers.set("x-request-id", requestId);
+  headers.set("X-Idempotent", "true");
+  return new NextResponse(cached.body, { status: cached.status, headers });
+}
+
+async function executeRequest(
+  req: NextRequest,
+  requestId: string,
+  idempotencyKey: string | undefined,
+) {
   const startTime = Date.now();
   let outcome: "success" | "failure" = "failure";
   let credentialTypes: string[] = [];
   let issuerId: string | undefined;
   let walletAddress: string | undefined;
 
-  const sendResponse = (response: NextResponse) => {
+  const sendResponse = async (response: NextResponse) => {
     const durationMs = Date.now() - startTime;
     response.headers.set("x-request-id", requestId);
+
+    // Cache this response under the idempotency key if provided, and release
+    // any concurrent duplicate that joined the in-flight slot.
+    if (idempotencyKey) {
+      try {
+        const cloned = response.clone();
+        const body = await cloned.text();
+        const entry: CachedResponse = {
+          status: response.status,
+          body,
+          headers: Object.fromEntries(response.headers.entries()),
+          createdAt: Date.now(),
+        };
+        idempotencySet(idempotencyKey, entry);
+        idempotencyInFlightSettle(idempotencyKey, entry);
+      } catch (e) {
+        // If cloning/caching fails (edge case), don't break the response —
+        // but do fail any waiting duplicate so it can retry for itself.
+        idempotencyInFlightFail(idempotencyKey, e);
+      }
+    }
+
     for (const type of credentialTypes) {
       logger.info(
         stripSensitiveFields({
