@@ -672,9 +672,104 @@ function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void
   );
 }
 
+// --- progress types + small ProofProgress component ---
+
+type StepStatus = "pending" | "active" | "done" | "error";
+
+type ProgressStep = {
+  label: string;
+  status: StepStatus;
+  error?: string;
+};
+
+function ProofProgress({ steps }: { steps: ProgressStep[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
+      {steps.map((s, idx) => {
+        const isLast = idx === steps.length - 1;
+        return (
+          <div key={s.label} style={{ display: "flex", gap: "0.85rem", alignItems: "flex-start" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 28, flexShrink: 0 }}>
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
+                  border: `1px solid ${
+                    s.status === "done" ? "var(--accent)" :
+                    s.status === "active" ? "rgba(62,207,142,0.5)" :
+                    "var(--border-strong)"
+                  }`,
+                  background: s.status === "done" ? "var(--accent)" : "transparent",
+                  color: s.status === "done" ? "var(--bg)" : s.status === "active" ? "var(--accent)" : "var(--faint)",
+                  transition: "all 0.25s var(--ease)",
+                }}
+              >
+                {s.status === "done" ? (
+                  <IconCheck size={13} stroke={3} />
+                ) : s.status === "active" ? (
+                  <IconLoader2 size={13} className="spin" />
+                ) : s.status === "error" ? (
+                  <IconAlertTriangle size={13} />
+                ) : (
+                  <span style={{ fontSize: "0.7rem", color: "var(--faint)" }}>•</span>
+                )}
+              </div>
+
+              {!isLast && (
+                <div
+                  style={{
+                    width: 1,
+                    flex: 1,
+                    minHeight: 20,
+                    marginTop: 6,
+                    background: s.status === "done" ? "var(--accent)" : "var(--border)",
+                    opacity: s.status === "done" ? 0.4 : 1,
+                    transition: "background 0.3s var(--ease)",
+                  }}
+                />
+              )}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", paddingTop: "0.25rem" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.9rem", color: s.status === "pending" ? "var(--muted)" : "var(--text)" }}>
+                  {s.label}
+                </span>
+                {s.status === "active" && (
+                  <span
+                    style={{
+                      fontSize: "0.68rem",
+                      color: "var(--accent)",
+                      background: "rgba(62,207,142,0.1)",
+                      border: "1px solid rgba(62,207,142,0.2)",
+                      borderRadius: 999,
+                      padding: "0.12rem 0.45rem",
+                      fontWeight: 500,
+                    }}
+                  >
+                    running
+                  </span>
+                )}
+              </div>
+              {s.error && (
+                <div style={{ marginTop: "0.45rem", color: "var(--danger)", fontSize: "0.82rem" }}>
+                  {s.error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── ProofFlow ─────────────────────────────────────────────────────────────────
 
-type Stage = "witness" | "proving" | "generated" | "submitting" | "confirmed" | "error";
+type Stage = "witness" | "circuit" | "proof" | "proving" | "generated" | "submitting" | "confirmed" | "error";
 
 function ProofFlow({
   cred,
@@ -704,15 +799,13 @@ function ProofFlow({
     toast.info(`Generating proof for ${cred.title}…`);
     (async () => {
       try {
-        // Stage 1: witness (server)
+        setStage("witness");
         const witness = await computeWitness(
           cred.type,
           cred as unknown as Record<string, unknown>,
         );
         if (cancelled) return;
 
-        // Stage 2: prove (browser WASM)
-        setStage("proving");
         const start = Date.now();
         timerRef.current = setInterval(
           () => setElapsed(Math.floor((Date.now() - start) / 1000)),
@@ -722,6 +815,9 @@ function ProofFlow({
         const result = await proveWithBackend(
           cred.type,
           witness,
+          (step) => {
+            if (!cancelled) setStage(step);
+          }
         );
         clearInterval(timerRef.current!);
         if (cancelled) return;
@@ -821,11 +917,11 @@ function ProofFlow({
             title={t("proofFlowProvingTitle")}
             subtitle={t("proofFlowProvingSubtitle")}
             state={
-              stage === "proving"  ? "active" :
+              (stage === "proving" || stage === "circuit" || stage === "proof") ? "active" :
               proofDone            ? "done"   : "idle"
             }
             detail={
-              stage === "proving" ? (
+              (stage === "proving" || stage === "circuit" || stage === "proof") ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.65rem" }}>
                   <ProvingBar />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -835,6 +931,18 @@ function ProofFlow({
                     <span className="mono" style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
                       {elapsed}s
                     </span>
+                  </div>
+                  <div style={{ margin: "0.5rem 0" }}>
+                    <ProofProgress steps={[
+                      {
+                        label: "Load circuit WASM",
+                        status: stage === "circuit" ? "active" : (stage === "proof" || proofDone) ? "done" : "pending",
+                      },
+                      {
+                        label: "Generate ultraplonk proof",
+                        status: stage === "proof" ? "active" : proofDone ? "done" : "pending",
+                      }
+                    ]} />
                   </div>
                   <span style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
                     {t("proofFirstRun")}
@@ -923,7 +1031,7 @@ function ProofFlow({
           </>
         )}
 
-        {stage === "error" && error && (
+        {error && (
           <div
             style={{
               marginTop: "1.5rem",
@@ -941,9 +1049,6 @@ function ProofFlow({
                 : errorPhase === "submitting"
                   ? "Submission failed — proof is ready to retry"
                   : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
-            </div>
-            <div style={{ fontSize: "0.8125rem", marginTop: "0.45rem", lineHeight: 1.65, color: "var(--text)" }}>
-              {error.friendly}
             </div>
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>

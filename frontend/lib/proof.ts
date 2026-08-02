@@ -202,8 +202,11 @@ export async function computeWitness(
 export async function proveWithBackend(
   type: CredentialType,
   witness: Uint8Array,
+  onStep?: (step: "circuit" | "proof") => void,
 ): Promise<GeneratedProof> {
+  if (onStep) onStep("circuit");
   const backend = await getBackend(type);
+  if (onStep) onStep("proof");
   const { proof, publicInputs } = await backend.generateProof(witness, {
     keccak: true,
   });
@@ -217,4 +220,109 @@ export async function generateProof(
 ): Promise<GeneratedProof> {
   const witness = await computeWitness(type, credential);
   return proveWithBackend(type, witness);
+}
+
+// ── Aggregate proof generation ───────────────────────────────────────────────
+// For the N=2 PoC (KYC + age), this generates a single aggregate proof that
+// proves both credentials in one circuit. The inner credentials must have been
+// issued by the same or compatible issuers with matching public keys.
+
+export interface AggregateInput {
+  /** Full KYC credential — private fields (value/secret, salt, sig) plus the
+   * public fields the aggregate circuit re-verifies (commitment, issuerPubX,
+   * issuerPubY). Byte arrays (sig, issuerPubX/Y) must be `number[]`. */
+  kyc: Record<string, unknown>;
+  /** Full age credential — private fields (date_of_birth/value, salt, sig) plus
+   * the public fields (commitment, issuerPubX, issuerPubY, and the claimed
+   * threshold via claimParams.threshold_years). Byte arrays (sig,
+   * issuerPubX/Y) must be `number[]`. */
+  age: Record<string, unknown>;
+}
+
+// Resolves a required aggregate-circuit input from one of two shapes the inner
+// credentials may arrive in (e.g. "secret" vs "value", "date_of_birth" vs
+// "value"). Throws with a clear message when the field is missing from both
+// keys — never silently serializes an `undefined` into the witness payload,
+// which would otherwise surface as a confusing backend error.
+function resolveAggregateField(
+  credential: Record<string, unknown>,
+  key: string,
+  alias?: string,
+): unknown {
+  const value = credential[key] ?? (alias ? credential[alias] : undefined);
+  if (value === undefined || value === null) {
+    throw new Error(
+      `Aggregate proof: missing required field "${key}"${
+        alias ? ` (or "${alias}")` : ""
+      } in credential inputs.`,
+    );
+  }
+  return value;
+}
+
+export async function computeAggregateWitness(
+  inputs: AggregateInput,
+): Promise<Uint8Array> {
+  // Build the merged credential object with prefixed keys matching the aggregate
+  // circuit's parameter names. Noir treats `pub` parameters as ordinary witness
+  // inputs too — the backend never derives them from the private inputs — so the
+  // payload must carry ALL circuit inputs: the 6 private fields (secrets, salts,
+  // signatures) AND the 9 public fields (commitments, issuer pubkeys, age
+  // date/threshold, num_credentials). Omitting any of them makes witness
+  // generation fail with an unresolved-witness error.
+  const ageParams = (inputs.age.claimParams ?? {}) as Record<string, unknown>;
+  // Field elements are coerced with String() — matching buildInputs in
+  // /api/witness — so numeric inputs arrive as decimal strings like the rest of
+  // the codebase; byte arrays (signatures, issuer pubkeys) pass through as-is.
+  const aggregateCredential = {
+    // ── KYC credential (private) ────────────────────────────────────────────
+    kyc_secret: String(resolveAggregateField(inputs.kyc, "value", "secret")),
+    kyc_salt: String(resolveAggregateField(inputs.kyc, "salt")),
+    kyc_sig: resolveAggregateField(inputs.kyc, "sig"),
+    // ── KYC credential (public) ─────────────────────────────────────────────
+    kyc_commitment: String(resolveAggregateField(inputs.kyc, "commitment")),
+    kyc_issuer_x: resolveAggregateField(inputs.kyc, "issuerPubX"),
+    kyc_issuer_y: resolveAggregateField(inputs.kyc, "issuerPubY"),
+    // ── Age credential (private) ────────────────────────────────────────────
+    age_date_of_birth: String(resolveAggregateField(inputs.age, "date_of_birth", "value")),
+    age_salt: String(resolveAggregateField(inputs.age, "salt")),
+    age_sig: resolveAggregateField(inputs.age, "sig"),
+    // ── Age credential (public) ─────────────────────────────────────────────
+    age_commitment: String(resolveAggregateField(inputs.age, "commitment")),
+    age_issuer_x: resolveAggregateField(inputs.age, "issuerPubX"),
+    age_issuer_y: resolveAggregateField(inputs.age, "issuerPubY"),
+    // Days since epoch — mirrors the single-proof age path, which derives
+    // current_date server-side.
+    age_current_date: String(Math.floor(Date.now() / 86_400_000)),
+    age_threshold_years: String(
+      inputs.age.threshold_years ?? ageParams.threshold_years ?? 18,
+    ),
+    // ── Metadata (public) ───────────────────────────────────────────────────
+    // The PoC circuit asserts num_credentials == 2.
+    num_credentials: "2",
+  };
+
+  const res = await fetch("/api/witness", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "aggregate", credential: aggregateCredential }),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => res.statusText);
+    throw new Error(`Aggregate witness generation failed: ${msg}`);
+  }
+  const { witness: hex } = (await res.json()) as { witness: string };
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+export async function generateAggregateProof(
+  inputs: AggregateInput,
+): Promise<GeneratedProof> {
+  const witness = await computeAggregateWitness(inputs);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return proveWithBackend("aggregate" as any, witness);
 }

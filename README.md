@@ -236,7 +236,28 @@ A public record of deployed contract IDs on testnet and mainnet, along with inst
 
 ---
 
-## Run it end to end (testnet)
+## Try it in 2 minutes
+
+Already have the toolchain installed and contracts deployed? Run the end-to-end
+demo — it seeds a wallet, issues mock credentials, generates proofs, submits
+them on-chain, and prints the verified claims table:
+
+```bash
+./scripts/demo.sh
+```
+
+> **What it does:** creates a fresh testnet wallet → issues KYC, age, and funds
+> credentials in mock mode (no real KYC provider) → generates UltraHonk proofs
+> locally → submits them to ProofRegistry → prints the verified claims.
+>
+> **Prerequisites:** `stellar` CLI, `node`, `bb` (Barretenberg), `pnpm install`
+> in frontend/, and deployed contracts (run `./scripts/deploy.sh` once).
+>
+> The script is idempotent — safe to re-run. Fails clearly if anything is missing.
+
+---
+
+## Run it end to end (testnet) (manual)
 
 One-time toolchain (macOS):
 
