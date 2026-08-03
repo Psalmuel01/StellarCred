@@ -6,6 +6,7 @@
 // (US=840, IR=364, KP=408); unused slots in the restricted list are 0.
 
 use dep::credential_lib;
+use dep::poseidon::poseidon2::Poseidon2;
 
 // Fixed at compile time, not passed in. A ZK circuit is a fixed set of
 // constraints, so the loop below unrolls into exactly RESTRICTED_LEN
@@ -58,21 +59,21 @@ fn main(
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package jurisdiction_proof
 
 global JUR_ZERO_SIG: [u8; 64] = [0; 64];
 global JUR_ZERO_X: [u8; 32]   = [0; 32];
 global JUR_ZERO_Y: [u8; 32]   = [0; 32];
 
-// All-zeros restricted list (unused slots) — wrong commitment still fails.
+// All-zeros restricted list (unused slots); wrong commitment still fails.
 #[test(should_fail)]
 fn test_wrong_commitment_rejected() {
     let restricted: [u64; 8] = [0; 8];
     main(566, 0xabcd, JUR_ZERO_SIG, 0x1, JUR_ZERO_X, JUR_ZERO_Y, restricted);
 }
 
-// Country IS in the restricted list — must be rejected even with correct commitment.
+// Country IS in the restricted list; must be rejected even with correct commitment.
 // (Uses wrong commitment so circuit fails at commitment check, demonstrating the
 // conceptual guard; full acceptance test requires real secp256k1 vectors.)
 #[test(should_fail)]
@@ -96,7 +97,7 @@ fn test_restricted_country_mid_list_rejected() {
 // salt mismatch.
 #[test(should_fail)]
 fn test_salt_mismatch_rejected() {
-    let cc: u64 = 566; // Nigeria — not restricted
+    let cc: u64 = 566; // Nigeria; not restricted
     let real_salt: Field  = 0x1234;
     let wrong_salt: Field = 0x5678;
     let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];

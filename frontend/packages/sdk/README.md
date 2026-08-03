@@ -91,6 +91,35 @@ const incomeOk = await StellarCred.hasClaim(wallet, "income", {
 });
 ```
 
+#### Typed errors (`throwOnError`)
+
+By default `hasClaim` / `getClaims` are **fail-soft**: a missing `registryId` or an RPC/simulation failure returns `false` / `[]`, which is indistinguishable from "not verified." Pass `{ throwOnError: true }` to surface a typed error instead:
+
+| Failure | Error class |
+|---|---|
+| Missing `registryId` | `ConfigError` |
+| Network / simulation failure | `RpcError` |
+| Holder not verified | still returns `false` (not an error) |
+
+```ts
+import StellarCred, { ConfigError, RpcError } from "@stellarcred/sdk";
+
+try {
+  const ok = await StellarCred.hasClaim(wallet, "kyc", { throwOnError: true });
+  // ok === false means "not verified"; ok === true means verified
+} catch (err) {
+  if (err instanceof ConfigError) {
+    // SDK misconfigured — fix registryId
+  } else if (err instanceof RpcError) {
+    // Couldn't reach the chain — retry / degrade UI
+  } else {
+    throw err;
+  }
+}
+```
+
+`TimeoutError` remains the rejection used by `watchClaim` when its poll window expires.
+
 ### `getClaims(wallet)`
 
 Returns all active claims a wallet has proved, across all known credential types.
@@ -253,3 +282,100 @@ The `minThreshold` check calls `ProofRegistry.check_claim` on-chain, which compa
 ## License
 
 MIT
+
+## Using StellarCred outside React
+
+The SDK exports a framework-agnostic `createClaimGate` core that exposes a subscribe/unsubscribe API. Use it anywhere — Vue, Svelte, vanilla JS, or any other framework.
+
+```ts
+import { createClaimGate } from "@stellarcred/sdk";
+
+const gate = createClaimGate({ wallet: "G…" });
+gate.subscribe((state) => {
+  console.log(state.claims);  // { kyc: true, age: true, ... }
+  console.log(state.loading); // false
+});
+
+// Re-check claims later
+gate.refetch();
+
+// Clean up when done
+gate.destroy();
+```
+
+### API
+
+```ts
+createClaimGate(config: ClaimGateConfig): ClaimGate
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `subscribe(fn)` | `(ClaimGateState) => void` | Subscribe to state changes; returns unsubscribe |
+| `unsubscribe(fn)` | `void` | Remove a listener |
+| `getSnapshot()` | `ClaimGateState` | Get current state synchronously |
+| `refetch()` | `void` | Re-run all claim checks |
+| `destroy()` | `void` | Stop polling, clear listeners |
+
+### TypeScript
+
+```ts
+import type { ClaimGate, ClaimGateState, ClaimGateConfig } from "@stellarcred/sdk";
+```
+
+### React
+
+The existing `useStellarCred` React hook is a React wrapper around the batched `hasClaims` read. It is a separate implementation from `createClaimGate` (the framework-agnostic per-claim gate) — both expose the same claim status, so pick whichever fits your framework.
+
+```ts
+import { useStellarCred } from "@stellarcred/sdk";
+// Works exactly as before
+const { claims, loading, error, refetch } = useStellarCred(walletAddress);
+```
+
+### Vue example
+
+See [`examples/vue-gate/ClaimGate.vue`](./examples/vue-gate/ClaimGate.vue) for a complete Vue 3 component using `createClaimGate`.
+
+```vue
+<script setup lang="ts">
+import { createClaimGate } from "@stellarcred/sdk";
+import { ref, onMounted, onUnmounted } from "vue";
+
+const props = defineProps<{ wallet: string }>();
+const state = ref({ claims: null, loading: true, error: null });
+let gate;
+
+onMounted(() => {
+  gate = createClaimGate({ wallet: props.wallet });
+  gate.subscribe((s) => { state.value = s; });
+});
+onUnmounted(() => gate?.destroy());
+</script>
+```
+
+### Svelte example
+
+See [`examples/svelte-gate/ClaimGate.svelte`](./examples/svelte-gate/ClaimGate.svelte) for a complete Svelte component.
+
+```svelte
+<script lang="ts">
+  import { createClaimGate } from "@stellarcred/sdk";
+  import { onMount, onDestroy } from "svelte";
+
+  export let wallet: string;
+  let state = { claims: null, loading: true, error: null };
+  let gate;
+
+  onMount(() => {
+    gate = createClaimGate({ wallet });
+    gate.subscribe((s) => { state = s; });
+  });
+  onDestroy(() => gate?.destroy());
+</script>
+
+{#if state.loading}<p>Checking claims…</p>
+{:else}{#each Object.entries(state.claims || {}) as [type, ok]}
+  <p>{type}: {ok ? '✅' : '❌'}</p>
+{/each}{/if}
+```

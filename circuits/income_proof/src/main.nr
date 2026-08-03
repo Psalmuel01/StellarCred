@@ -4,6 +4,7 @@
 // bound to a commitment a trusted issuer signed (secp256k1 ECDSA, in-circuit).
 
 use dep::credential_lib;
+use dep::poseidon::poseidon2::Poseidon2;
 
 fn main(
     // private
@@ -44,7 +45,7 @@ fn main(
     assert(income >= threshold);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package income_proof
 
 global INC_ZERO_SIG: [u8; 64] = [0; 64];

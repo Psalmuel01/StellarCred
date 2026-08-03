@@ -3,8 +3,8 @@
 // Real Soroban contract calls against the deployed StellarCred contracts.
 //  - submitProof: builds, signs (via wallet), and submits a ProofRegistry
 //    submit_proof transaction carrying a real UltraHonk proof.
-//  - submitProofsBatch: submits multiple proofs in a single atomic transaction
-//    via ProofRegistry.submit_proofs_batch.
+//  - submitProofs: submits multiple proofs in a single atomic transaction
+//    via ProofRegistry.submit_proofs.
 //  - isVerified: read-only simulation of ProofRegistry.is_verified.
 //
 // @stellar/stellar-sdk is imported dynamically so it never runs during SSR.
@@ -172,7 +172,7 @@ export const MAX_BATCH_SIZE = 5;
 
 /**
  * Submit multiple proofs in a single atomic transaction via
- * ProofRegistry.submit_proofs_batch.
+ * ProofRegistry.submit_proofs.
  *
  * All proofs are verified on-chain before anything is stored. If any one proof
  * fails, the entire call reverts. Max batch size is {@link MAX_BATCH_SIZE}
@@ -180,7 +180,7 @@ export const MAX_BATCH_SIZE = 5;
  *
  * Returns the confirmed transaction hash.
  */
-export async function submitProofsBatch(params: {
+export async function submitProofs(params: {
   holder: string;
   submissions: ProofSubmissionParams[];
 }): Promise<string> {
@@ -265,7 +265,7 @@ export async function submitProofsBatch(params: {
   });
 
   const op = contract.call(
-    "submit_proofs_batch",
+    "submit_proofs",
     Address.fromString(holder).toScVal(),
     xdr.ScVal.scvVec(submissionVals),
   );

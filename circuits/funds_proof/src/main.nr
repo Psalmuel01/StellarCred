@@ -5,6 +5,7 @@
 // in-circuit). The balance is an integer (e.g. USD cents or whole dollars).
 
 use dep::credential_lib;
+use dep::poseidon::poseidon2::Poseidon2;
 
 fn main(
     // private
@@ -47,7 +48,7 @@ fn main(
     assert(balance >= threshold);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package funds_proof
 
 global FND_ZERO_SIG: [u8; 64] = [0; 64];

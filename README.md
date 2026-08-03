@@ -311,6 +311,15 @@ call `register_issuer` on the existing IssuerRegistry with the new public key.
 > In-browser proving uses cross-origin isolation (COOP/COEP headers in
 > `next.config.mjs`) for multithreading, falling back to single-threaded.
 
+### Testnet reset recovery
+
+After a Stellar testnet reset (which happens periodically and wipes all deployed contracts), you can recover your setup in one command. This script re-funds your deployer, redeploys all contracts, registers your issuer/VKs, and automatically updates the IDs in `frontend/.env.local`.
+
+```bash
+# Ensure ISSUER_PRIVATE_KEY and SOURCE are set
+ISSUER_PRIVATE_KEY=<hex> SOURCE=deployer ./scripts/reset-testnet.sh
+```
+
 ---
 
 ## Run it end to end (mainnet)
@@ -351,6 +360,7 @@ Deploy and wire the contracts on the Stellar Mainnet:
   the verifier crate; the VK is deterministic from the circuit.
 - Server-side issuance, multi-claim flow, the return-URL redirect, the
   `@stellarcred/sdk`, and the Persona relay are wired and build-clean.
+- **Bundle size budget & CI checks enforced**: WASM proving assets and route bundles are monitored with `@size-limit/file` and `@next/bundle-analyzer`. See [docs/BUNDLE_SIZE_BUDGET.md](docs/BUNDLE_SIZE_BUDGET.md).
 
 ---
 

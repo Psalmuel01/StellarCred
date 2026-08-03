@@ -31,7 +31,7 @@ import { computeWitness, proveWithBackend } from "@/lib/proof";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
-  submitProofsBatch,
+  submitProofs,
   MAX_BATCH_SIZE,
   parseContractError,
   type ContractError,
@@ -685,6 +685,10 @@ function ProofProgress({ steps }: { steps: ProgressStep[] }) {
 
 // ── ProofFlow ─────────────────────────────────────────────────────────────────
 
+const ESTIMATES: Record<string, { range: string; expected: number; max: number }> = {
+  default: { range: "~10–20 seconds", expected: 15, max: 20 },
+};
+
 type Stage = "witness" | "circuit" | "proof" | "proving" | "generated" | "submitting" | "confirmed" | "error";
 
 function ProofFlow({
@@ -715,6 +719,12 @@ function ProofFlow({
     toast.info(`Generating proof for ${cred.title}…`);
     (async () => {
       try {
+        const start = Date.now();
+        timerRef.current = setInterval(
+          () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+          1000,
+        );
+        // Stage 1: witness (server)
         setStage("witness");
         const witness = await computeWitness(
           cred.type,
@@ -722,9 +732,11 @@ function ProofFlow({
         );
         if (cancelled) return;
 
-        const start = Date.now();
+        // Stage 2: prove (browser WASM)
+        setStage("proving");
+        const proveStart = Date.now();
         timerRef.current = setInterval(
-          () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+          () => setElapsed(Math.floor((Date.now() - proveStart) / 1000)),
           1000,
         );
 
@@ -815,37 +827,30 @@ function ProofFlow({
 
         {/* step list */}
         <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-          <ProofStep
-            icon={<IconServer size={14} stroke={1.8} />}
-            title="Compute witness"
-            subtitle="Poseidon2 · secp256k1 · server-side Noir execution"
-            state={
-              stage === "witness"  ? "active" :
-              stage === "error"    ? "idle"   : "done"
-            }
-            detail={
-              stage === "witness" ? <AnimatedDots text="Running circuit on server" /> : null
-            }
-          />
-
+          <style>{`
+            .mobile-only-note { display: none; }
+            @media (max-width: 600px) { .mobile-only-note { display: block; } }
+          `}</style>
           <ProofStep
             icon={<IconCpu size={14} stroke={1.8} />}
-            title="UltraHonk proof"
-            subtitle="BN254 · keccak transcript · browser WASM"
+            title="Generate zero-knowledge proof"
+            subtitle={`Estimated time: ${ESTIMATES.default.range}`}
             state={
-              (stage === "proving" || stage === "circuit" || stage === "proof") ? "active" :
+              (stage === "witness" || stage === "proving" || stage === "circuit" || stage === "proof") ? "active" :
               proofDone            ? "done"   : "idle"
             }
             detail={
-              (stage === "proving" || stage === "circuit" || stage === "proof") ? (
+              (stage === "witness" || stage === "proving" || stage === "circuit" || stage === "proof") ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.65rem" }}>
-                  <ProvingBar />
+                  <ProvingBar progress={Math.min((elapsed / ESTIMATES.default.expected) * 80, 80)} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                      Generating proof in browser…
+                      {elapsed > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual…" :
+                       stage === "witness" ? "Generating witness…" :
+                       elapsed < 2 ? "Loading circuit…" : "Proving…"}
                     </span>
                     <span className="mono" style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
-                      {elapsed}s
+                      {elapsed} s elapsed
                     </span>
                   </div>
                   <div style={{ margin: "0.5rem 0" }}>
@@ -1187,14 +1192,14 @@ function BatchProofFlow({
     });
 
     toast.info(`Submitting ${currentCreds.length} proofs to Stellar…`);
-    submitProofsBatch({ holder: currentHolder, submissions })
-      .then((hash) => {
+    submitProofs({ holder: currentHolder, submissions })
+      .then((hash: string) => {
         setTxHash(hash);
         setBatchStage("confirmed");
         onProved(hash, currentCreds.map((c) => c.commitment));
         toast.success(`All ${currentCreds.length} proofs confirmed on-chain`, { txHash: hash });
       })
-      .catch((e) => {
+      .catch((e: any) => {
         const parsed = parseContractError((e as Error).message);
         setBatchError(parsed);
         setBatchStage("error");
@@ -1246,7 +1251,7 @@ function BatchProofFlow({
         <ProofStep
           icon={<IconCloudUpload size={14} stroke={1.8} />}
           title="Submit batch to Stellar"
-          subtitle={`ProofRegistry.submit_proofs_batch · ${creds.length} credentials · single wallet signature`}
+          subtitle={`ProofRegistry.submit_proofs · ${creds.length} credentials · single Freighter signature`}
           state={
             isSubmitting ? "active" :
             isConfirmed  ? "done"   : "idle"
@@ -1393,9 +1398,11 @@ function BatchCredRow({
     <AnimatedDots text="Computing witness" style={{ marginTop: "0.25rem" }} />
   ) : isProving ? (
     <div style={{ marginTop: "0.35rem", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-      <ProvingBar />
+      <ProvingBar progress={Math.min((((state as { status: "proving"; elapsed: number }).elapsed) / ESTIMATES.default.expected) * 80, 80)} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>Generating proof in browser…</span>
+        <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+          {((state as { status: "proving"; elapsed: number }).elapsed) > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual…" : "Generating proof in browser…"}
+        </span>
         <span className="mono" style={{ fontSize: "0.7rem", color: "var(--faint)" }}>
           {(state as { status: "proving"; elapsed: number }).elapsed}s
         </span>
@@ -1549,11 +1556,11 @@ function AnimatedDots({ text, style }: { text: string; style?: React.CSSProperti
   );
 }
 
-function ProvingBar() {
+function ProvingBar({ progress = 0 }: { progress?: number }) {
   return (
     <div
       style={{
-        height: "3px",
+        height: "4px",
         borderRadius: "999px",
         background: "var(--bg-soft)",
         overflow: "hidden",
@@ -1563,18 +1570,14 @@ function ProvingBar() {
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          background: "linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%)",
-          width: "50%",
-          animation: "proving-shimmer 1.6s ease-in-out infinite",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          background: "var(--accent)",
+          width: `${progress}%`,
+          transition: "width 1s linear",
         }}
       />
-      <style>{`
-        @keyframes proving-shimmer {
-          0%   { transform: translateX(-100%); }
-          100% { transform: translateX(300%); }
-        }
-      `}</style>
     </div>
   );
 }

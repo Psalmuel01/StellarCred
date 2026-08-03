@@ -310,7 +310,7 @@ impl ProofRegistry {
     // value-based `publish` API, we maintain consistency with other modules to avoid 
     // introducing architectural mismatch.
     #[allow(deprecated)]
-    pub fn submit_proofs_batch(env: Env, holder: Address, submissions: Vec<ProofSubmission>) {
+    pub fn submit_proofs(env: Env, holder: Address, submissions: Vec<ProofSubmission>) -> Vec<bool> {
         holder.require_auth();
 
         let len = submissions.len();
@@ -385,6 +385,12 @@ impl ProofRegistry {
                 },
             );
         }
+
+        let mut results = Vec::new(&env);
+        for _ in 0..len {
+            results.push_back(true);
+        }
+        results
     }
 
     /// Verify an aggregate proof that bundles N credential proofs into a single
@@ -541,6 +547,25 @@ impl ProofRegistry {
         }
     }
 
+    /// Returns the expiry (ledger timestamp, seconds) for `holder`'s cached
+    /// proof of `credential_type`, or 0 if no proof is on record. Like
+    /// `is_verified`'s returned `expiry`, this reflects the stored value
+    /// regardless of `revoked` status or whether it has already lapsed, so a
+    /// caller can distinguish "never proved" (0) from "expired N days ago"
+    /// (a past timestamp). Reading extends the entry's TTL the same way
+    /// `submit_proof` does, so an otherwise-idle credential isn't evicted
+    /// from storage before a holder gets a chance to see it needs renewal.
+    pub fn claim_expiry(env: Env, holder: Address, credential_type: Symbol) -> u64 {
+        let key = DataKey::Proof(holder, credential_type);
+        let record = env.storage().persistent().get::<_, ProofRecord>(&key);
+        if record.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+        }
+        record.map(|r| r.expiry).unwrap_or(0)
+    }
+
     /// `None` trusts any registered issuer (unchanged default behaviour). `Some`
     /// (including an empty list) requires `issuer` to be a member — an empty
     /// list therefore rejects every issuer. `issuer` is only `None` for a
@@ -557,9 +582,7 @@ impl ProofRegistry {
                 Some(addr) => list.contains(addr),
             },
         }
-    }
-
-    /// Revoke a cached proof. The holder authorizes their own revocation.
+    }    /// Revoke a cached proof. The holder authorizes their own revocation.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
         env.storage()
@@ -615,6 +638,7 @@ impl ProofRegistry {
             .persistent()
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
 
+        #[allow(deprecated)]
         // Emit: topics = ("proof_reg", "revoked", credential_type)
         //       data   = EventProofRevoked { holder, issuer, revoked_at }
         env.events().publish(
@@ -815,3 +839,5 @@ impl ProofRegistry {
 }
 
 mod test;
+
+
