@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { StellarCred, type ClaimType } from "./index";
+import { hasClaims, type ClaimType } from "./claims";
 
 /**
  * Configuration options for the `useStellarCred` React hook.
@@ -84,7 +84,7 @@ export function useStellarCred(
 
       // One batched read shares a single client across all types; per-type
       // failures resolve to `false` inside `hasClaims`.
-      const results = await StellarCred.hasClaims(wallet, typesToCheck, {
+      const results = await hasClaims(wallet, typesToCheck, {
         minThresholds: options?.minThresholds,
       });
 
@@ -112,4 +112,3 @@ export function useStellarCred(
 
   return { claims, loading, error, refetch: fetchClaims };
 }
-

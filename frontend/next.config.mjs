@@ -1,4 +1,9 @@
 import { createRequire } from "module";
+import withBundleAnalyzer from "@next/bundle-analyzer";
+
+const withBundleReport = withBundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+});
 
 const require = createRequire(import.meta.url);
 const bufferPath = require.resolve("buffer/");
@@ -141,4 +146,4 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withBundleReport(nextConfig);

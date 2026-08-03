@@ -101,7 +101,57 @@ Please do **not** open a public issue for security vulnerabilities. See [SECURIT
 
 ## Commit messages
 
-Use the imperative mood and be specific: `add income_proof circuit`, `fix check_claim threshold comparison`, `remove SmileID dependency`.
+StellarCred uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit message must have a structured prefix so the changelog and release notes are generated automatically.
+
+| Prefix | When to use |
+|--------|-------------|
+| `feat:` | A new feature visible to users or integrators |
+| `fix:` | A bug fix |
+| `docs:` | Documentation only |
+| `chore:` | Build process, tooling, dependency updates |
+| `refactor:` | Code change that isn't a fix or feature |
+| `test:` | Adding or updating tests |
+| `ci:` | CI/CD pipeline changes |
+
+Examples:
+
+```
+feat: add income_proof circuit
+fix: correct check_claim threshold comparison off-by-one
+docs: document NPM_TOKEN secret setup
+chore: bump soroban-sdk to 26.0.1
+```
+
+Breaking changes: add `BREAKING CHANGE:` in the commit footer, or append `!` after the type (`feat!:`).
+
+Commit messages are linted automatically on pull requests via `commitlint`.
+
+## Releasing
+
+Releases are tag-driven. The GitHub Actions release workflow fires on any tag matching `v*` and:
+
+1. Regenerates `CHANGELOG.md` from the full conventional commit history.
+2. Commits the updated changelog back to `main`.
+3. Creates a GitHub Release with the changelog section for that version as the body.
+4. Builds and publishes `@stellarcred/sdk` to npm.
+
+### Cutting a release
+
+```bash
+# Bump the version in frontend/packages/sdk/package.json, then:
+git add frontend/packages/sdk/package.json
+git commit -m "chore: release v<version>"
+git tag v<version>
+git push origin main --tags
+```
+
+The workflow handles everything else.
+
+### Required secret
+
+The repository must have an `NPM_TOKEN` secret set under **Settings → Secrets and variables → Actions**.
+Generate the token at [npmjs.com](https://www.npmjs.com) with **Automation** type and **Read and write** scope for the `@stellarcred` scope (or the package name).
+Never commit the token value.
 
 ## License
 

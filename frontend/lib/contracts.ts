@@ -3,8 +3,8 @@
 // Real Soroban contract calls against the deployed StellarCred contracts.
 //  - submitProof: builds, signs (via wallet), and submits a ProofRegistry
 //    submit_proof transaction carrying a real UltraHonk proof.
-//  - submitProofsBatch: submits multiple proofs in a single atomic transaction
-//    via ProofRegistry.submit_proofs_batch.
+//  - submitProofs: submits multiple proofs in a single atomic transaction
+//    via ProofRegistry.submit_proofs.
 //  - isVerified: read-only simulation of ProofRegistry.is_verified.
 //
 // @stellar/stellar-sdk is imported dynamically so it never runs during SSR.
@@ -16,9 +16,21 @@ import { signTx } from "./wallet";
 type SDK = typeof import("@stellar/stellar-sdk");
 
 let sdkPromise: Promise<SDK> | null = null;
+let sdkModule: SDK | null = null;
 function sdk(): Promise<SDK> {
-  if (!sdkPromise) sdkPromise = import("@stellar/stellar-sdk");
+  if (!sdkPromise) {
+    sdkPromise = import("@stellar/stellar-sdk").then((m) => {
+      sdkModule = m;
+      return m;
+    });
+  }
   return sdkPromise;
+}
+
+/** Synchronously access the already-loaded SDK. Only valid after sdk() has resolved. */
+function sdkSync(): SDK {
+  if (!sdkModule) throw new Error("SDK not loaded — call await sdk() first");
+  return sdkModule;
 }
 
 let server: InstanceType<SDK["rpc"]["Server"]> | null = null;
@@ -36,6 +48,9 @@ const PROOF_REGISTRY_ERRORS: Record<number, string> = {
   3: "Not authorised — wallet signature missing or wrong account.",
   4: "Issuer not trusted — the issuer address isn't registered for this credential type.",
   5: "Issuer key mismatch — this credential was signed with a key that doesn't match what's registered on-chain. Re-issue the credential and try again.",
+  6: "Duplicate credential type — a proof for this claim type is already on-chain for this wallet. Revoke or wait for expiry before submitting again.",
+  7: "Credential revoked — the issuer has revoked this credential. Re-issue through the verify flow.",
+  8: "Credential expired — the on-chain proof has passed its validity window. Re-issue to get a fresh proof.",
 };
 
 export interface ContractError {
@@ -69,43 +84,30 @@ export interface VerificationStatus {
   expiry: number;
 }
 
-/**
- * Submit a proof to the ProofRegistry. Returns the confirmed transaction hash.
- * Throws with a clear message if contracts aren't configured or the tx fails.
- */
-export async function submitProof(params: {
-  holder: string;
-  issuerId: string;
-  credentialType: string;
-  proof: Uint8Array;
-  publicInputs: Uint8Array;
-  /** Validity window in seconds from now. */
-  ttlSecs: number;
-}): Promise<string> {
-  const { holder, issuerId, credentialType, proof, publicInputs, ttlSecs } = params;
+// ── Shared tx building, signing, submission, and polling ─────────────────────
+
+function isBadUnionSwitch(e: unknown): boolean {
+  return e instanceof Error && e.message.startsWith("Bad union switch");
+}
+
+/** Build, sign, submit, and poll a transaction. */
+async function sendAndConfirm(
+  holder: string,
+  buildOp: (contract: InstanceType<SDK["Contract"]>) => InstanceType<SDK["xdr"]["Operation"]>,
+  label: string,
+): Promise<string> {
   if (!CONTRACTS.proofRegistry) {
     throw new Error(
       "ProofRegistry contract id not set. Deploy the contracts and fill NEXT_PUBLIC_PROOF_REGISTRY_ID.",
     );
   }
 
-  const { Contract, TransactionBuilder, Address, nativeToScVal, xdr, BASE_FEE } =
-    await sdk();
+  const { Contract, TransactionBuilder, BASE_FEE } = await sdk();
   const srv = await getServer();
 
   const account = await srv.getAccount(holder);
   const contract = new Contract(CONTRACTS.proofRegistry);
-  const expiry = Math.floor(Date.now() / 1000) + ttlSecs;
-
-  const op = contract.call(
-    "submit_proof",
-    Address.fromString(holder).toScVal(),
-    Address.fromString(issuerId).toScVal(),
-    nativeToScVal(credentialType, { type: "symbol" }),
-    xdr.ScVal.scvBytes(Buffer.from(proof)),
-    xdr.ScVal.scvBytes(Buffer.from(publicInputs)),
-    nativeToScVal(BigInt(expiry), { type: "u64" }),
-  );
+  const op = buildOp(contract);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -115,7 +117,6 @@ export async function submitProof(params: {
     .setTimeout(60)
     .build();
 
-  // Simulate + assemble Soroban resources/fees, then sign with the wallet.
   const prepared = await srv.prepareTransaction(tx);
   const signedXdr = await signTx(prepared.toXDR(), holder);
   const sent = await srv.sendTransaction(
@@ -123,22 +124,12 @@ export async function submitProof(params: {
   );
 
   if (sent.status === "ERROR") {
-    // errorResult is an XDR object — JSON.stringify corrupts it; use hex.
     const errHex =
       sent.errorResult &&
       typeof (sent.errorResult as { toXDR?: (f: string) => string }).toXDR === "function"
         ? (sent.errorResult as { toXDR: (f: string) => string }).toXDR("hex")
         : String(sent.errorResult);
-    throw new Error(`Submission rejected: ${errHex}`);
-  }
-
-  // Poll for confirmation. If the Stellar SDK's XDR parser hits an unknown
-  // union discriminant (e.g. TransactionMetaV4 on Protocol 22+ nodes while
-  // running stellar-sdk built for Protocol 21), it throws "Bad union switch: N".
-  // The TX still landed — NOT_FOUND would have been returned instead. Treat it
-  // as success and let isVerified() confirm via the contract's persistent store.
-  function isBadUnionSwitch(e: unknown): boolean {
-    return e instanceof Error && e.message.startsWith("Bad union switch");
+    throw new Error(`${label} rejected: ${errHex}`);
   }
 
   const start = Date.now();
@@ -181,7 +172,7 @@ export const MAX_BATCH_SIZE = 5;
 
 /**
  * Submit multiple proofs in a single atomic transaction via
- * ProofRegistry.submit_proofs_batch.
+ * ProofRegistry.submit_proofs.
  *
  * All proofs are verified on-chain before anything is stored. If any one proof
  * fails, the entire call reverts. Max batch size is {@link MAX_BATCH_SIZE}
@@ -189,7 +180,7 @@ export const MAX_BATCH_SIZE = 5;
  *
  * Returns the confirmed transaction hash.
  */
-export async function submitProofsBatch(params: {
+export async function submitProofs(params: {
   holder: string;
   submissions: ProofSubmissionParams[];
 }): Promise<string> {
@@ -274,7 +265,7 @@ export async function submitProofsBatch(params: {
   });
 
   const op = contract.call(
-    "submit_proofs_batch",
+    "submit_proofs",
     Address.fromString(holder).toScVal(),
     xdr.ScVal.scvVec(submissionVals),
   );
@@ -327,6 +318,71 @@ export async function submitProofsBatch(params: {
     throw new Error(`Batch transaction ${sent.hash} did not succeed (${result.status}).`);
   }
   return sent.hash;
+}
+
+/**
+ * Submit a proof to the ProofRegistry. Returns the confirmed transaction hash.
+ */
+export async function submitProof(params: {
+  holder: string;
+  issuerId: string;
+  credentialType: string;
+  proof: Uint8Array;
+  publicInputs: Uint8Array;
+  ttlSecs: number;
+}): Promise<string> {
+  const { holder, issuerId, credentialType, proof, publicInputs, ttlSecs } = params;
+  const expiry = Math.floor(Date.now() / 1000) + ttlSecs;
+
+  return sendAndConfirm(holder, (contract) => {
+    const { Address, nativeToScVal, xdr } = sdkSync();
+    return contract.call(
+      "submit_proof",
+      Address.fromString(holder).toScVal(),
+      Address.fromString(issuerId).toScVal(),
+      nativeToScVal(credentialType, { type: "symbol" }),
+      xdr.ScVal.scvBytes(Buffer.from(proof)),
+      xdr.ScVal.scvBytes(Buffer.from(publicInputs)),
+      nativeToScVal(BigInt(expiry), { type: "u64" }),
+    );
+  }, "Submission");
+}
+
+/**
+ * Submit an aggregate proof that bundles N credential proofs into a single
+ * on-chain transaction. Accepts arrays of issuer IDs and credential types for
+ * extensibility to N≤5.
+ */
+export async function submitAggregateProof(params: {
+  holder: string;
+  issuerIds: string[];
+  credentialTypes: string[];
+  proof: Uint8Array;
+  publicInputs: Uint8Array;
+  ttlSecs: number;
+}): Promise<string> {
+  const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecs } = params;
+  const expiry = Math.floor(Date.now() / 1000) + ttlSecs;
+
+  return sendAndConfirm(holder, (contract) => {
+    const { Address, nativeToScVal, xdr } = sdkSync();
+    // Build ScVec for issuer_ids and credential_types.
+    const issuerScVec = xdr.ScVal.scvVec(
+      issuerIds.map((id) => Address.fromString(id).toScVal()),
+    );
+    const typeScVec = xdr.ScVal.scvVec(
+      credentialTypes.map((t) => nativeToScVal(t, { type: "symbol" })),
+    );
+    return contract.call(
+      "submit_aggregate_proof",
+      Address.fromString(holder).toScVal(),
+      issuerScVec,
+      typeScVec,
+      xdr.ScVal.scvBytes(Buffer.from(proof)),
+      xdr.ScVal.scvBytes(Buffer.from(publicInputs)),
+      nativeToScVal(BigInt(expiry), { type: "u64" }),
+    );
+  }, "Aggregate submission");
 }
 
 /**

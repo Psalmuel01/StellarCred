@@ -12,7 +12,13 @@ use soroban_sdk::{
 // BN254 verification path, not a stub.
 macro_rules! fixture {
     ($t:literal, $f:literal) => {
-        include_bytes!(concat!("../../../fixtures/", $t, "/", $f))
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/",
+            $t,
+            "/",
+            $f
+        ))
     };
 }
 
@@ -58,6 +64,19 @@ fn verifies_income() {
         &symbol_short!("income"),
         &Bytes::from_slice(&env, fixture!("income", "proof")),
         &Bytes::from_slice(&env, fixture!("income", "public_inputs")),
+    ));
+}
+
+#[test]
+fn verifies_range() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let c = setup(&env);
+    c.set_vk(&symbol_short!("range"), &Bytes::from_slice(&env, fixture!("range", "vk")));
+    assert!(c.verify_proof(
+        &symbol_short!("range"),
+        &Bytes::from_slice(&env, fixture!("range", "proof")),
+        &Bytes::from_slice(&env, fixture!("range", "public_inputs")),
     ));
 }
 

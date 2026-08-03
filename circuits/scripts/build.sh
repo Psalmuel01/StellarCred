@@ -31,7 +31,9 @@ type_of() {
     jurisdiction_proof) echo jurisdiction ;;
     funds_proof) echo funds ;;
     accreditation_proof) echo accreditation ;;
+    range_proof) echo range ;;
     employment_proof) echo employment ;;
+    aggregate_proof) echo aggregate ;;
     *) echo "$1" ;;
   esac
 }
@@ -39,6 +41,11 @@ type_of() {
 REPO="$(cd "$ROOT/.." && pwd)"
 FIXTURES="$REPO/fixtures"
 mkdir -p "$FRONTEND_CIRCUITS"
+
+if [ -f "$ROOT/scripts/gen_inputs.sh" ]; then
+  echo "Generating circuit prover inputs..."
+  bash "$ROOT/scripts/gen_inputs.sh"
+fi
 
 build() {
   local name="$1"
@@ -99,5 +106,5 @@ build() {
 if [ "$#" -gt 0 ]; then
   for n in "$@"; do build "$n"; done
 else
-  for n in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof; do build "$n"; done
+  for n in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof range_proof employment_proof aggregate_proof; do build "$n"; done
 fi
