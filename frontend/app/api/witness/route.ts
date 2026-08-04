@@ -26,25 +26,10 @@ const DEFAULT_RESTRICTED = normalizeRestricted(["840", "364", "408"]);
 
 const RESTRICTED_LEN = 8;
 
-function normalizeRestricted(list: string[]): string[] {
-  // The circuit expects exactly RESTRICTED_LEN entries; pad with "0".
-  const trimmed = list.slice(0, RESTRICTED_LEN);
-  while (trimmed.length < RESTRICTED_LEN) trimmed.push("0");
-  return trimmed;
-}
-
 // Validation accepts a threshold as a number as well as a decimal string; the
 // circuits take field elements as strings, so normalize on the way in.
 const asFieldString = (v: string | number | undefined, fallback: string): string =>
   v === undefined ? fallback : String(v);
-
-interface ClaimParams {
-  threshold_years?: string;
-  threshold?: string;
-  restricted?: string[];
-  /** "0" = denylist (default), "1" = allowlist */
-  mode?: string;
-}
 
 function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
   const value = String(cred.value);

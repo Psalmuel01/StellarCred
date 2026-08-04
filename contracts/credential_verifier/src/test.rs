@@ -99,17 +99,9 @@ fn verifies_jurisdiction() {
 #[test]
 fn verifies_jurisdiction_allowlist() {
     let env = Env::default();
-    // ... rest of jurisdiction allowlist test implementation
-}
-
-#[test]
-fn verifies_employment() {
-    let env = Env::default();
-    // ... rest of employment verification test implementation
-}
     env.mock_all_auths();
     let c = setup(&env);
-c.set_vk(
+    c.set_vk(
         &Symbol::new(&env, "jurisdiction"),
         &Bytes::from_slice(&env, fixture!("jurisdiction_allow", "vk")),
     );
@@ -123,6 +115,8 @@ c.set_vk(
 #[test]
 fn verifies_employment() {
     let env = Env::default();
+    env.mock_all_auths();
+    let c = setup(&env);
     c.set_vk(
         &Symbol::new(&env, "employment"),
         &Bytes::from_slice(&env, fixture!("employment", "vk")),
@@ -133,6 +127,7 @@ fn verifies_employment() {
         &Bytes::from_slice(&env, fixture!("employment", "public_inputs")),
     ));
 }
+
 #[test]
 fn rejects_tampered_proof() {
     let env = Env::default();
