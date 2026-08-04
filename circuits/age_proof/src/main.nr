@@ -20,6 +20,7 @@ fn main(
     context_id: pub Field,
     nullifier: pub Field,
 ) {
+<<<<<<< HEAD
 
 // Binds the private date of birth to the issuer-signed commitment and
     // verifies the issuer's signature in-circuit. See circuits/lib/src/lib.nr
@@ -81,3 +82,13 @@ fn main(
     // reuse); different context_id -> unlinkable nullifier, since `salt` (not
     // the low-entropy `date_of_birth`) is the hiding secret.
     assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
+=======
+    assert(Poseidon2::hash([date_of_birth as Field, salt], 2) == commitment);
+    let z: [u8; 32] = commitment.to_be_bytes();
+    assert(verify_signature(issuer_x, issuer_y, sig, z));
+    assert(current_date >= date_of_birth);
+    let age_years = (current_date - date_of_birth) / 365;
+    assert(age_years >= threshold_years);
+    assert(Poseidon2::hash([salt, context_id], 2) == nullifier);
+}
+>>>>>>> b2864dac3a2dd97dbc8978c850eefc88f3e86599

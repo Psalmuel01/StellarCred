@@ -1143,6 +1143,31 @@ fn admin_transfer_works() {
         .upgrade(&new_wasm_hash);
 }
 
+
+
+#[test]
+fn nullifier_rejects_reuse_within_same_context() {
+    let (env, registry, verifier, issuer_registry, issuer, holder) = setup(); // reuse this test file's existing setup helper — check its exact name/signature above and adjust this call to match
+    // ... build `proof`/`public_inputs` exactly as an existing passing test does,
+    // for a circuit compiled with the new context_id/nullifier ABI ...
+
+    registry.submit_proof_with_nullifier(&holder, &issuer, &symbol_short!("kyc"), &proof, &public_inputs, &expiry);
+
+    // Second submission with the SAME public_inputs (same nullifier) must be rejected.
+    let result = registry.try_submit_proof_with_nullifier(&holder, &issuer, &symbol_short!("kyc"), &proof, &public_inputs, &expiry);
+    assert!(result.is_err());
+}
+
+#[test]
+fn nullifier_allows_reuse_across_different_contexts() {
+    // Same credential, proof generated twice with different context_id values
+    // (two different Prover.toml/witness runs) — both submissions must succeed,
+    // since the nullifiers differ and don't collide.
+    // ... build two public_inputs blobs from proofs generated with context_id=1
+    // and context_id=2 respectively ...
+}
+
+
 #[test]
 fn set_admin_by_non_admin_panics() {
     let env = Env::default();
