@@ -20,5 +20,15 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // The SDK is a standalone package with its own tsconfig (include: src, test)
+    // and its own vitest devDependency — it is not part of this pnpm workspace,
+    // so its vitest config/tests would fail to resolve here. Exclude them from
+    // the app typecheck; they are typechecked by the SDK's own toolchain.
+    "packages/sdk/test",
+    "packages/sdk/vitest.config.ts",
+    // Node built-in test runner suite (pnpm test:theme), not part of app tsc.
+    "lib/theme.test.ts"
+  ]
 }

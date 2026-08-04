@@ -3,7 +3,6 @@
 import { IconWallet, IconChevronDown, IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import { useWallet } from "@/lib/wallet-context";
 import { truncateAddress } from "@/lib/format";
-import { FREIGHTER_INSTALL_URL } from "@/lib/wallet";
 import CopyButton from "@/components/CopyButton";
 
 export function WalletButton() {
@@ -47,15 +46,15 @@ export function WalletButton() {
           >
             {error.message}
           </span>
-          {error.kind === "not-installed" ? (
+          {error.kind === "not-installed" && error.installUrl ? (
             <a
-              href={FREIGHTER_INSTALL_URL}
+              href={error.installUrl}
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost btn-sm"
               style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", flexShrink: 0 }}
             >
-              Install Freighter
+              Install {error.walletName ?? "wallet"}
             </a>
           ) : (
             <button

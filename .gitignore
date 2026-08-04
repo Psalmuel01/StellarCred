@@ -3,6 +3,7 @@ target
 
 # Node
 node_modules
+.pnpm-store
 .next
 dist
 
@@ -10,3 +11,12 @@ dist
 .soroban
 .stellar
 .env.local
+
+# Benchmark output (local results; see BENCHMARKS.md for documented figures)
+benchmark_results.txt
+
+# Proptest regression files
+proptest-regressions/
+
+# macOS
+.DS_Store

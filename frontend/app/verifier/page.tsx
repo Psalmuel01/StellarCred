@@ -194,8 +194,8 @@ function VerifierInner() {
             )}
           </div>
 
-          <label className="field-label">Amount (USDC)</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <label className="field-label" htmlFor="deposit-amount">Amount (USDC)</label>
+          <input id="deposit-amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
 
           <button
             className="btn btn-primary"
