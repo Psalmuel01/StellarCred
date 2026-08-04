@@ -100,6 +100,23 @@ build() {
     echo "  -> fixtures/${type}/{proof,public_inputs}"
   fi
 
+  # For jurisdiction_proof: also build an allowlist fixture if Prover_allowlist.toml exists.
+  if [ "$name" = "jurisdiction_proof" ] && [ -f Prover_allowlist.toml ]; then
+    echo "  --- allowlist fixture ---"
+    cp Prover.toml Prover.toml.bak
+    cp Prover_allowlist.toml Prover.toml
+    nargo execute
+    bb prove --scheme ultra_honk --oracle_hash keccak \
+      --bytecode_path "$json" --witness_path "$gz" \
+      --output_path target --output_format bytes_and_fields
+    mkdir -p "$FIXTURES/jurisdiction_allow"
+    cp target/vk "$FIXTURES/jurisdiction_allow/vk"
+    cp target/proof "$FIXTURES/jurisdiction_allow/proof"
+    cp target/public_inputs "$FIXTURES/jurisdiction_allow/public_inputs"
+    echo "  -> fixtures/jurisdiction_allow/{vk,proof,public_inputs}"
+    mv Prover.toml.bak Prover.toml
+  fi
+
   popd >/dev/null
 }
 
@@ -108,3 +125,4 @@ if [ "$#" -gt 0 ]; then
 else
   for n in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof range_proof employment_proof aggregate_proof; do build "$n"; done
 fi
+

@@ -28,6 +28,8 @@ export interface ClaimParams {
   threshold_years?: string;
   threshold?: string;
   restricted?: string[];
+  /** "0" = denylist (default), "1" = allowlist */
+  mode?: string;
 }
 
 /** A single failed check: which request field, and what was wrong with it. */

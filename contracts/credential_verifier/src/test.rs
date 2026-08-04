@@ -97,6 +97,22 @@ fn verifies_jurisdiction() {
 }
 
 #[test]
+fn verifies_jurisdiction_allowlist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let c = setup(&env);
+    c.set_vk(
+        &Symbol::new(&env, "jurisdiction"),
+        &Bytes::from_slice(&env, fixture!("jurisdiction_allow", "vk")),
+    );
+    assert!(c.verify_proof(
+        &Symbol::new(&env, "jurisdiction"),
+        &Bytes::from_slice(&env, fixture!("jurisdiction_allow", "proof")),
+        &Bytes::from_slice(&env, fixture!("jurisdiction_allow", "public_inputs")),
+    ));
+}
+
+#[test]
 fn verifies_employment() {
     let env = Env::default();
     env.mock_all_auths();

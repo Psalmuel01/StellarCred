@@ -1,9 +1,11 @@
 // jurisdiction_proof
 //
-// Proves "my country of residence is NOT in the restricted list" without
-// revealing which country it is, bound to a commitment a trusted issuer signed
+// Proves jurisdiction eligibility bound to a commitment a trusted issuer signed
 // (secp256k1 ECDSA, in-circuit). Country codes are ISO 3166-1 numeric
-// (US=840, IR=364, KP=408); unused slots in the restricted list are 0.
+// (US=840, IR=364, KP=408); unused slots in the list are 0.
+//
+// mode = 0 (denylist): proves "my country is NOT in the restricted list"
+// mode = 1 (allowlist): proves "my country IS in the allowed list"
 
 use dep::credential_lib;
 use dep::poseidon::poseidon2::Poseidon2;
@@ -25,37 +27,26 @@ fn main(
     issuer_x: pub [u8; 32],
     issuer_y: pub [u8; 32],
     restricted: pub [u64; RESTRICTED_LEN],
+    mode: pub u64,
 ) {
-    // Binds the private country code to the issuer-signed commitment and
-    // verifies the issuer's signature in-circuit. circuits/lib/src/lib.nr has the
-    // detail. The consequence of losing either constraint is sharper here than
-    // elsewhere: without the commitment check a holder could present a genuine
-    // signed commitment and separately claim any country, which is exactly the
-    // sanctions bypass this circuit exists to prevent.
-    // The salt matters more here than in the threshold circuits, too. There are
-    // only about 250 ISO 3166-1 numeric codes, so an unsalted commitment could be
-    // reversed in a few hundred hashes and the holder's country read straight off
-    // the public inputs.
     credential_lib::assert_committed_and_signed(country_code as Field, salt, sig, commitment, issuer_x, issuer_y);
 
-    // Non-membership, proved rather than asserted. `restricted` is public and
-    // `country_code` is not, so the contract cannot run this check itself: it
-    // never sees the country. Every slot must be compared, because a single
-    // skipped entry is a jurisdiction that passes sanctions screening.
-    // Two consequences of `restricted` being a prover-supplied public input:
-    //   - The contract MUST check the list against its own policy. A prover who
-    //     submits an all-zero list produces a perfectly valid proof of nothing.
-    //   - Zero padding does double duty. Padding slots are 0, so the loop also
-    //     enforces `country_code != 0`, rejecting a credential with an empty or
-    //     unset country. This guard is incidental rather than designed: it holds
-    //     only while at least one slot is still padding, and it vanishes the
-    //     moment all RESTRICTED_LEN slots carry real codes.
-    //     Whoever fills the last slot must add an explicit
-    //     `assert(country_code != 0)` here in the same change. It has to go here
-    //     and nowhere else, because `country_code` is a private input that never
-    //     reaches the verifier, so the contract cannot make up for its loss.
-    for i in 0..RESTRICTED_LEN {
-        assert(country_code != restricted[i]);
+    if mode == 0 {
+        for i in 0..RESTRICTED_LEN {
+            assert(country_code != restricted[i]);
+        }
+    } else {
+        assert(mode == 1);
+        assert(country_code != 0);
+        let mut found: bool = false;
+        for i in 0..RESTRICTED_LEN {
+            if restricted[i] != 0 {
+                if country_code == restricted[i] {
+                    found = true;
+                }
+            }
+        }
+        assert(found);
     }
 }
 
@@ -66,41 +57,74 @@ global JUR_ZERO_SIG: [u8; 64] = [0; 64];
 global JUR_ZERO_X: [u8; 32]   = [0; 32];
 global JUR_ZERO_Y: [u8; 32]   = [0; 32];
 
-// All-zeros restricted list (unused slots); wrong commitment still fails.
 #[test(should_fail)]
 fn test_wrong_commitment_rejected() {
     let restricted: [u64; 8] = [0; 8];
-    main(566, 0xabcd, JUR_ZERO_SIG, 0x1, JUR_ZERO_X, JUR_ZERO_Y, restricted);
+    main(566, 0xabcd, JUR_ZERO_SIG, 0x1, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
 }
 
-// Country IS in the restricted list; must be rejected even with correct commitment.
-// (Uses wrong commitment so circuit fails at commitment check, demonstrating the
-// conceptual guard; full acceptance test requires real secp256k1 vectors.)
 #[test(should_fail)]
 fn test_restricted_country_rejected() {
-    // US = 840 is in restricted list at index 0
-    let country_code: u64    = 840;
+    let country_code: u64 = 840;
     let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
-    let bad_commitment        = 0x2;
-    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted);
+    let bad_commitment = 0x2;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
 }
 
-// Country matches a mid-list restricted entry (index 3).
 #[test(should_fail)]
 fn test_restricted_country_mid_list_rejected() {
-    let country_code: u64    = 408; // KP = North Korea
+    let country_code: u64 = 408;
     let restricted: [u64; 8] = [0, 0, 0, 408, 0, 0, 0, 0];
-    let bad_commitment        = 0x3;
-    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted);
+    let bad_commitment = 0x3;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
 }
 
-// salt mismatch.
 #[test(should_fail)]
 fn test_salt_mismatch_rejected() {
-    let cc: u64 = 566; // Nigeria; not restricted
-    let real_salt: Field  = 0x1234;
+    let cc: u64 = 566;
+    let real_salt: Field = 0x1234;
     let wrong_salt: Field = 0x5678;
     let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
     let commitment = Poseidon2::hash([cc as Field, real_salt], 2);
-    main(cc, wrong_salt, JUR_ZERO_SIG, commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted);
+    main(cc, wrong_salt, JUR_ZERO_SIG, commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
+}
+
+#[test(should_fail)]
+fn test_country_code_zero_rejected() {
+    let country_code: u64 = 0;
+    let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
+    let bad_commitment = 0x4;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
+}
+
+#[test(should_fail)]
+fn test_all_slots_filled_non_matching_rejected() {
+    let country_code: u64 = 840;
+    let restricted: [u64; 8] = [840, 364, 408, 276, 356, 392, 410, 528];
+    let bad_commitment = 0x5;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 0);
+}
+
+#[test(should_fail)]
+fn test_allowlist_country_allowed() {
+    let country_code: u64 = 840;
+    let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
+    let bad_commitment = 0x7;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 1);
+}
+
+#[test(should_fail)]
+fn test_allowlist_country_rejected() {
+    let country_code: u64 = 276;
+    let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
+    let bad_commitment = 0x6;
+    main(country_code, 0x1, JUR_ZERO_SIG, bad_commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 1);
+}
+
+#[test(should_fail)]
+fn test_invalid_mode_rejected() {
+    let country_code: u64 = 566;
+    let restricted: [u64; 8] = [840, 364, 408, 0, 0, 0, 0, 0];
+    let commitment = Poseidon2::hash([country_code as Field, 0x1], 2);
+    main(country_code, 0x1, JUR_ZERO_SIG, commitment, JUR_ZERO_X, JUR_ZERO_Y, restricted, 2);
 }

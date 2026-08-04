@@ -24,6 +24,8 @@ const DEFAULT_ACCREDITATION_THRESHOLD = "1000000";
 // Padded to RESTRICTED_LEN by the same helper the request path uses.
 const DEFAULT_RESTRICTED = normalizeRestricted(["840", "364", "408"]);
 
+const RESTRICTED_LEN = 8;
+
 // Validation accepts a threshold as a number as well as a decimal string; the
 // circuits take field elements as strings, so normalize on the way in.
 const asFieldString = (v: string | number | undefined, fallback: string): string =>
@@ -62,10 +64,9 @@ function buildInputs(type: string, cred: Record<string, unknown>): InputMap {
         country_code: value,
         salt,
         ...sigInputs,
-        commitment,
-        restricted: normalizeRestricted(
-          params.restricted ?? DEFAULT_RESTRICTED,
-        ),
+    commitment,
+        restricted: normalizeRestricted(params.restricted ?? DEFAULT_RESTRICTED),
+        mode: params.mode ?? "0",
       };
     case "funds":
       return {

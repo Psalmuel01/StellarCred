@@ -38,7 +38,14 @@ echo "income_proof..."
 C=$(commit 250000 99)
 { echo "income = \"250000\""; echo "salt = \"99\""; echo "commitment = \"$C\""; \
   echo "threshold = \"200000\""; node "$SCRIPTS/sign.js" "$C"; } \
-  > "$ROOT/income_proof/Prover.toml"
+> "$ROOT/income_proof/Prover.toml"
+
+echo "jurisdiction_proof (denylist)..."
+C=$(commit 566 77)
+{ echo "country_code = \"566\""; echo "salt = \"77\""; echo "commitment = \"$C\""; \
+  echo "restricted = [\"840\", \"364\", \"408\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; \
+  node "$SCRIPTS/sign.js" "$C"; } \
+  > "$ROOT/jurisdiction_proof/Prover.toml"
 
 echo "accreditation_proof..."
 C=$(commit 1500000 99)
@@ -57,12 +64,18 @@ C=$(commit 40000 2024)
 { echo "value = \"40000\""; echo "salt = \"2024\""; echo "commitment = \"$C\""; \
   echo "min = \"30000\""; echo "max = \"50000\""; node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/range_proof/Prover.toml"
-
-echo "jurisdiction_proof..."
 C=$(commit 566 77)
 { echo "country_code = \"566\""; echo "salt = \"77\""; echo "commitment = \"$C\""; \
-  echo "restricted = [\"840\", \"364\", \"408\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; node "$SCRIPTS/sign.js" "$C"; } \
-  > "$ROOT/jurisdiction_proof/Prover.toml"
+  echo "restricted = [\"840\", \"364\", \"408\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; \
+  echo "mode = \"0\""; node "$SCRIPTS/sign.js" "$C"; } \
+> "$ROOT/jurisdiction_proof/Prover.toml"
+
+echo "jurisdiction_proof (allowlist)..."
+C=$(commit 566 77)
+{ echo "country_code = \"566\""; echo "salt = \"77\""; echo "commitment = \"$C\""; \
+  echo "restricted = [\"566\", \"276\", \"356\", \"0\", \"0\", \"0\", \"0\", \"0\"]"; \
+  echo "mode = \"1\""; node "$SCRIPTS/sign.js" "$C"; } \
+  > "$ROOT/jurisdiction_proof/Prover_allowlist.toml"
 
 echo "employment_proof..."
 # Commitment binds BOTH status (1=employed) AND the holder's specific
@@ -75,3 +88,4 @@ C=$(commit3 1 5 11)
 
 echo "done. demo issuer public key:"
 node "$SCRIPTS/sign.js" --pubkey
+

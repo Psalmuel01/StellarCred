@@ -550,8 +550,10 @@ export function buildVerifyUrl(options: {
     threshold_years?: string;
     /** For "income" / "funds" claims: minimum value in whole units (default varies). */
     threshold?: string;
-    /** For "jurisdiction" claims: ISO 3166-1 numeric codes to block (default []). */
+    /** For "jurisdiction" claims: ISO 3166-1 numeric codes (default []). */
     restricted?: string | string[];
+    /** For "jurisdiction" claims: "block" = denylist (default), "allow" = allowlist. */
+    mode?: "allow" | "block";
   };
   /**
    * Opaque CSRF-style correlation token (e.g. a per-session nonce). Embedded
@@ -582,11 +584,14 @@ export function buildVerifyUrl(options: {
   url.searchParams.set("return_url", returnUrl);
   url.searchParams.set("claim", options.claim);
   if (options.claimParams) {
-    const { threshold_years, threshold, restricted } = options.claimParams;
+    const { threshold_years, threshold, restricted, mode } = options.claimParams;
     if (threshold_years) url.searchParams.set("threshold_years", threshold_years);
     if (threshold) url.searchParams.set("threshold", threshold);
     if (restricted) {
       url.searchParams.set("restricted", Array.isArray(restricted) ? restricted.join(",") : restricted);
+    }
+    if (mode) {
+      url.searchParams.set("mode", mode === "allow" ? "1" : "0");
     }
   }
   return url.toString();
