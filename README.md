@@ -71,6 +71,12 @@ proof once and caches the result; every protocol afterwards reads
 
 ---
 
+## Architecture & Overview
+
+For a detailed architectural description with diagrams, see the [Architecture Documentation](docs/ARCHITECTURE.md).
+
+---
+
 ## Repository layout
 
 ```
@@ -90,10 +96,13 @@ circuits/               Noir circuits (UltraHonk · Noir 1.0.0-beta.9 / bb 0.87.
 fixtures/<type>/        real vk / proof / public_inputs per type (contract tests)
 frontend/               Next.js 14 app (App Router)
   app/                    landing, holder, verify, issuer, apps, developers, docs
-  app/api/issue/          server-side credential issuance (signs with ISSUER_PRIVATE_KEY)
+  app/api/issue/          server-side credential issuance, via @stellarcred/issuer
   packages/sdk/           @stellarcred/sdk — hasClaim / getClaims / buildVerifyUrl
+  packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
 scripts/deploy.sh       deploy + wire + register issuer + install all VKs on testnet
+scripts/benchmark.sh    measure instruction budget for every public function on testnet
+BENCHMARKS.md           per-function instruction counts, ledger I/O, and fee estimates
 ```
 
 All five credential circuits share one commitment scheme,
@@ -263,8 +272,10 @@ cp frontend/.env.example frontend/.env.local
 cd frontend && pnpm install && pnpm dev
 ```
 
-In the browser: install **Freighter**, switch it to **testnet**, and fund the
-account (https://lab.stellar.org or friendbot).
+In the browser: install a Stellar wallet (**Freighter**, Albedo, xBull, and
+others via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)
+are supported), switch it to **testnet**, and fund the account
+(https://lab.stellar.org or friendbot).
 
 - **Verify** — pick one or more claims; the app issues the credentials to your
   wallet (saved locally, never server-side).
@@ -306,7 +317,12 @@ Deploy and wire the contracts on the Stellar Mainnet:
 
 - **ZK verification is real**, on soroban-sdk 26 with host-native BN254
   (`soroban_sdk::crypto::bn254`) — on-chain verification fits the resource budget
-  (~0.014 XLM/verify on testnet per the reference repo).
+  (~0.014 XLM/verify on testnet). See [BENCHMARKS.md](BENCHMARKS.md) for the
+  full per-function instruction budget and fee breakdown.
+- **All public functions benchmarked.** `submit_proof` uses ~13.5M instructions
+  (~13.5% of the 100M per-transaction budget), confirming the protocol fits
+  comfortably within Soroban's limits. Read-only functions (`is_verified`,
+  `check_claim`) use <400K instructions (<0.4%). See [BENCHMARKS.md](BENCHMARKS.md).
 - **21 contract tests pass**, including real proof verification for all credential
   types, in-circuit ECDSA, untrusted-issuer and wrong-issuer-key rejections, and
   a proof-expiry test that advances ledger time.

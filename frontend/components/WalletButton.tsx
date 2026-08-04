@@ -1,6 +1,6 @@
 "use client";
 
-import { IconWallet, IconChevronDown } from "@tabler/icons-react";
+import { IconWallet, IconChevronDown, IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import { useWallet } from "@/lib/wallet-context";
 import { truncateAddress } from "@/lib/format";
 import CopyButton from "@/components/CopyButton";
@@ -38,12 +38,35 @@ export function WalletButton() {
       )}
 
       {error && (
-        <span
-          className="mono"
-          style={{ color: "var(--danger)", fontSize: "0.7rem", maxWidth: 260, textAlign: "right", lineHeight: 1.4, }}
-        >
-          {error}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", maxWidth: 280 }}>
+          <IconAlertTriangle size={13} style={{ color: "var(--danger)", flexShrink: 0 }} />
+          <span
+            className="mono"
+            style={{ color: "var(--danger)", fontSize: "0.7rem", textAlign: "right", lineHeight: 1.4 }}
+          >
+            {error.message}
+          </span>
+          {error.kind === "not-installed" && error.installUrl ? (
+            <a
+              href={error.installUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", flexShrink: 0 }}
+            >
+              Install {error.walletName ?? "wallet"}
+            </a>
+          ) : (
+            <button
+              onClick={connect}
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", flexShrink: 0 }}
+            >
+              <IconRefresh size={12} />
+              Retry
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

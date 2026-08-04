@@ -9,10 +9,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS="$ROOT/scripts"
 COMMIT="$ROOT/commit"
 
-commit() { # value salt -> canonical decimal commitment
+commit() { # value salt -> canonical decimal commitment (2-arity)
   printf 'value = "%s"\nsalt = "%s"\n' "$1" "$2" > "$COMMIT/Prover.toml"
   local raw
   raw=$(cd "$COMMIT" && nargo execute 2>&1 | grep "Circuit output" | sed -E 's/.*Field\((-?[0-9]+)\).*/\1/')
+  RAW="$raw" node -e 'const r=21888242871839275222246405745257275088548364400416034343698204186575808495617n;let x=BigInt(process.env.RAW);if(x<0n)x+=r;console.log(x.toString())'
+}
+
+commit3() { # value1 value2 salt -> canonical decimal commitment (3-arity, for employment)
+  printf 'status = "%s"\nseniority = "%s"\nsalt = "%s"\n' "$1" "$2" "$3" > "$ROOT/commit3/Prover.toml"
+  local raw
+  raw=$(cd "$ROOT/commit3" && nargo execute 2>&1 | grep "Circuit output" | sed -E 's/.*Field\((-?[0-9]+)\).*/\1/')
   RAW="$raw" node -e 'const r=21888242871839275222246405745257275088548364400416034343698204186575808495617n;let x=BigInt(process.env.RAW);if(x<0n)x+=r;console.log(x.toString())'
 }
 
@@ -68,6 +75,15 @@ N=$(commit 88 "$CTX")
   echo "threshold = \"1000000\""; echo "context_id = \"$CTX\""; echo "nullifier = \"$N\""; \
   node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/accreditation_proof/Prover.toml"
+
+echo "employment_proof..."
+# Commitment binds BOTH status (1=employed) AND the holder's specific
+# seniority so the issuer's signature attests to tenure, not just the
+# binary "is employed" tag.
+C=$(commit3 1 5 11)
+{ echo "employment_status = \"1\""; echo "seniority = \"5\""; echo "salt = \"11\""; \
+  echo "commitment = \"$C\""; echo "min_seniority = \"3\""; node "$SCRIPTS/sign.js" "$C"; } \
+  > "$ROOT/employment_proof/Prover.toml"
 
 echo "done. demo issuer public key:"
 node "$SCRIPTS/sign.js" --pubkey

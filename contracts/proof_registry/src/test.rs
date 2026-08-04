@@ -122,7 +122,7 @@ fn submit_then_verified() {
 
     submit(&env, &h, &holder, 1000);
 
-    let (valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"));
+    let (valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(valid);
     assert_eq!(expiry, 1000);
 }
@@ -135,11 +135,11 @@ fn expires_after_ledger_time_passes() {
     let holder = Address::generate(&env);
 
     submit(&env, &h, &holder, 1000); // valid until ts=1000
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 
     // Advance ledger time past the expiry.
     env.ledger().with_mut(|li| li.timestamp = 2000);
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn rejects_wrong_issuer_key() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(!registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn rejects_untrusted_issuer() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn rejects_invalid_proof() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn unverified_holder_returns_false() {
     env.mock_all_auths();
     let h = deploy(&env);
     let stranger = Address::generate(&env);
-    assert!(!h.registry.is_verified(&stranger, &symbol_short!("kyc")).0);
+    assert!(!h.registry.is_verified(&stranger, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn revoke_clears_proof() {
 
     submit(&env, &h, &holder, 1000);
     h.registry.revoke_proof(&holder, &symbol_short!("kyc"));
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -246,15 +246,15 @@ fn issuer_revoke_invalidates_proof() {
     let holder = Address::generate(&env);
 
     submit(&env, &h, &holder, 1000);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
-    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None));
+    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
 
     h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
 
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
-    assert!(!h.registry.check_claim(&holder, &symbol_short!("kyc"), &None));
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(!h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
     // Expiry data preserved for audit even though proof is no longer valid.
-    let (_valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"));
+    let (_valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
     assert_eq!(expiry, 1000);
 }
 
@@ -269,7 +269,7 @@ fn issuer_revoke_rejects_wrong_issuer() {
     submit(&env, &h, &holder, 1000);
     let res = h.registry.try_revoke(&stranger, &holder, &symbol_short!("kyc"));
     assert!(res.is_err());
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
+    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
 }
 
 #[test]
@@ -279,23 +279,52 @@ fn issuer_revoke_emits_event() {
     let h = deploy(&env);
     let holder = Address::generate(&env);
 
+    // Assert the submitted event immediately after submit — the snapshot
+    // framework drains env.events().all() after each contract invocation.
     submit(&env, &h, &holder, 1000);
-    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
-
     assert_eq!(
-        env.events().all(),
+        env.events().all().filter_by_contract(&h.registry.address),
         vec![
             &env,
             (
-                h.registry_id.clone(),
-                (symbol_short!("revoked"),).into_val(&env),
+                h.registry.address.clone(),
                 (
-                    holder.clone(),
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
                     symbol_short!("kyc"),
-                    h.issuer.clone(),
-                    env.ledger().timestamp()
                 )
                     .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 1000,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+
+    // Assert the revoked event immediately after revoke.
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+    assert_eq!(
+        env.events().all().filter_by_contract(&h.registry.address),
+        vec![
+            &env,
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("revoked"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofRevoked {
+                    holder: holder.clone(),
+                    issuer: h.issuer.clone(),
+                    revoked_at: env.ledger().timestamp(),
+                }
+                .into_val(&env),
             ),
         ],
     );
@@ -312,7 +341,162 @@ fn check_claim_no_threshold_matches_is_verified() {
 
     submit(&env, &h, &holder, 1000);
     // check_claim with no min_threshold should behave like is_verified.
-    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None));
+    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+}
+
+// ── trusted_issuers tests ────────────────────────────────────────────────────
+
+#[test]
+fn check_claim_trusted_issuer_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    let other_issuer = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    // The proof's issuer (h.issuer) is in the trusted list — accepted.
+    assert!(h.registry.check_claim(
+        &holder,
+        &symbol_short!("kyc"),
+        &None,
+        &Some(vec![&env, h.issuer.clone(), other_issuer]),
+    ));
+}
+
+#[test]
+fn check_claim_untrusted_issuer_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    let other_issuer = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    // The proof's issuer (h.issuer) is NOT in the trusted list — rejected, even
+    // though the proof itself is otherwise valid and unexpired.
+    assert!(!h.registry.check_claim(
+        &holder,
+        &symbol_short!("kyc"),
+        &None,
+        &Some(vec![&env, other_issuer]),
+    ));
+}
+
+#[test]
+fn check_claim_empty_trusted_list_rejects_all() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    // An empty Some([]) list has no members to match against — rejects every
+    // issuer, including the one that actually signed the proof.
+    let empty: Vec<Address> = Vec::new(&env);
+    assert!(!h.registry.check_claim(
+        &holder,
+        &symbol_short!("kyc"),
+        &None,
+        &Some(empty),
+    ));
+}
+
+#[test]
+fn is_verified_trusted_issuer_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    let (valid, _at, expiry) = h.registry.is_verified(
+        &holder,
+        &symbol_short!("kyc"),
+        &Some(vec![&env, h.issuer.clone()]),
+    );
+    assert!(valid);
+    assert_eq!(expiry, 1000);
+}
+
+#[test]
+fn is_verified_untrusted_issuer_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    let other_issuer = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    // Rejected for validity, but verified_at/expiry are still returned for
+    // audit — matching the existing revoked/expired behaviour.
+    let (valid, _at, expiry) = h.registry.is_verified(
+        &holder,
+        &symbol_short!("kyc"),
+        &Some(vec![&env, other_issuer]),
+    );
+    assert!(!valid);
+    assert_eq!(expiry, 1000);
+}
+
+#[test]
+fn check_claim_trusted_issuer_combines_with_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &pubkey_from(&env, FUNDS_PUBLIC_INPUTS),
+        &vec![&env, symbol_short!("funds")],
+    );
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id)
+        .set_vk(&symbol_short!("funds"), &Bytes::from_slice(&env, FUNDS_VK));
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+    let other_issuer = Address::generate(&env);
+
+    // funds fixture proves balance >= 200_000.
+    registry.submit_proof(
+        &holder,
+        &issuer,
+        &symbol_short!("funds"),
+        &Bytes::from_slice(&env, FUNDS_PROOF),
+        &Bytes::from_slice(&env, FUNDS_PUBLIC_INPUTS),
+        &9999,
+    );
+
+    // Trusted issuer + satisfied threshold — passes.
+    assert!(registry.check_claim(
+        &holder,
+        &symbol_short!("funds"),
+        &Some(50_000),
+        &Some(vec![&env, issuer.clone()]),
+    ));
+    // Trusted issuer but unsatisfied threshold — fails.
+    assert!(!registry.check_claim(
+        &holder,
+        &symbol_short!("funds"),
+        &Some(250_000),
+        &Some(vec![&env, issuer.clone()]),
+    ));
+    // Untrusted issuer, even with a satisfied threshold — fails.
+    assert!(!registry.check_claim(
+        &holder,
+        &symbol_short!("funds"),
+        &Some(50_000),
+        &Some(vec![&env, other_issuer]),
+    ));
 }
 
 #[test]
@@ -348,12 +532,12 @@ fn funds_threshold_stored_and_checked() {
     );
 
     // A protocol requiring <= the proved threshold passes.
-    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &Some(200_000)));
-    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &Some(50_000)));
-    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &None));
+    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &Some(200_000), &None));
+    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &Some(50_000), &None));
+    assert!(registry.check_claim(&holder, &symbol_short!("funds"), &None, &None));
 
     // A protocol requiring MORE than was proved fails.
-    assert!(!registry.check_claim(&holder, &symbol_short!("funds"), &Some(250_000)));
+    assert!(!registry.check_claim(&holder, &symbol_short!("funds"), &Some(250_000), &None));
 }
 
 #[test]
@@ -388,11 +572,234 @@ fn age_threshold_stored_and_checked() {
     );
 
     // Protocols requiring <= 18 pass.
-    assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(18)));
-    assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(16)));
+    assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(18), &None));
+    assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(16), &None));
 
     // A protocol requiring age >= 21 fails — the proof only covers >= 18.
-    assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(21)));
+    assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(21), &None));
+}
+
+// ── check_claim property & boundary fuzz tests (Issue #26) ───────────────────
+
+use proptest::prelude::*;
+
+fn deploy_registry(env: &Env) -> (ProofRegistryClient<'static>, Address) {
+    env.mock_all_auths();
+    let admin = Address::generate(env);
+    let v_id = Address::generate(env);
+    let ir_id = Address::generate(env);
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    (ProofRegistryClient::new(env, &pr_id), pr_id)
+}
+
+fn set_proof_record(
+    env: &Env,
+    registry_id: &Address,
+    holder: &Address,
+    cred: &Symbol,
+    record: &ProofRecord,
+) {
+    env.as_contract(registry_id, || {
+        let key = DataKey::Proof(holder.clone(), cred.clone());
+        env.storage().persistent().set(&key, record);
+        env.storage().persistent().extend_ttl(&key, 17280, 17280 * 90);
+    });
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    #[test]
+    fn prop_check_claim_stored_ge_required_returns_true(
+        required in any::<u64>(),
+        offset in any::<u64>(),
+    ) {
+        // Generate stored >= required via saturating add to cover entire u64 space without overflow
+        let stored = required.saturating_add(offset);
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: Some(stored),
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &Some(required), &None);
+        prop_assert!(res);
+    }
+
+    #[test]
+    fn prop_check_claim_stored_lt_required_returns_false(
+        required in 1..=u64::MAX,
+        delta in 1..=u64::MAX,
+    ) {
+        // Generate stored < required
+        let diff = (delta % required).max(1);
+        let stored = required - diff;
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: Some(stored),
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &Some(required), &None);
+        prop_assert!(!res);
+    }
+
+    #[test]
+    fn prop_check_claim_none_required_returns_true_for_valid_proof(
+        stored in prop::option::of(any::<u64>()),
+    ) {
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("kyc");
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry: 1000,
+            threshold: stored,
+            revoked: false,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &None, &None);
+        prop_assert!(res);
+    }
+
+    #[test]
+    fn prop_check_claim_expired_or_revoked_always_returns_false(
+        stored in prop::option::of(any::<u64>()),
+        required in prop::option::of(any::<u64>()),
+        revoked in any::<bool>(),
+        expired in any::<bool>(),
+    ) {
+        if !revoked && !expired {
+            return Ok(());
+        }
+
+        let env = Env::default();
+        let (client, reg_id) = deploy_registry(&env);
+        let holder = Address::generate(&env);
+        let cred = symbol_short!("funds");
+
+        let expiry = if expired { env.ledger().timestamp() } else { env.ledger().timestamp() + 1000 };
+
+        let record = ProofRecord {
+            verified_at: 100,
+            expiry,
+            threshold: stored,
+            revoked,
+            issuer: None,
+        };
+        set_proof_record(&env, &reg_id, &holder, &cred, &record);
+
+        let res = client.check_claim(&holder, &cred, &required, &None);
+        prop_assert!(!res);
+    }
+}
+
+#[test]
+fn check_claim_boundary_values_exhaustive() {
+    let env = Env::default();
+    let (client, reg_id) = deploy_registry(&env);
+    let cred = symbol_short!("funds");
+
+    let boundaries = [0, 1, 2, u64::MAX / 2, u64::MAX - 1, u64::MAX];
+
+    for &req in &boundaries {
+        // Test exact match (stored == req) -> true
+        {
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(req),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req for req={}", req
+            );
+        }
+
+        // Test stored == req + 1 (if req < u64::MAX) -> true
+        if req < u64::MAX {
+            let stored = req + 1;
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(stored),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req + 1 for req={}", req
+            );
+        }
+
+        // Test stored == req - 1 (if req > 0) -> false
+        if req > 0 {
+            let stored = req - 1;
+            let holder = Address::generate(&env);
+            let record = ProofRecord {
+                verified_at: 100,
+                expiry: 1000,
+                threshold: Some(stored),
+                revoked: false,
+                issuer: None,
+            };
+            set_proof_record(&env, &reg_id, &holder, &cred, &record);
+            assert!(
+                !client.check_claim(&holder, &cred, &Some(req), &None),
+                "Failed boundary stored == req - 1 for req={}", req
+            );
+        }
+    }
+}
+
+#[test]
+fn check_claim_stored_none_with_required_threshold() {
+    let env = Env::default();
+    let (client, reg_id) = deploy_registry(&env);
+    let cred = symbol_short!("kyc");
+    let holder1 = Address::generate(&env);
+    let record1 = ProofRecord {
+        verified_at: 100,
+        expiry: 1000,
+        threshold: None, // e.g. KYC proof without numeric threshold
+        revoked: false,
+        issuer: None,
+    };
+    set_proof_record(&env, &reg_id, &holder1, &cred, &record1);
+
+    // None threshold defaults to 0 in unwrap_or(0).
+    // So Some(0) returns true (0 >= 0), while Some(1) returns false (0 < 1).
+    assert!(client.check_claim(&holder1, &cred, &Some(0), &None));
+    assert!(!client.check_claim(&holder1, &cred, &Some(1), &None));
+    assert!(!client.check_claim(&holder1, &cred, &Some(u64::MAX), &None));
 }
 
 // ── submit_proofs_batch tests ─────────────────────────────────────────────────
@@ -497,9 +904,9 @@ fn batch_all_pass() {
 
     h.registry.submit_proofs_batch(&holder, &submissions);
 
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("funds")).0);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("age")).0);
+    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(h.registry.is_verified(&holder, &symbol_short!("funds"), &None).0);
+    assert!(h.registry.is_verified(&holder, &symbol_short!("age"), &None).0);
 }
 
 /// If one proof in the batch is invalid, the entire call reverts.
@@ -538,8 +945,8 @@ fn batch_one_fail_reverts_all() {
     assert!(res.is_err());
 
     // The valid kyc proof must NOT have been stored because the batch reverted.
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc")).0);
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("funds")).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(!h.registry.is_verified(&holder, &symbol_short!("funds"), &None).0);
 }
 
 /// Exactly MAX_BATCH_SIZE (5) submissions — should succeed.
@@ -592,8 +999,8 @@ fn batch_max_size_boundary_accepts_five() {
 
     // Must not panic — 5 distinct types is within the allowed maximum.
     registry.submit_proofs_batch(&holder, &submissions);
-    assert!(registry.is_verified(&holder, &types[0]).0);
-    assert!(registry.is_verified(&holder, &types[4]).0);
+    assert!(registry.is_verified(&holder, &types[0], &None).0);
+    assert!(registry.is_verified(&holder, &types[4], &None).0);
 }
 
 
@@ -745,5 +1152,195 @@ fn set_admin_by_non_admin_panics() {
     let res = h.registry
         .mock_auths(&[])
         .try_set_admin(&new_admin);
+    assert!(res.is_err());
+}
+
+/// `Option<Address>` on `ProofRecord::issuer` does NOT make a record written
+/// before that field existed readable. Soroban's derived struct decoding
+/// unpacks the stored map by exact field count (`map_unpack_to_slice` errors
+/// if the map has a different number of entries than the current struct has
+/// fields) before it ever gets to per-field `Option`/`Void` handling — a
+/// missing *key* is not the same as a present key with a `Void` value.
+/// `Option` only lets `issuer` be explicitly absent within an
+/// already-current-shape (5-entry) record. Redeploying this contract over
+/// existing stored proofs therefore still requires a real migration; without
+/// one, holders with pre-existing proofs must re-submit them.
+#[test]
+fn legacy_record_missing_issuer_key_fails_to_read() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    let result = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(result.is_err());
+}
+
+// ── migrate_record tests ─────────────────────────────────────────────────────
+
+/// After `migrate_record` rewrites a 4-field legacy record into the current
+/// 5-field layout, `is_verified` reads it without panicking and returns the
+/// original data.
+#[test]
+fn migrate_record_makes_legacy_readable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Write a legacy 4-field record directly into the contract's storage.
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    // Before migration, reading as ProofRecord panics.
+    let before = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(before.is_err());
+
+    // Admin migrates.
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // After migration the record is readable.
+    let (valid, verified_at, expiry) =
+        h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+    assert_eq!(verified_at, 500);
+    assert_eq!(expiry, 1000);
+}
+
+/// A migrated record has `issuer = None` so it must be rejected under an
+/// active `trusted_issuers` filter.
+#[test]
+fn migrated_record_rejected_under_trusted_issuers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // Without a trusted_issuers filter the record is valid.
+    assert!(h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None)
+        .0);
+    assert!(h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+
+    // With a trusted_issuers filter the migrated record (issuer = None) is
+    // rejected — fails closed.
+    assert!(!h.registry.check_claim(
+        &holder,
+        &symbol_short!("kyc"),
+        &None,
+        &Some(vec![&env, h.issuer.clone()]),
+    ));
+    let (valid, _at, _expiry) = h.registry.is_verified(
+        &holder,
+        &symbol_short!("kyc"),
+        &Some(vec![&env, h.issuer.clone()]),
+    );
+    assert!(!valid);
+}
+
+/// Only the contract admin may call `migrate_record`.
+#[test]
+fn migrate_record_only_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&h.registry_id, || {
+        let key = DataKey::Proof(holder.clone(), symbol_short!("kyc"));
+        let legacy = LegacyProofRecord {
+            verified_at: 500,
+            expiry: 1000,
+            threshold: None,
+            revoked: false,
+        };
+        env.storage().persistent().set(&key, &legacy);
+    });
+
+    // Call with no auth — must fail.
+    let res = h
+        .registry
+        .mock_auths(&[])
+        .try_migrate_record(&holder, &symbol_short!("kyc"));
+    assert!(res.is_err());
+
+    // Verify the legacy record is still unreadable (migration did NOT happen).
+    let after = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(after.is_err());
+}
+
+/// Calling `migrate_record` on an already-migrated (5-field) record is a
+/// no-op — the call succeeds without error.
+#[test]
+fn migrate_record_idempotent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    // Submit a proof normally — this writes a 5-field current-format record.
+    submit(&env, &h, &holder, 1000);
+    assert!(h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None)
+        .0);
+
+    // Migrate on an already-current record — must succeed (no-op).
+    h.registry.migrate_record(&holder, &symbol_short!("kyc"));
+
+    // Record is still valid and unchanged.
+    let (valid, _at, expiry) =
+        h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    assert!(valid);
+    assert_eq!(expiry, 1000);
+}
+
+/// Calling `migrate_record` for a holder that has no stored proof must fail
+/// with `ProofNotFound`.
+#[test]
+fn migrate_record_no_proof_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let res = h
+        .registry
+        .try_migrate_record(&holder, &symbol_short!("kyc"));
     assert!(res.is_err());
 }

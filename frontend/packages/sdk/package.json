@@ -33,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "docs:api": "typedoc",
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
@@ -46,6 +47,11 @@
   "devDependencies": {
     "@stellar/stellar-sdk": "^13.3.0",
     "tsup": "^8.5.1",
+    "typedoc": "^0.28.20",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "issuer-registry": "link:../issuer-registry",
+    "proof-registry": "link:../proof-registry"
   }
 }
