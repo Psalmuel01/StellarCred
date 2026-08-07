@@ -24,17 +24,20 @@ const BALANCE_TTL: u32 = 120 * DAY_IN_LEDGERS;
 /// exported wasm symbols.
 #[contractclient(name = "RegistryClient")]
 pub trait RegistryInterface {
-    fn is_verified(
+    fn check_claim(
         env: Env,
         holder: Address,
         credential_type: Symbol,
+        min_threshold: Option<u64>,
         trusted_issuers: Option<Vec<Address>>,
-    ) -> (bool, u64, u64);
+    ) -> bool;
 }
 
 #[contracttype]
 pub enum DataKey {
     Registry,
+    RequiredType,
+    MinThreshold,
     Balance(Address),
 }
 
@@ -54,11 +57,13 @@ pub struct GatedPool;
 #[contractimpl]
 impl GatedPool {
     /// `registry` is the deployed ProofRegistry contract address.
-    pub fn __constructor(env: Env, registry: Address) {
+    pub fn __constructor(env: Env, registry: Address, required_type: Symbol, min_threshold: Option<u64>) {
         env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage().instance().set(&DataKey::RequiredType, &required_type);
+        env.storage().instance().set(&DataKey::MinThreshold, &min_threshold);
     }
 
-    /// Deposit `amount`. Requires a currently-valid KYC proof for `caller`.
+    /// Deposit `amount`. Requires a currently-valid proof for the configured claim.
     pub fn deposit(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -66,7 +71,12 @@ impl GatedPool {
         }
 
         let registry = RegistryClient::new(&env, &Self::registry(&env));
-        let (verified, _at, _expiry) = registry.is_verified(&caller, &symbol_short!("kyc"), &None);
+        let verified = registry.check_claim(
+            &caller,
+            &Self::required_type(&env),
+            &Self::min_threshold(&env),
+            &None,
+        );
         if !verified {
             panic_with_error!(&env, Error::NotKycVerified);
         }
@@ -96,6 +106,10 @@ impl GatedPool {
         Self::registry(&env)
     }
 
+    pub fn gate(env: Env) -> (Symbol, Option<u64>) {
+        (Self::required_type(&env), Self::min_threshold(&env))
+    }
+
     fn balance_of(env: &Env, account: &Address) -> i128 {
         env.storage()
             .persistent()
@@ -115,6 +129,20 @@ impl GatedPool {
         env.storage()
             .instance()
             .get(&DataKey::Registry)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn required_type(env: &Env) -> Symbol {
+        env.storage()
+            .instance()
+            .get(&DataKey::RequiredType)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn min_threshold(env: &Env) -> Option<u64> {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinThreshold)
             .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
     }
 }

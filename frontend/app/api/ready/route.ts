@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { RPC_URL, CONTRACTS } from "../../../lib/stellar";
+import { env } from "../../../lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,7 @@ async function checkRpc(): Promise<DependencyStatus> {
 }
 
 function checkSigner(): SignerStatus {
-  if (!process.env.ISSUER_PRIVATE_KEY) {
+  if (!env.ISSUER_PRIVATE_KEY) {
     return {
       status: "error",
       message: "ISSUER_PRIVATE_KEY not set — signing with the public demo issuer key",
@@ -60,10 +61,14 @@ function checkContracts(): DependencyStatus {
 }
 
 function checkPersona(): DependencyStatus {
-  if (!process.env.PERSONA_API_KEY) {
+  if (!env.PERSONA_API_KEY) {
     return { status: "ok", message: "not configured (demo mode)" };
   }
-  if (!process.env.PERSONA_KYC_TEMPLATE_ID) {
+  // PERSONA_KYC_TEMPLATE_ID is already enforced at startup when PERSONA_API_KEY
+  // is set (see lib/env.ts), so reaching here with PERSONA_API_KEY set means
+  // it's present — this branch is unreachable in practice but kept as a
+  // defensive fallback in case env validation is ever bypassed.
+  if (!env.PERSONA_KYC_TEMPLATE_ID) {
     return { status: "error", message: "PERSONA_KYC_TEMPLATE_ID not set" };
   }
   return { status: "ok" };

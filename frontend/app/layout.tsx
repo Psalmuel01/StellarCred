@@ -7,6 +7,7 @@ import { WalletProvider } from "@/lib/wallet-context";
 import { LocaleProvider } from "@/lib/locale-context";
 import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
+import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 
 const body = Inter({
   subsets: ["latin"],
@@ -37,34 +38,18 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const themeDetectionScript = `
-    (function () {
-      const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      let savedTheme = null;
-      let theme = 'dark'; 
-      
-       try {
-      savedTheme = localStorage.getItem('theme');
-    } catch (e) {
-    }
-      if (savedTheme === 'light' || (!savedTheme && !systemPrefersDark)) {
-        theme = 'light';
-      }
-      
-      document.documentElement.setAttribute('data-theme', theme);
-    })();
-  `;
   return (
     <html
       lang="en"
       className={`${body.variable} ${display.variable} ${mono.variable}`}
-      data-theme="light"
+      // Omit `data-theme` so the blocking boot script owns first paint
+      // (avoids flashing the wrong palette before hydration).
       suppressHydrationWarning
     >
       <head>
         <script
           id="theme-detection"
-          dangerouslySetInnerHTML={{ __html: themeDetectionScript }}
+          dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
       <body>

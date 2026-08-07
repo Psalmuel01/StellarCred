@@ -5,6 +5,7 @@
 // in-circuit). Dates are days since the Unix epoch.
 
 use dep::credential_lib;
+use dep::poseidon::poseidon2::Poseidon2;
 
 fn main(
     // private
@@ -74,14 +75,14 @@ fn main(
     assert(current_date >= date_of_birth + threshold_years * 365);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package age_proof
 
 global AGE_ZERO_SIG: [u8; 64] = [0; 64];
 global AGE_ZERO_X: [u8; 32]   = [0; 32];
 global AGE_ZERO_Y: [u8; 32]   = [0; 32];
 
-// ── Reject paths ─────────────────────────────────────────────────────────────
+// --- Reject paths --------------------------------------------------------
 
 // Commitment does not match the Poseidon2 hash of (date_of_birth, salt).
 #[test(should_fail)]
@@ -102,7 +103,7 @@ fn test_wrong_commitment_rejected() {
 // but the conceptual test is age below threshold.
 #[test(should_fail)]
 fn test_age_below_threshold_rejected() {
-    // dob = current_date - 10 years → age 10 < threshold 18
+    // dob = current_date - 10 years; age 10 < threshold 18
     let dob: u64          = 20240615 - 10 * 365;
     let current: u64      = 20240615;
     let threshold: u64    = 18;
@@ -110,11 +111,11 @@ fn test_age_below_threshold_rejected() {
     main(dob, 0x1, AGE_ZERO_SIG, bad_commitment, AGE_ZERO_X, AGE_ZERO_Y, current, threshold);
 }
 
-// current_date < date_of_birth — invalid input (person "not born yet").
+// current_date < date_of_birth; invalid input (person "not born yet").
 #[test(should_fail)]
 fn test_current_date_before_dob_rejected() {
     let dob: u64       = 20300101;
-    let current: u64   = 20240101; // current_date < dob → underflow assertion
+    let current: u64   = 20240101; // current_date < dob; underflow assertion
     let bad_commitment = 0x3;
     main(dob, 0x1, AGE_ZERO_SIG, bad_commitment, AGE_ZERO_X, AGE_ZERO_Y, current, 18);
 }

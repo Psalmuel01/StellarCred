@@ -17,3 +17,6 @@ benchmark_results.txt
 
 # Proptest regression files
 proptest-regressions/
+
+# macOS
+.DS_Store

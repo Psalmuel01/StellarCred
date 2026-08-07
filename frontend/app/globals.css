@@ -191,6 +191,14 @@ p {
   color: var(--faint);
 }
 
+.expiry-warn {
+  color: var(--warn) !important;
+}
+
+.expiry-expired {
+  color: var(--danger) !important;
+}
+
 .accent {
   color: var(--accent);
 }

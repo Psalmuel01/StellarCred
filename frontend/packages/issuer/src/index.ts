@@ -40,6 +40,8 @@ export interface ClaimParams {
   threshold_years?: string;
   threshold?: string;
   restricted?: string[];
+  /** "0" = denylist/block (default), "1" = allowlist/allow */
+  mode?: string;
 }
 
 export interface Credential {
@@ -213,7 +215,7 @@ function buildClaimLabel(type: CredentialType, claimParams?: ClaimParams): strin
       return `employed, seniority ≥ ${t} yrs`;
     }
     case "jurisdiction":
-      return "country not restricted";
+      return claimParams?.mode === "1" ? "country in allowed list" : "country not restricted";
     case "kyc":
     default:
       return "identity verified";

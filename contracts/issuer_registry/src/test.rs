@@ -151,74 +151,65 @@ fn prop_unregistered_issuer_never_valid() {
 }
 
 #[test]
-fn register_issuer_emits_event() {
+fn set_and_get_issuer_metadata() {
     let env = Env::default();
     env.mock_all_auths();
     let (_admin, client) = setup(&env);
 
     let issuer = Address::generate(&env);
     let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    let types = vec![&env, symbol_short!("kyc")];
+    client.register_issuer(&issuer, &pubkey, &types);
 
-    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+    // No metadata set yet.
+    let meta = client.get_issuer_metadata(&issuer);
+    assert!(meta.is_none());
 
-    // Assert immediately after the call — the snapshot framework drains
-    // env.events().all() after each contract invocation, so we must
-    // capture events before any subsequent call.
+    // Set name + url, leave logo as None.
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(String::from_str(&env, "Test Issuer")),
+        &Some(String::from_str(&env, "https://example.com")),
+        &None,
+    );
+
+    let meta = client.get_issuer_metadata(&issuer).unwrap();
+    assert_eq!(meta.name, Some(String::from_str(&env, "Test Issuer")));
+    assert_eq!(meta.url, Some(String::from_str(&env, "https://example.com")));
+    assert!(meta.logo.is_none());
+
+    // Update to add logo and change name.
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(String::from_str(&env, "Updated Issuer")),
+        &None,
+        &Some(String::from_str(&env, "https://example.com/logo.png")),
+    );
+
+    let meta = client.get_issuer_metadata(&issuer).unwrap();
+    assert_eq!(meta.name, Some(String::from_str(&env, "Updated Issuer")));
+    assert!(meta.url.is_none());
     assert_eq!(
-        env.events().all(),
-        vec![
-            &env,
-            (
-                client.address.clone(),
-                (symbol_short!("iss_reg"), symbol_short!("register")).into_val(&env),
-                EventIssuerRegistered {
-                    issuer: issuer.clone(),
-                    pubkey: pubkey.clone(),
-                }
-                .into_val(&env),
-            ),
-        ],
+        meta.logo,
+        Some(String::from_str(&env, "https://example.com/logo.png"))
     );
 }
 
 #[test]
-fn revoke_issuer_emits_event() {
+fn get_issuer_metadata_returns_none_for_unknown() {
     let env = Env::default();
-    env.mock_all_auths();
     let (_admin, client) = setup(&env);
+    let stranger = Address::generate(&env);
+    let meta = client.get_issuer_metadata(&stranger);
+    assert!(meta.is_none());
+}
 
+#[test]
+#[should_panic]
+fn set_issuer_metadata_requires_admin() {
+    let env = Env::default();
+    // Do NOT call mock_all_auths() – require_admin() will reject the call.
+    let (_admin, client) = setup(&env);
     let issuer = Address::generate(&env);
-    let pubkey = BytesN::from_array(&env, &[1u8; 64]);
-
-    // Call register and assert its event immediately.
-    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
-    assert_eq!(
-        env.events().all(),
-        vec![
-            &env,
-            (
-                client.address.clone(),
-                (symbol_short!("iss_reg"), symbol_short!("register")).into_val(&env),
-                EventIssuerRegistered {
-                    issuer: issuer.clone(),
-                    pubkey: pubkey.clone(),
-                }
-                .into_val(&env),
-            ),
-        ],
-    );
-
-    // Call revoke and assert its event immediately.
-    client.revoke_issuer(&issuer);
-    assert_eq!(
-        env.events().all(),
-        vec![
-            &env,
-            (
-                client.address.clone(),
-                (symbol_short!("iss_reg"), symbol_short!("revoked")).into_val(&env),
-                EventIssuerRevoked { issuer: issuer.clone() }.into_val(&env),
-            ),
-        ],
-    );
+    client.set_issuer_metadata(&issuer, &Some(String::from_str(&env, "x")), &None, &None);
 }

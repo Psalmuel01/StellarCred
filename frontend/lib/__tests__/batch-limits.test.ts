@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 // ESM — and none of these tests reach a signing path anyway.
 vi.mock("../wallet", () => ({ signTx: vi.fn() }));
 
-import { MAX_BATCH_SIZE, submitProofsBatch, type ProofSubmissionParams } from "../contracts";
+import { MAX_BATCH_SIZE, submitProofs, type ProofSubmissionParams } from "../contracts";
 
 // These guards run before any wallet or RPC work, so they can be exercised
 // without a configured registry or a connected wallet.
@@ -18,9 +18,9 @@ const submission = (credentialType: string): ProofSubmissionParams => ({
 });
 
 const submit = (types: string[]) =>
-  submitProofsBatch({ holder: "GHOLDER", submissions: types.map(submission) });
+  submitProofs({ holder: "GHOLDER", submissions: types.map(submission) });
 
-describe("submitProofsBatch pre-flight limits", () => {
+describe("submitProofs pre-flight limits", () => {
   it("mirrors the contract's MAX_BATCH_SIZE", () => {
     expect(MAX_BATCH_SIZE).toBe(5);
   });

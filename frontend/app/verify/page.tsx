@@ -77,7 +77,7 @@ function VerifyInner() {
   // Protocol-supplied proof parameters. These flow into the issued credential
   // so the witness route can use them at prove time instead of hardcoded values.
   const minThresholdParam = searchParams.get("min_threshold") ?? undefined;
-  const claimParamsFromUrl = {
+    const claimParamsFromUrl = {
     threshold_years:
       searchParams.get("threshold_years") ??
       (claimParam === "age" ? minThresholdParam : undefined),
@@ -90,8 +90,8 @@ function VerifyInner() {
         : undefined),
     restricted:
       searchParams.get("restricted")?.split(",").filter(Boolean) ?? undefined,
+    mode: searchParams.get("mode") ?? undefined,
   };
-
   const [selected, setSelected] = useState<CredentialType | null>(
     requiredClaim ?? TYPES[0]?.[0] ?? null,
   );
@@ -118,6 +118,10 @@ function VerifyInner() {
   const [done, setDone] = useState(false);
   const [scanning, setScanning] = useState(false);
   const justIssuedClaims = useRef<string[]>([]);
+  // Jurisdiction mode: "0" = denylist (block), "1" = allowlist (allow)
+  const [jurisdictionMode, setJurisdictionMode] = useState<string>(
+    claimParamsFromUrl.mode ?? "0",
+  );
 
   // A protocol can display this scanned code instead of a clickable link
   // (e.g. on a kiosk or a screen the phone doesn't have a direct link to) —
@@ -293,7 +297,7 @@ function VerifyInner() {
   }, [personaInquiryId, address]);
 
   function setAttr(key: string, val: string) {
-    setAttributes((a) => ({ ...a, [key]: val }));
+    setAttributes((a: Record<string, string>) => ({ ...a, [key]: val }));
   }
 
   function redirectAfterIssue() {
@@ -392,7 +396,10 @@ function VerifyInner() {
         issuerName: "StellarCred Authority",
         expiry,
         attributes,
-        claimParams: claimParamsFromUrl,
+        claimParams: {
+          ...claimParamsFromUrl,
+          ...(selected === "jurisdiction" ? { mode: jurisdictionMode } : {}),
+        },
       };
       const res = await fetch("/api/issue", {
         method: "POST",
@@ -909,11 +916,30 @@ function VerifyInner() {
                           )}
                         </div>
                       )}
-                      {on && key === "jurisdiction" && (
+                     {on && key === "jurisdiction" && (
                         <div
                           style={{ marginTop: "0.75rem" }}
                           onClick={(e) => e.stopPropagation()}
                         >
+                          <label className="field-label" style={{ marginBottom: "0.35rem" }}>Mode</label>
+                          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${jurisdictionMode === "0" ? "btn-primary" : "btn-outline"}`}
+                              style={{ flex: 1, fontSize: "0.78rem", padding: "0.4rem 0.75rem" }}
+                              onClick={() => setJurisdictionMode("0")}
+                            >
+                              Block countries
+                            </button>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${jurisdictionMode === "1" ? "btn-primary" : "btn-outline"}`}
+                              style={{ flex: 1, fontSize: "0.78rem", padding: "0.4rem 0.75rem" }}
+                              onClick={() => setJurisdictionMode("1")}
+                            >
+                              Allow countries
+                            </button>
+                          </div>
                           <label className="field-label" htmlFor="attr-country-code">{m.attribute}</label>
                           <select
                             id="attr-country-code"
@@ -928,6 +954,11 @@ function VerifyInner() {
                               </option>
                             ))}
                           </select>
+                          <p className="faint" style={{ fontSize: "0.72rem", margin: "0.35rem 0 0" }}>
+                            {jurisdictionMode === "0"
+                              ? "Proves your country is NOT in the restricted list — your country is never revealed on-chain."
+                              : "Proves your country IS in the allowed list — your country is never revealed on-chain."}
+                          </p>
                         </div>
                       )}
                       {on && key === "employment" && (

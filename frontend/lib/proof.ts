@@ -167,14 +167,17 @@ export async function destroyAllBackends(): Promise<void> {
 
 // Stage 1 — server computes the witness (Noir circuit execution).
 // Exported so ProofFlow can report progress between stages.
+// When signal is provided, fetch abort cancels the server-side witness computation.
 export async function computeWitness(
   type: CredentialType,
   credential: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const res = await fetch("/api/witness", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type, credential }),
+    signal,
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => res.statusText);
@@ -190,7 +193,6 @@ export async function computeWitness(
 
 // Stage 2 — browser runs UltraHonk over the witness.
 // Exported so ProofFlow can call it after stage 1 completes.
-//
 // Reuses the cached backend for `type` (see getBackend above) if one is
 // already warm or warming, constructing one on demand otherwise. Unlike the
 // original implementation, this deliberately does NOT destroy the backend
@@ -199,27 +201,42 @@ export async function computeWitness(
 // initialized wasm instance instead of paying construction cost again.
 // Destruction is the cache owner's responsibility (see destroyBackend /
 // destroyAllBackends, called from use-warm-prover.ts on unmount).
+// When signal is provided, aborting it terminates the WASM worker mid-proof.
 export async function proveWithBackend(
   type: CredentialType,
   witness: Uint8Array,
+  signal?: AbortSignal,
   onStep?: (step: "circuit" | "proof") => void,
 ): Promise<GeneratedProof> {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   if (onStep) onStep("circuit");
   const backend = await getBackend(type);
   if (onStep) onStep("proof");
-  const { proof, publicInputs } = await backend.generateProof(witness, {
-    keccak: true,
-  });
-  return { proof, publicInputs: fieldsToBytes(publicInputs) };
+
+  // Abort destroys the WASM worker, causing generateProof() to reject.
+  const abort = () => destroyBackend(type);
+  signal?.addEventListener("abort", abort);
+  try {
+    const { proof, publicInputs } = await backend.generateProof(witness, {
+      keccak: true,
+    });
+    return { proof, publicInputs: fieldsToBytes(publicInputs) };
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 // Convenience wrapper — runs both stages in sequence.
 export async function generateProof(
   type: CredentialType,
   credential: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<GeneratedProof> {
-  const witness = await computeWitness(type, credential);
-  return proveWithBackend(type, witness);
+  const witness = await computeWitness(type, credential, signal);
+  return proveWithBackend(type, witness, signal);
 }
 
 // ── Aggregate proof generation ───────────────────────────────────────────────

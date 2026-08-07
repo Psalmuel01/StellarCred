@@ -12,9 +12,9 @@ fn main(value: Field, salt: Field) -> pub Field {
     Poseidon2::hash([value, salt], 2)
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package commit
-// The commit circuit has no signature — all tests are fully deterministic.
+// The commit circuit has no signature; all tests are fully deterministic.
 
 // Poseidon2 is deterministic: same inputs must always yield the same commitment.
 #[test]

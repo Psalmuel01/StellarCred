@@ -46,6 +46,8 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
   const [showRaw, setShowRaw] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     prevFocusRef.current = document.activeElement as HTMLElement;
@@ -58,12 +60,15 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === "Tab") {
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
+        const current = modal!.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        const first = current[0];
+        const last = current[current.length - 1];
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last.focus();
@@ -79,11 +84,21 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
       document.removeEventListener("keydown", handleKeyDown);
       prevFocusRef.current?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   const ttlSecs = parseTtlSecs(c.expiry);
   const expiryDate = c.issuedAt + ttlSecs;
-  const rawJson = JSON.stringify(c, null, 2);
+  const rawJson = JSON.stringify({
+    type: c.type,
+    title: c.title,
+    claim: c.claim,
+    issuer: c.issuer,
+    issuerId: c.issuerId,
+    commitment: c.commitment,
+    issuedAt: c.issuedAt,
+    expiry: c.expiry,
+    ...(c.claimParams ? { claimParams: c.claimParams } : {}),
+  }, null, 2);
 
   const fields: Array<{ label: string; value: string }> = [
     { label: "Type", value: c.title },
@@ -115,7 +130,6 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
         justifyContent: "center",
         padding: "1rem",
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         style={{
@@ -124,6 +138,7 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
           background: "rgba(0,0,0,0.6)",
           backdropFilter: "blur(6px)",
         }}
+        onClick={onClose}
       />
 
       <div
@@ -141,6 +156,7 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
           overflowY: "auto",
           padding: "1.75rem",
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="between" style={{ marginBottom: "1.25rem" }}>
           <span className="eyebrow">Credential details</span>

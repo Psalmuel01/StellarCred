@@ -35,8 +35,8 @@ export function CredentialCard({
         /* gradient border via background on wrapper */
         padding: "1px",
         borderRadius: "20px",
-        background: "linear-gradient(145deg, rgba(62,207,142,0.35) 0%, rgba(255,255,255,0.06) 40%, rgba(62,207,142,0.15) 100%)",
-        boxShadow: "0 0 60px rgba(62,207,142,0.08), 0 24px 64px rgba(0,0,0,0.5)",
+        background: "linear-gradient(145deg, color-mix(in srgb, var(--accent) 35%, transparent) 0%, var(--border-strong) 40%, color-mix(in srgb, var(--accent) 15%, transparent) 100%)",
+        boxShadow: "0 0 60px color-mix(in srgb, var(--accent) 8%, transparent), 0 24px 64px rgba(0,0,0,0.15)",
       }}
     >
       {/* glow orb behind card */}
@@ -49,7 +49,7 @@ export function CredentialCard({
           width: 200,
           height: 200,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(62,207,142,0.12) 0%, transparent 70%)",
+          background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 15%, transparent) 0%, transparent 70%)",
           pointerEvents: "none",
           filter: "blur(20px)",
           zIndex: 0,
@@ -61,7 +61,7 @@ export function CredentialCard({
           position: "relative",
           zIndex: 1,
           borderRadius: "19px",
-          background: "linear-gradient(180deg, #0e1014 0%, #0a0a10 100%)",
+          background: "var(--bg-raised)",
           overflow: "hidden",
           padding: "1.5rem",
         }}
@@ -74,7 +74,7 @@ export function CredentialCard({
             left: 0,
             right: 0,
             height: "1px",
-            background: "linear-gradient(90deg, transparent, rgba(62,207,142,0.4) 40%, rgba(255,255,255,0.15) 60%, transparent)",
+            background: "linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 40%, transparent) 40%, var(--border-strong) 60%, transparent)",
           }}
         />
 
@@ -104,7 +104,7 @@ export function CredentialCard({
 
         <div
           style={{
-            background: "rgba(255,255,255,0.025)",
+            background: "var(--bg-soft)",
             border: "1px solid var(--border)",
             borderRadius: "var(--radius)",
             overflow: "hidden",

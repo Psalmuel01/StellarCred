@@ -13,6 +13,7 @@ import {
   stripSensitiveFields,
   resolveRequestId,
 } from "../../../lib/logger";
+import { env } from "../../../lib/env";
 import { fetchPlaidBalance } from "../../../lib/plaid";
 import {
   idempotencyGet,
@@ -32,12 +33,12 @@ import {
 // Falls back to a deterministic demo key so the app runs without one set —
 // this fallback is intentionally app-specific and not part of @stellarcred/issuer.
 const DEMO_SK_HEX =
-  process.env.ISSUER_PRIVATE_KEY ||
+  env.ISSUER_PRIVATE_KEY ||
   Buffer.from(
     sha256(new TextEncoder().encode("stellarcred-demo-issuer")),
   ).toString("hex");
 
-if (!process.env.ISSUER_PRIVATE_KEY) {
+if (!env.ISSUER_PRIVATE_KEY) {
   logger.warn(
     stripSensitiveFields({ event: "demo_issuer_key_active" }),
     "USING PUBLIC DEMO ISSUER KEY — not for production. Set ISSUER_PRIVATE_KEY to use a real issuer key.",
@@ -46,8 +47,7 @@ if (!process.env.ISSUER_PRIVATE_KEY) {
 
 const issuer = new IssuerClient({ privateKey: DEMO_SK_HEX });
 const SIM_ACCOUNT =
-  process.env.NEXT_PUBLIC_ISSUER_ADDRESS ??
-  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  env.NEXT_PUBLIC_ISSUER_ADDRESS ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 // The server's own public key (x || y, 64 bytes) — derived from the same key
 // `issuer` signs with, via the package's publicKey(), not re-derived locally.
@@ -74,7 +74,7 @@ const PERSONA_VERSION = "2023-01-05";
 
 function personaHeaders() {
   return {
-    Authorization: `Bearer ${process.env.PERSONA_API_KEY}`,
+    Authorization: `Bearer ${env.PERSONA_API_KEY}`,
     "Content-Type": "application/json",
     "Persona-Version": PERSONA_VERSION,
   };
@@ -187,6 +187,7 @@ async function resolvePersonaKYC(inquiryId: string): Promise<{
   };
 }
 
+// Resolved Plaid conflict
 // readonly CredentialType[] widened to string[] so .includes() accepts any
 // user-supplied string during validation, before it's known to be valid.
 const VALID_TYPES: readonly string[] = CREDENTIAL_TYPES;
@@ -416,7 +417,7 @@ async function executeRequest(
     );
   }
 
-  if (process.env.NEXT_PUBLIC_ISSUER_REGISTRY_ID) {
+  if (env.NEXT_PUBLIC_ISSUER_REGISTRY_ID) {
     const registered = await fetchIssuerPubkey(issuerId, SIM_ACCOUNT);
     if (!registered) {
       return sendResponse(
@@ -463,7 +464,7 @@ async function executeRequest(
   // If PERSONA_API_KEY is set but PERSONA_KYC_TEMPLATE_ID is missing → 500.
   const needsIdentity = credentialTypes.includes("kyc");
   if (needsIdentity) {
-    if (!process.env.PERSONA_API_KEY) {
+    if (!env.PERSONA_API_KEY) {
       logger.info(
         stripSensitiveFields({
           event: "provider_call",
@@ -475,7 +476,11 @@ async function executeRequest(
         }),
       );
     } else {
-      const templateId = process.env.PERSONA_KYC_TEMPLATE_ID;
+      // lib/env.ts already requires PERSONA_KYC_TEMPLATE_ID whenever
+      // PERSONA_API_KEY is set, so this branch is unreachable in practice —
+      // the misconfiguration this used to catch is now a startup failure
+      // instead of a per-request 500. Kept as defense-in-depth.
+      const templateId = env.PERSONA_KYC_TEMPLATE_ID;
       if (!templateId) {
         return sendResponse(
           NextResponse.json(
@@ -488,7 +493,7 @@ async function executeRequest(
         );
       }
       const baseUrl =
-        process.env.NEXT_PUBLIC_STELLARCRED_BASE_URL ?? req.nextUrl.origin;
+        env.NEXT_PUBLIC_STELLARCRED_BASE_URL ?? req.nextUrl.origin;
       if (!personaInquiryId) {
         // First request — create a Persona inquiry and ask the frontend to redirect.
         logger.info(

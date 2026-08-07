@@ -5,6 +5,7 @@
 // Unlocks regulated DeFi and private-market access on Stellar.
 
 use dep::credential_lib;
+use dep::poseidon::poseidon2::Poseidon2;
 
 fn main(
     // private
@@ -21,7 +22,7 @@ fn main(
     assert(net_worth >= threshold);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// --- Tests ---------------------------------------------------------------
 // Run: nargo test --package accreditation_proof
 
 global ACC_ZERO_SIG: [u8; 64] = [0; 64];
@@ -33,7 +34,7 @@ fn test_wrong_commitment_rejected() {
     main(1500000, 0xbeef, ACC_ZERO_SIG, 0x1, ACC_ZERO_X, ACC_ZERO_Y, 1000000);
 }
 
-// net_worth < threshold — below accreditation threshold.
+// net_worth < threshold: below accreditation threshold.
 #[test(should_fail)]
 fn test_net_worth_below_threshold_rejected() {
     let net_worth: u64 = 999999;

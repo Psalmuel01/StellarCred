@@ -21,6 +21,16 @@ jobs:
       - run: npm install --save-dev @commitlint/cli @commitlint/config-conventional
       - name: Lint commits in PR
         run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Lint commits in PR
+        run: |
+          npx --yes -p @commitlint/cli -p @commitlint/config-conventional commitlint \
+            --from ${{ github.event.pull_request.base.sha }} \
+            --to ${{ github.event.pull_request.head.sha }} \
+            --verbose
 
   contracts:
     name: Contract tests & build
@@ -46,6 +56,36 @@ jobs:
             target
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
+
+      - name: Install Noir
+        shell: bash
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          export PATH="$HOME/.nargo/bin:$PATH"
+          noirup -v 1.0.0-beta.9
+
+      - name: Install Barretenberg
+        shell: bash
+        run: |
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/next/barretenberg/bbup/install | bash
+          export PATH="$HOME/.bb:$PATH"
+          source "$HOME/.bashrc" 2>/dev/null || true
+          bbup -v 0.87.0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate circuit fixtures
+        shell: bash
+        run: |
+          export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
+          bash ./circuits/scripts/build.sh
 
       - name: Build WASM artifacts
         # --locked ensures Cargo.lock is respected exactly (no silent dep upgrades).
@@ -81,6 +121,9 @@ jobs:
   frontend:
     name: Frontend typecheck & build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     defaults:
       run:
         working-directory: frontend
@@ -117,12 +160,65 @@ jobs:
           NEXT_PUBLIC_STELLAR_NETWORK: testnet
           NEXT_PUBLIC_RPC_URL: https://soroban-testnet.stellar.org
 
+      - name: Test frontend SDK
+        run: pnpm test
+
+      - name: Test theme helpers (node:test)
+        run: pnpm test:theme
+
       - name: Run issuer tests (incl. cross-boundary circuit test)
         run: pnpm --filter @stellarcred/issuer test
+
+  sdk-integration:
+    name: SDK integration tests (testnet)
+    runs-on: ubuntu-latest
+    # Needs the testnet fixture wallet and the deployed ProofRegistry ID as
+    # repo variables. Skipped entirely on forks where they are not configured
+    # (the suite also skips gracefully if they are unset at runtime).
+    if: vars.SC_TEST_WALLET != '' && vars.STELLARCRED_REGISTRY_ID != ''
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # @stellarcred/sdk is a standalone publish-only package — it is NOT part
+      # of the frontend pnpm workspace (pnpm-workspace.yaml), so it cannot be
+      # addressed with pnpm --filter. Its scripts are run from its own
+      # directory; pnpm resolves the shared toolchain from the workspace root.
+      - name: Typecheck SDK
+        working-directory: frontend/packages/sdk
+        run: pnpm typecheck
+
+      - name: Run integration tests
+        working-directory: frontend/packages/sdk
+        run: pnpm test:integration
+        env:
+          SC_TEST_WALLET: ${{ vars.SC_TEST_WALLET }}
+          STELLARCRED_REGISTRY_ID: ${{ vars.STELLARCRED_REGISTRY_ID }}
+          STELLARCRED_RPC_URL: ${{ vars.STELLARCRED_RPC_URL || 'https://soroban-testnet.stellar.org' }}
 
   a11y:
     name: Accessibility (axe-core)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     defaults:
       run:
         working-directory: frontend
@@ -146,7 +242,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.18.0
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -158,6 +254,28 @@ jobs:
 
       - name: Build
         run: pnpm build
+        env:
+          # Dummy values so the build doesn't error on missing env vars
+          NEXT_PUBLIC_PROOF_REGISTRY_ID: C000000000000000000000000000000000000000000000000000000000000001
+          NEXT_PUBLIC_ISSUER_REGISTRY_ID: C000000000000000000000000000000000000000000000000000000000000002
+          NEXT_PUBLIC_CREDENTIAL_VERIFIER_ID: C000000000000000000000000000000000000000000000000000000000000003
+          NEXT_PUBLIC_GATED_POOL_ID: C000000000000000000000000000000000000000000000000000000000000004
+          NEXT_PUBLIC_ISSUER_ADDRESS: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_RPC_URL: https://soroban-testnet.stellar.org
 
       - name: Run axe-core accessibility checks
         run: pnpm test:e2e
+
+      - name: Check bundle size budget
+        run: pnpm size
+
+      - name: Report bundle size on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: andresz1/size-limit-action@f7a56ece616db5bddde81de219695c920a8ae137
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          script: pnpm size --json
+          package_manager: pnpm
+          directory: frontend

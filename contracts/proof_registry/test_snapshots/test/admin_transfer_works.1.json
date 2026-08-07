@@ -92,7 +92,7 @@
               "function_name": "upgrade",
               "args": [
                 {
-                  "bytes": "71b1179d8f4f03ed1e4db094c42f307c46cf7c5f94c2382881a9adc46e7c145a"
+                  "bytes": "60bdf0e21a54d9fd3153c575624efd22e2962d221bceb3bc9098b06e12bf5fae"
                 }
               ]
             }
@@ -378,7 +378,7 @@
               "val": {
                 "contract_instance": {
                   "executable": {
-                    "wasm": "71b1179d8f4f03ed1e4db094c42f307c46cf7c5f94c2382881a9adc46e7c145a"
+                    "wasm": "60bdf0e21a54d9fd3153c575624efd22e2962d221bceb3bc9098b06e12bf5fae"
                   },
                   "storage": [
                     {
@@ -544,7 +544,7 @@
                     "symbol": "Wasm"
                   },
                   {
-                    "bytes": "71b1179d8f4f03ed1e4db094c42f307c46cf7c5f94c2382881a9adc46e7c145a"
+                    "bytes": "60bdf0e21a54d9fd3153c575624efd22e2962d221bceb3bc9098b06e12bf5fae"
                   }
                 ]
               }

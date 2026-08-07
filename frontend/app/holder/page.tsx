@@ -19,7 +19,6 @@ import {
   IconCloudUpload,
   IconStack2,
   IconInfoCircle,
-  IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
@@ -33,7 +32,7 @@ import { computeWitness, proveWithBackend } from "@/lib/proof";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
-  submitProofsBatch,
+  submitProofs,
   MAX_BATCH_SIZE,
   parseContractError,
   type ContractError,
@@ -77,6 +76,34 @@ function daysRemaining(cred: Credential): number {
   return Math.max(0, Math.ceil(secsLeft / 86_400));
 }
 
+import { useProofTimeline, addTimelineEvent } from "@/lib/useProofTimeline";
+import { Timeline } from "@/components/Timeline";
+import { IconHistory } from "@tabler/icons-react";
+
+// ── Credential expiry helpers ─────────────────────────────────────────────────
+
+function credExpiryTimestamp(cred: Credential): number {
+  return cred.issuedAt + credTtlSecs(cred);
+}
+
+function credIsExpired(cred: Credential): boolean {
+  return credExpiryTimestamp(cred) <= Math.floor(Date.now() / 1000);
+}
+
+function credExpiryWithinDays(cred: Credential, days: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const ts = credExpiryTimestamp(cred);
+  return ts > now && ts <= now + days * 86_400;
+}
+
+function formatExpiryDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 // ── Credential card ──────────────────────────────────────────────────────────
 
 function CredCard({
@@ -85,7 +112,6 @@ function CredCard({
   onProve,
   onRemove,
   onInspect,
-  onTransfer,
   isPreview,
   selection,
 }: {
@@ -94,7 +120,6 @@ function CredCard({
   onProve: () => void;
   onRemove: () => void;
   onInspect: () => void;
-  onTransfer?: () => void;
   isPreview?: boolean;
   /** Batch selection controls — omitted on cards that can't be batched. */
   selection?: {
@@ -106,6 +131,8 @@ function CredCard({
 }) {
   const status = proofStatus(c);
   const t = useTranslations("holder");
+  const { events } = useProofTimeline(c);
+  const [showHistory, setShowHistory] = useState(false);
 
   return (
     <div className="card" style={{ padding: "1rem 1.25rem" }}>
@@ -208,6 +235,42 @@ function CredCard({
             </div>
               <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
             )}
+            <div>
+              {c.issuer} · <span>{truncateHash(c.commitment)}</span>
+              {status === "proved" && (
+                <>
+                  {" · "}
+                  <span style={{ color: "var(--accent)", opacity: 0.75 }}>
+                    expires in {daysRemaining(c)}d
+                  </span>
+                  {c.provedTxHash && (
+                    <>
+                      {" · "}
+                      <a
+                        href={EXPLORER_TX(c.provedTxHash)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "inherit", display: "inline-flex", alignItems: "center", gap: "0.15rem" }}
+                      >
+                        {c.provedTxHash.slice(0, 6)}…<IconExternalLink size={10} />
+                      </a>
+                    </>
+                  )}
+                </>
+              )}
+              {status === "expired" && (
+                <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
+              )}
+            </div>
+            <div style={{ marginTop: "0.1rem" }}>
+              {credIsExpired(c) ? (
+                <span style={{ color: "var(--danger)", fontWeight: 500 }}>Expired</span>
+              ) : (
+                <span style={{ color: credExpiryWithinDays(c, 30) ? "var(--warn)" : "var(--faint)" }}>
+                  Expires {formatExpiryDate(credExpiryTimestamp(c))}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -223,6 +286,8 @@ function CredCard({
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address}
             title={!address ? t("connectWalletToProve") : undefined}
+            disabled={!address || credIsExpired(c)}
+            title={!address ? "Connect a wallet first" : credIsExpired(c) ? "This credential has expired" : undefined}
             onClick={onProve}
           >
             {status === "proved"  ? t("reprove") :
@@ -238,16 +303,14 @@ function CredCard({
           >
             <IconQrcode size={13} />
           </button>
-          {onTransfer && (
-            <button
-              className="btn btn-ghost btn-sm"
-              title="Transfer to another device"
-              onClick={onTransfer}
-              style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
-            >
-              <IconQrcode size={13} />
-            </button>
-          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            title="History"
+            onClick={() => setShowHistory(!showHistory)}
+            style={{ padding: "0.3rem 0.4rem", color: showHistory ? "var(--accent)" : "var(--faint)" }}
+          >
+            <IconHistory size={13} />
+          </button>
           <button
             className="btn btn-ghost btn-sm"
             title="Remove"
@@ -258,6 +321,10 @@ function CredCard({
           </button>
         </div>
       </div>
+      
+      {showHistory && (
+        <Timeline events={events} />
+      )}
     </div>
   );
 }
@@ -322,7 +389,6 @@ function HolderInner() {
   useEffect(() => {
     const payload = searchParams.get(IMPORT_PARAM);
     if (!payload) return;
-    setImportPayload(payload);
     router.replace("/holder");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -491,7 +557,6 @@ function HolderInner() {
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
                   onInspect={() => setDetailCred(c)}
-                  onTransfer={() => {}}
                   isPreview={isPreview}
                   selection={
                     canBatch
@@ -572,7 +637,6 @@ function HolderInner() {
                   onProve={() => setView({ kind: "single", cred: c })}
                   onRemove={() => setCreds(removeCredential(c.commitment))}
                   onInspect={() => setDetailCred(c)}
-                  onTransfer={() => {}}
                   isPreview={isPreview}
                 />
               ))}
@@ -607,13 +671,6 @@ function HolderInner() {
                 <IconPlus size={14} />
                 Import credential JSON
               </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setImporting(true)}
-              >
-                <IconQrcode size={14} />
-                Scan QR
-              </button>
             </div>
           )}
         </div>
@@ -621,10 +678,7 @@ function HolderInner() {
 
       {detailCred && (
         <CredentialDetailModal
-          credential={{
-            ...detailCred,
-            claimParams: detailCred.claimParams as Record<string, unknown> | undefined,
-          }}
+          credential={detailCred as any}
           onClose={() => setDetailCred(null)}
         />
       )}
@@ -769,6 +823,10 @@ function ProofProgress({ steps }: { steps: ProgressStep[] }) {
 
 // ── ProofFlow ─────────────────────────────────────────────────────────────────
 
+const ESTIMATES: Record<string, { range: string; expected: number; max: number }> = {
+  default: { range: "~10–20 seconds", expected: 15, max: 20 },
+};
+
 type Stage = "witness" | "circuit" | "proof" | "proving" | "generated" | "submitting" | "confirmed" | "error";
 
 function ProofFlow({
@@ -793,51 +851,64 @@ function ProofFlow({
   const t = useTranslations("holder");
   const toast = useToast();
   const { networkMismatch } = useWallet();
+  const { addEvent } = useProofTimeline(cred);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
+
     toast.info(`Generating proof for ${cred.title}…`);
     (async () => {
       try {
+        const start = Date.now();
+        timerRef.current = setInterval(
+          () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+          1000,
+        );
+        // Stage 1: witness (server)
         setStage("witness");
         const witness = await computeWitness(
           cred.type,
           cred as unknown as Record<string, unknown>,
+          signal,
         );
-        if (cancelled) return;
+        if (signal.aborted) return;
 
-        const start = Date.now();
+        // Stage 2: prove (browser WASM)
+        setStage("proving");
+        const proveStart = Date.now();
         timerRef.current = setInterval(
-          () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+          () => setElapsed(Math.floor((Date.now() - proveStart) / 1000)),
           1000,
         );
 
         const result = await proveWithBackend(
           cred.type,
           witness,
+          signal,
           (step) => {
-            if (!cancelled) setStage(step);
+            if (!signal.aborted) setStage(step);
           }
         );
         clearInterval(timerRef.current!);
-        if (cancelled) return;
+        if (signal.aborted) return;
 
         setProof(result);
         setStage("generated");
+        addEvent("generated");
         toast.success(`Proof generated for ${cred.title}`);
       } catch (e) {
         clearInterval(timerRef.current!);
-        if (!cancelled) {
-          const parsed = parseContractError((e as Error).message);
-          setError(parsed);
-          setErrorPhase("proving");
-          setStage("error");
-          toast.error(`Proof generation failed: ${parsed.friendly}`);
-        }
+        if (signal.aborted) return;
+        const parsed = parseContractError((e as Error).message);
+        setError(parsed);
+        setErrorPhase("proving");
+        setStage("error");
+        toast.error(`Proof generation failed: ${parsed.friendly}`);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
       clearInterval(timerRef.current!);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -846,6 +917,7 @@ function ProofFlow({
   async function onSubmit() {
     if (!proof || networkMismatch) return;
     setStage("submitting");
+    addEvent("submitted");
     toast.info(`Submitting proof for ${cred.title} to Stellar…`);
     try {
       const hash = await submitProof({
@@ -859,6 +931,7 @@ function ProofFlow({
       setTxHash(hash);
       onProved(hash);
       setStage("confirmed");
+      addEvent("verified", { txHash: hash });
       toast.success(`Proof confirmed on-chain for ${cred.title}`, { txHash: hash });
     } catch (e) {
       const parsed = parseContractError((e as Error).message);
@@ -916,20 +989,31 @@ function ProofFlow({
             icon={<IconCpu size={14} stroke={1.8} />}
             title={t("proofFlowProvingTitle")}
             subtitle={t("proofFlowProvingSubtitle")}
+          <style>{`
+            .mobile-only-note { display: none; }
+            @media (max-width: 600px) { .mobile-only-note { display: block; } }
+          `}</style>
+          <ProofStep
+            icon={<IconCpu size={14} stroke={1.8} />}
+            title="Generate zero-knowledge proof"
+            subtitle={`Estimated time: ${ESTIMATES.default.range}`}
             state={
-              (stage === "proving" || stage === "circuit" || stage === "proof") ? "active" :
+              (stage === "witness" || stage === "proving" || stage === "circuit" || stage === "proof") ? "active" :
               proofDone            ? "done"   : "idle"
             }
             detail={
-              (stage === "proving" || stage === "circuit" || stage === "proof") ? (
+              (stage === "witness" || stage === "proving" || stage === "circuit" || stage === "proof") ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.65rem" }}>
-                  <ProvingBar />
+                  <ProvingBar progress={Math.min((elapsed / ESTIMATES.default.expected) * 80, 80)} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
                       {t("proofGenerating")}
+                      {elapsed > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual…" :
+                       stage === "witness" ? "Generating witness…" :
+                       elapsed < 2 ? "Loading circuit…" : "Proving…"}
                     </span>
                     <span className="mono" style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
-                      {elapsed}s
+                      {elapsed} s elapsed
                     </span>
                   </div>
                   <div style={{ margin: "0.5rem 0" }}>
@@ -1245,6 +1329,7 @@ function BatchProofFlow({
           next[i] = { status: "ready", proof: result };
           return next;
         });
+        addTimelineEvent(cred.commitment, "generated");
       }
     })();
 
@@ -1281,15 +1366,21 @@ function BatchProofFlow({
       };
     });
 
+    currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "submitted"));
+
     toast.info(`Submitting ${currentCreds.length} proofs to Stellar…`);
-    submitProofsBatch({ holder: currentHolder, submissions })
-      .then((hash) => {
+    submitProofs({ holder: currentHolder, submissions })
+      .then((hash: string) => {
         setTxHash(hash);
+        const commitments = currentCreds.map((c) => c.commitment);
+        onProved(hash, commitments);
         setBatchStage("confirmed");
-        onProved(hash, currentCreds.map((c) => c.commitment));
-        toast.success(`All ${currentCreds.length} proofs confirmed on-chain`, { txHash: hash });
+
+        currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));
+
+        toast.success(`Confirmed ${creds.length} proofs on-chain`, { txHash: hash });
       })
-      .catch((e) => {
+      .catch((e: any) => {
         const parsed = parseContractError((e as Error).message);
         setBatchError(parsed);
         setBatchStage("error");
@@ -1341,7 +1432,7 @@ function BatchProofFlow({
         <ProofStep
           icon={<IconCloudUpload size={14} stroke={1.8} />}
           title="Submit batch to Stellar"
-          subtitle={`ProofRegistry.submit_proofs_batch · ${creds.length} credentials · single wallet signature`}
+          subtitle={`ProofRegistry.submit_proofs · ${creds.length} credentials · single Freighter signature`}
           state={
             isSubmitting ? "active" :
             isConfirmed  ? "done"   : "idle"
@@ -1488,9 +1579,11 @@ function BatchCredRow({
     <AnimatedDots text="Computing witness" style={{ marginTop: "0.25rem" }} />
   ) : isProving ? (
     <div style={{ marginTop: "0.35rem", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-      <ProvingBar />
+      <ProvingBar progress={Math.min((((state as { status: "proving"; elapsed: number }).elapsed) / ESTIMATES.default.expected) * 80, 80)} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>Generating proof in browser…</span>
+        <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+          {((state as { status: "proving"; elapsed: number }).elapsed) > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual…" : "Generating proof in browser…"}
+        </span>
         <span className="mono" style={{ fontSize: "0.7rem", color: "var(--faint)" }}>
           {(state as { status: "proving"; elapsed: number }).elapsed}s
         </span>
@@ -1644,11 +1737,11 @@ function AnimatedDots({ text, style }: { text: string; style?: React.CSSProperti
   );
 }
 
-function ProvingBar() {
+function ProvingBar({ progress = 0 }: { progress?: number }) {
   return (
     <div
       style={{
-        height: "3px",
+        height: "4px",
         borderRadius: "999px",
         background: "var(--bg-soft)",
         overflow: "hidden",
@@ -1658,18 +1751,14 @@ function ProvingBar() {
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          background: "linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%)",
-          width: "50%",
-          animation: "proving-shimmer 1.6s ease-in-out infinite",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          background: "var(--accent)",
+          width: `${progress}%`,
+          transition: "width 1s linear",
         }}
       />
-      <style>{`
-        @keyframes proving-shimmer {
-          0%   { transform: translateX(-100%); }
-          100% { transform: translateX(300%); }
-        }
-      `}</style>
     </div>
   );
 }

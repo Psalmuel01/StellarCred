@@ -84,6 +84,10 @@ let _config: {
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
   cacheEnabled: false,
   cacheTtlMs: 30000,
+  retries: 3,
+  baseDelayMs: 500,
+  maxDelayMs: 5000,
+  jitter: true,
 };
 
 /**
@@ -159,6 +163,10 @@ export function configure(opts: {
   rpcUrl?: string;
   networkPassphrase?: string;
   baseUrl?: string;
+  retries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  jitter?: boolean;
 }): void {
   _config = { ..._config, ...opts };
   // The cached client is bound to the old config — drop it so the next read
@@ -230,7 +238,7 @@ function warnIfMissingRegistryIdOnce(): void {
   _warnedMissingRegistryId = true;
   // eslint-disable-next-line no-console
   console.warn(
-    "[StellarCred] hasClaim()/getClaims() called with no `registryId` configured. " +
+    "[StellarCred] hasClaim()/getClaim()/getClaims() called with no `registryId` configured. " +
       "Every check will silently return false/[] until you set STELLARCRED_REGISTRY_ID " +
       "(or NEXT_PUBLIC_PROOF_REGISTRY_ID) or call StellarCred.configure({ registryId }). " +
       "Call StellarCred.healthCheck() to diagnose. This warning only logs in development.",
@@ -249,6 +257,35 @@ export class TimeoutError extends Error {
   }
 }
 
+/**
+ * Error thrown when the SDK is missing required configuration (e.g. no
+ * `registryId`). Only surfaces when `{ throwOnError: true }` is passed;
+ * the default fail-soft path returns `false` / `[]` instead.
+ */
+export class ConfigError extends Error {
+  constructor(message = "StellarCred is not configured: missing registryId") {
+    super(message);
+    this.name = "ConfigError";
+  }
+}
+
+/**
+ * Error thrown when an RPC / contract-simulation call fails (network,
+ * timeout at the transport layer, simulation error, etc.). Only surfaces
+ * when `{ throwOnError: true }` is passed — distinguishing "couldn't check"
+ * from "not verified" (`false`).
+ */
+export class RpcError extends Error {
+  /** Underlying transport / simulation failure, when available. */
+  cause?: unknown;
+  constructor(message = "StellarCred RPC call failed", options?: { cause?: unknown }) {
+    super(message);
+    this.name = "RpcError";
+    if (options && "cause" in options) {
+      this.cause = options.cause;
+    }
+  }
+}
 
 /** The credential types StellarCred supports. Matches the contract Symbols. */
 export const CLAIM_TYPES = ["kyc", "age", "income", "jurisdiction", "funds", "accreditation"] as const;
@@ -288,6 +325,14 @@ export interface ClaimOptions {
    * `trusted_issuers: None` default. An empty array rejects every issuer.
    */
   trustedIssuers?: string[];
+  /**
+   * When `true`, configuration and RPC failures throw {@link ConfigError} /
+   * {@link RpcError} instead of being masked as `false` / empty results.
+   * Default `false` preserves the historical fail-soft behaviour so a
+   * network blip is indistinguishable from "not verified" unless callers
+   * opt in.
+   */
+  throwOnError?: boolean;
 }
 
 export interface Claim {
@@ -318,9 +363,14 @@ function getSdk(): Promise<StellarSDK> {
 let _client: Promise<ProofRegistryClient> | null = null;
 let _clientKey = "";
 
-async function getClient(): Promise<ProofRegistryClient | null> {
+async function getClient(throwOnError = false): Promise<ProofRegistryClient | null> {
   const { registryId, rpcUrl, networkPassphrase } = _config;
-  if (!registryId) return null;
+  if (!registryId) {
+    if (throwOnError) {
+      throw new ConfigError("StellarCred is not configured: missing registryId");
+    }
+    return null;
+  }
 
   const key = `${registryId}|${rpcUrl}|${networkPassphrase}`;
   if (_client && _clientKey === key) return _client;
@@ -361,10 +411,47 @@ async function fanOut<T, R>(
   return Promise.all(items.map(fn));
 }
 
+function isRetryable(error: any): boolean {
+  if (error && typeof error.message === "string") {
+    const msg = error.message.toLowerCase();
+    // Non-retryable errors (e.g., bad args, 400 Bad Request, parsing errors)
+    if (
+      msg.includes("invalid argument") ||
+      msg.includes("bad request") ||
+      msg.includes("not found") ||
+      msg.includes("parse error")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  const { retries, baseDelayMs, maxDelayMs, jitter } = _config;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      if (attempt >= retries || !isRetryable(error)) {
+        throw error;
+      }
+      attempt++;
+      let delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+      if (jitter) {
+        delay = delay / 2 + Math.random() * (delay / 2);
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function readIsVerified(
   wallet: string,
   claimType: string,
   trustedIssuers?: string[],
+  throwOnError = false,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   if (_config.readIsVerified) {
     return _config.readIsVerified(wallet, claimType);
@@ -372,18 +459,22 @@ async function readIsVerified(
   const { registryId } = _config;
   if (!registryId) return null;
   const client = await getClient();
+  const client = await getClient(throwOnError);
   if (!client) return null;
 
   try {
-    const { result } = await client.is_verified({
+    const { result } = await withRetry(() => client.is_verified({
       holder: wallet,
       credential_type: claimType,
       trusted_issuers: trustedIssuers,
-    });
+    }));
     if (!result) return null;
     const [valid, verifiedAt, expiry] = result;
     return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
-  } catch {
+  } catch (err) {
+    if (throwOnError) {
+      throw new RpcError(`is_verified RPC failed for claim "${claimType}"`, { cause: err });
+    }
     return null;
   }
 }
@@ -393,6 +484,7 @@ async function readCheckClaim(
   claimType: string,
   minThreshold: number,
   trustedIssuers?: string[],
+  throwOnError = false,
 ): Promise<boolean> {
   if (_config.readCheckClaim) {
     return _config.readCheckClaim(wallet, claimType, minThreshold);
@@ -409,17 +501,21 @@ async function readCheckClaim(
     nativeToScVal(BigInt(minThreshold), { type: "u64" }),
   );
   const client = await getClient();
+  const client = await getClient(throwOnError);
   if (!client) return false;
 
   try {
-    const { result } = await client.check_claim({
+    const { result } = await withRetry(() => client.check_claim({
       holder: wallet,
       credential_type: claimType,
       min_threshold: BigInt(minThreshold),
       trusted_issuers: trustedIssuers,
-    });
+    }));
     return result ?? false;
-  } catch {
+  } catch (err) {
+    if (throwOnError) {
+      throw new RpcError(`check_claim RPC failed for claim "${claimType}"`, { cause: err });
+    }
     return false;
   }
 }
@@ -458,6 +554,20 @@ async function readCheckClaim(
  * const ok = await hasClaim("G1ABC…", "kyc", {
  *   trustedIssuers: ["G...PERSONA_ISSUER", "G...JUMIO_ISSUER"],
  * });
+ *
+ * @example
+ * // Opt into typed errors — network failure throws RpcError, missing
+ * // registryId throws ConfigError; "not verified" still returns false.
+ * try {
+ *   const ok = await hasClaim("G1ABC…", "kyc", { throwOnError: true });
+ * } catch (err) {
+ *   if (err instanceof ConfigError) {
+ *     // misconfigured SDK — set registryId
+ *   }
+ *   if (err instanceof RpcError) {
+ *     // could not reach the chain — retry or degrade
+ *   }
+ * }
  */
 export async function hasClaim(
   wallet: string,
@@ -474,6 +584,7 @@ export async function hasClaim(
 
   let result: boolean;
   warnIfMissingRegistryIdOnce();
+  const throwOnError = opts?.throwOnError === true;
   if (opts?.minThreshold !== undefined) {
     result = await readCheckClaim(wallet, claimType, opts.minThreshold);
   } else {
@@ -490,9 +601,49 @@ export async function hasClaim(
 
   return result;
     return readCheckClaim(wallet, claimType, opts.minThreshold, opts.trustedIssuers);
+    return readCheckClaim(
+      wallet,
+      claimType,
+      opts.minThreshold,
+      opts.trustedIssuers,
+      throwOnError,
+    );
   }
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
+  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers, throwOnError);
   return !!r && r.valid;
+}
+
+/**
+ * Returns the full claim record (valid, verifiedAt, expiry) for a wallet and
+ * credential type, or `null` if the wallet has no current proof of that type.
+ *
+ * Unlike {@link hasClaim} which only returns a boolean, this gives UIs the
+ * verified-at timestamp and expiry so they can show claim freshness without
+ * pulling every claim type via {@link getClaims}.
+ *
+ * Respects `trustedIssuers` — only proofs from the given issuers are accepted.
+ *
+ * @example
+ * const claim = await getClaim("G1ABC…", "kyc");
+ * if (claim) {
+ *   console.log(`Verified at: ${new Date(claim.verifiedAt * 1000)}`);
+ *   console.log(`Expires: ${new Date(claim.expiry * 1000)}`);
+ * }
+ *
+ * @example
+ * // Only accept KYC from a trusted issuer
+ * const claim = await getClaim("G1ABC…", "kyc", {
+ *   trustedIssuers: ["G...PERSONA_ISSUER"],
+ * });
+ */
+export async function getClaim(
+  wallet: string,
+  claimType: string,
+  opts?: Pick<ClaimOptions, "trustedIssuers">,
+): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
+  warnIfMissingRegistryIdOnce();
+  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
+  return r && r.valid ? r : null;
 }
 
 /**
@@ -570,17 +721,27 @@ export async function hasClaims(
  *
  * Uses the same batched fan-out as {@link hasClaims}, so all types are read
  * through one shared client.
+ *
+ * Pass `{ throwOnError: true }` to surface {@link ConfigError} / {@link RpcError}
+ * instead of silently dropping failed reads. When `throwOnError` is set, a
+ * single failing claim type rejects the whole batch (fail-fast) and discards
+ * successful reads for other types.
  */
-export async function getClaims(wallet: string): Promise<Claim[]> {
+export async function getClaims(
+  wallet: string,
+  opts?: Pick<ClaimOptions, "throwOnError">,
+): Promise<Claim[]> {
   warnIfMissingRegistryIdOnce();
+  const throwOnError = opts?.throwOnError === true;
   const results = await fanOut(CLAIM_TYPES, async (t) => {
-    // Same isolation as `hasClaims`: `readIsVerified` swallows read errors, but
-    // its own `getClient()` await can still reject (a failed SDK import), which
-    // would otherwise reject the whole fan-out instead of dropping one type.
+    // Same isolation as `hasClaims` when fail-soft: `readIsVerified` swallows
+    // read errors, but its own `getClient()` await can still reject (a failed
+    // SDK import), which would otherwise reject the whole fan-out.
     try {
-      const r = await readIsVerified(wallet, t);
+      const r = await readIsVerified(wallet, t, undefined, throwOnError);
       return r && r.valid ? { type: t, verifiedAt: r.verifiedAt, expiry: r.expiry } : null;
-    } catch {
+    } catch (err) {
+      if (throwOnError) throw err;
       return null;
     }
   });
@@ -618,8 +779,10 @@ export function buildVerifyUrl(options: {
     threshold_years?: string;
     /** For "income" / "funds" claims: minimum value in whole units (default varies). */
     threshold?: string;
-    /** For "jurisdiction" claims: ISO 3166-1 numeric codes to block (default []). */
+    /** For "jurisdiction" claims: ISO 3166-1 numeric codes (default []). */
     restricted?: string | string[];
+    /** For "jurisdiction" claims: "block" = denylist (default), "allow" = allowlist. */
+    mode?: "allow" | "block";
   };
   /**
    * Opaque CSRF-style correlation token (e.g. a per-session nonce). Embedded
@@ -650,11 +813,14 @@ export function buildVerifyUrl(options: {
   url.searchParams.set("return_url", returnUrl);
   url.searchParams.set("claim", options.claim);
   if (options.claimParams) {
-    const { threshold_years, threshold, restricted } = options.claimParams;
+    const { threshold_years, threshold, restricted, mode } = options.claimParams;
     if (threshold_years) url.searchParams.set("threshold_years", threshold_years);
     if (threshold) url.searchParams.set("threshold", threshold);
     if (restricted) {
       url.searchParams.set("restricted", Array.isArray(restricted) ? restricted.join(",") : restricted);
+    }
+    if (mode) {
+      url.searchParams.set("mode", mode === "allow" ? "1" : "0");
     }
   }
   return url.toString();
@@ -846,6 +1012,7 @@ export const StellarCred = {
   healthCheck,
   isConfigured,
   hasClaim,
+  getClaim,
   hasClaims,
   getClaims,
   buildVerifyUrl,
@@ -853,5 +1020,16 @@ export const StellarCred = {
   watchClaim,
   CLAIM_TYPES,
   TimeoutError,
+  ConfigError,
+  RpcError,
 };
 export default StellarCred;
+
+// Framework-agnostic core — for use outside React (Vue, Svelte, vanilla).
+export { createClaimGate } from "./core";
+export type { ClaimGateConfig, ClaimGateState, ClaimGateListener, ClaimGate } from "./core";
+
+// React hook — React wrapper around the batched `hasClaims` read. It is an
+// independent implementation from `createClaimGate` (which performs per-claim
+// `hasClaim` reads), so keep the two behaviourally in sync.
+export { useStellarCred } from "./react";

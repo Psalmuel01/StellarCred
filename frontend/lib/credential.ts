@@ -6,6 +6,8 @@ export interface ClaimParams {
   threshold_years?: string;
   threshold?: string;
   restricted?: string[];
+  /** "0" = denylist/block (default), "1" = allowlist/allow */
+  mode?: string;
 }
 
 export interface Credential {
