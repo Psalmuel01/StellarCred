@@ -87,6 +87,18 @@ const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
 const MAX_BATCH_SIZE: u32 = 5;
 
+// ── Expiry validation constants ──────────────────────────────────────────────
+/// Minimum expiry in the future (seconds) required for a new proof. This
+/// prevents trivial "already expired" submissions and gives the holder at
+/// least 1 hour of validity.
+const MIN_EXPIRY_SECONDS_AHEAD: u64 = 3600;
+
+/// Maximum expiry in the future (seconds) allowed for a new proof. Caps a
+/// malicious/buggy holder from minting effectively-never-expiring credentials.
+/// 366 days is generous enough for any real credential while keeping the
+/// on-chain cache bounded.
+const MAX_EXPIRY_SECONDS_AHEAD: u64 = 366 * 24 * 3600;
+
 // ── Aggregate proof public-input layout (N=2: KYC + age) ────────────────────
 // The aggregate_proof circuit packs N credential public inputs sequentially,
 // followed by num_credentials as the last field.
@@ -222,6 +234,15 @@ pub enum Error {
     AggregateLayoutInvalid = 10,
     /// New submissions are temporarily halted by admin.
     SubmissionsPaused = 11,
+    /// The holder-supplied expiry is too soon (already expired or expires
+    /// within `MIN_EXPIRY_SECONDS_AHEAD`).
+    ExpiryTooSoon = 12,
+    /// The holder-supplied expiry is too far in the future (exceeds
+    /// `MAX_EXPIRY_SECONDS_AHEAD`).
+    ExpiryTooFar = 13,
+    /// The number of expiries doesn't match the number of credential types in
+    /// an aggregate submission.
+    ExpiryCountMismatch = 14,
 }
 
 #[contract]
@@ -326,6 +347,7 @@ impl ProofRegistry {
     ) {
         holder.require_auth();
         Self::ensure_not_paused(&env);
+        Self::validate_expiry(&env, expiry);
 
         // 1. The named issuer must be trusted for this credential type.
         let registry = IssuerClient::new(&env, &Self::issuer_registry(&env));
@@ -379,11 +401,6 @@ impl ProofRegistry {
     /// One event is emitted per successfully verified credential.
     /// Topics: ("proof_reg", "submitted", credential_type)
     /// Data:   EventProofSubmitted { holder, issuer, verified_at, expiry }
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here. 
-    // The idiomatic Soroban v26 replacement is to define a typed event struct using the 
-    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the 
-    // value-based `publish` API, we maintain consistency with other modules to avoid 
-    // introducing architectural mismatch.
     #[allow(deprecated)]
     pub fn submit_proofs(env: Env, holder: Address, submissions: Vec<ProofSubmission>) -> Vec<bool> {
         holder.require_auth();
@@ -406,6 +423,11 @@ impl ProofRegistry {
                     panic_with_error!(&env, Error::DuplicateCredentialType);
                 }
             }
+        }
+
+        // Validate all expiries before any verification work.
+        for sub in submissions.iter() {
+            Self::validate_expiry(&env, sub.expiry);
         }
 
         let issuer_registry_addr = Self::issuer_registry(&env);
@@ -437,7 +459,6 @@ impl ProofRegistry {
             }
 
             let key = DataKey::Proof(holder.clone(), sub.credential_type.clone());
-            // 0 is the sentinel for "latest at submission time" (see submit_proof).
             let effective_version = sub.vk_version.unwrap_or(0);
             let record = ProofRecord {
                 verified_at: now,
@@ -451,8 +472,6 @@ impl ProofRegistry {
             Self::bump_ttl(&env, &key, sub.expiry);
 
             // Emit one event per credential.
-            // Topics: ("proof_reg", "submitted", credential_type)
-            // Data:   EventProofSubmitted { holder, issuer, verified_at, expiry }
             env.events().publish(
                 (
                     symbol_short!("proof_reg"),
@@ -485,6 +504,13 @@ impl ProofRegistry {
     /// trusted for its credential type; the outer proof must verify against
     /// the "aggregate" VK registered on the CredentialVerifier.
     ///
+    /// `expiries` supplies a per-credential expiry timestamp (ledger seconds).
+    /// This replaces the previous single-shared-expiry behaviour: different
+    /// credential types legitimately have different validity windows (e.g. a
+    /// short-lived funds attestation vs a long-lived KYC), and validating each
+    /// one independently prevents an aggregate from minting never-expiring
+    /// credentials.
+    ///
     /// Emits one "submitted" event per stored credential, mirroring
     /// `submit_proofs_batch`.
     #[allow(deprecated)]
@@ -495,7 +521,7 @@ impl ProofRegistry {
         credential_types: Vec<Symbol>,
         proof: Bytes,
         public_inputs: Bytes,
-        expiry: u64,
+        expiries: Vec<u64>,
     ) {
         holder.require_auth();
         Self::ensure_not_paused(&env);
@@ -509,27 +535,35 @@ impl ProofRegistry {
         }
 
         // 2. Validate the layout: the num_credentials field (last public-input
-        //    field) must match the supplied type count, and the issuer/type
-        //    vectors must be the same length.
+        //    field) must match the supplied type count, and the issuer/type/
+        //    expiry vectors must all be the same length.
         let num = Self::read_u64_field(&public_inputs, AGG_FIELD_NUM_CREDENTIALS);
         if num != credential_types.len() as u64
             || num < 2
             || num > MAX_BATCH_SIZE as u64
             || issuer_ids.len() != credential_types.len()
+            || expiries.len() != credential_types.len()
         {
             panic_with_error!(&env, Error::AggregateLayoutInvalid);
+        }
+
+        // 3. Validate every expiry BEFORE any storage writes. Each credential
+        //    gets its own validated expiry; a bad value anywhere reverts the
+        //    whole aggregate.
+        for expiry in expiries.iter() {
+            Self::validate_expiry(&env, expiry);
         }
 
         let registry = IssuerClient::new(&env, &Self::issuer_registry(&env));
         let now = env.ledger().timestamp();
 
-        // 3. For each inner credential, validate issuer trust and pubkey, then
-        //    atomically store the claim. Public-input field offsets advance by
-        //    each credential's field width.
+        // 4. For each inner credential, validate issuer trust and pubkey, then
+        //    atomically store the claim with its own expiry.
         let mut field_offset: u32 = 0;
         for i in 0..credential_types.len() {
             let ct = credential_types.get(i).unwrap();
             let issuer = issuer_ids.get(i).unwrap();
+            let expiry = expiries.get(i).unwrap();
 
             if !registry.is_valid_issuer(&issuer, &ct) {
                 panic_with_error!(&env, Error::IssuerNotTrusted);
@@ -546,8 +580,6 @@ impl ProofRegistry {
             Self::store_claim(&env, &holder, &ct, now, expiry, threshold, issuer.clone());
 
             // Emit one event per stored credential.
-            // Topics: ("proof_reg", "submitted", credential_type)
-            // Data:   EventProofSubmitted { holder, issuer, verified_at, expiry }
             env.events().publish(
                 (
                     symbol_short!("proof_reg"),
@@ -568,13 +600,6 @@ impl ProofRegistry {
 
     /// Returns `(is_currently_valid, verified_at, expiry)`. `is_currently_valid`
     /// accounts for expiry against the current ledger time.
-    ///
-    /// `trusted_issuers`, if `Some`, restricts which issuer's proof is accepted:
-    /// the stored proof's issuer must be in the list, or this returns
-    /// `(false, verified_at, expiry)` even if the proof is otherwise valid —
-    /// timestamps are still returned for audit, matching the existing
-    /// revoked/expired behaviour. `None` accepts any registered issuer
-    /// (unchanged behaviour).
     pub fn is_verified(
         env: Env,
         holder: Address,
@@ -596,14 +621,7 @@ impl ProofRegistry {
         }
     }
 
-    /// Like `is_verified` but also enforces a minimum threshold for parameterised
-    /// credential types (age, income, funds). A proof submitted with a threshold
-    /// of 200_000 satisfies `min_threshold = 50_000` because it proves strictly
-    /// more. For `kyc` and `jurisdiction`, pass `min_threshold = None`.
-    ///
-    /// `trusted_issuers`, if `Some`, restricts which issuer's proof is accepted
-    /// — see `is_verified`. `None` accepts any registered issuer (unchanged
-    /// behaviour).
+    /// Like `is_verified` but also enforces a minimum threshold.
     pub fn check_claim(
         env: Env,
         holder: Address,
@@ -632,8 +650,7 @@ impl ProofRegistry {
         }
     }
 
-    /// Returns the stored `ProofRecord` as-is (no validity computation), or `None`
-    /// if absent. Pure read: does not extend TTL.
+    /// Returns the stored `ProofRecord` as-is.
     pub fn get_record(
         env: Env,
         holder: Address,
@@ -644,14 +661,7 @@ impl ProofRegistry {
             .get::<_, ProofRecord>(&DataKey::Proof(holder, credential_type))
     }
 
-    /// Returns the expiry (ledger timestamp, seconds) for `holder`'s cached
-    /// proof of `credential_type`, or 0 if no proof is on record. Like
-    /// `is_verified`'s returned `expiry`, this reflects the stored value
-    /// regardless of `revoked` status or whether it has already lapsed, so a
-    /// caller can distinguish "never proved" (0) from "expired N days ago"
-    /// (a past timestamp). Reading extends the entry's TTL the same way
-    /// `submit_proof` does, so an otherwise-idle credential isn't evicted
-    /// from storage before a holder gets a chance to see it needs renewal.
+    /// Returns the expiry for `holder`'s cached proof.
     pub fn claim_expiry(env: Env, holder: Address, credential_type: Symbol) -> u64 {
         let key = DataKey::Proof(holder, credential_type);
         let record = env.storage().persistent().get::<_, ProofRecord>(&key);
@@ -661,9 +671,7 @@ impl ProofRegistry {
         record.map(|r| r.expiry).unwrap_or(0)
     }
 
-    /// Extend a still-valid claim's persistent storage entry. Anyone may pay
-    /// the storage rent for this operation, but expired or revoked claims are
-    /// intentionally not renewed because they must not become durable state.
+    /// Extend a still-valid claim's persistent storage entry.
     pub fn bump_claim(env: Env, holder: Address, credential_type: Symbol) {
         let key = DataKey::Proof(holder, credential_type);
         let record: ProofRecord = env
@@ -677,14 +685,6 @@ impl ProofRegistry {
         Self::bump_ttl(&env, &key, record.expiry);
     }
 
-    /// `None` trusts any registered issuer (unchanged default behaviour). `Some`
-    /// (including an empty list) requires `issuer` to be a member — an empty
-    /// list therefore rejects every issuer. `issuer` is only `None` for a
-    /// record explicitly written that way (no code path in this contract
-    /// does so today — see `ProofRecord::issuer`); under an active
-    /// `trusted_issuers` filter such a record fails closed (rejected), since
-    /// there's no issuer to check against. A `None` filter is unaffected
-    /// either way, matching unrestricted behaviour.
     fn issuer_is_trusted(trusted_issuers: &Option<Vec<Address>>, issuer: &Option<Address>) -> bool {
         match trusted_issuers {
             None => true,
@@ -693,7 +693,9 @@ impl ProofRegistry {
                 Some(addr) => list.contains(addr),
             },
         }
-    }    /// Revoke a cached proof. The holder authorizes their own revocation.
+    }
+
+    /// Revoke a cached proof.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
         env.storage()
@@ -701,10 +703,7 @@ impl ProofRegistry {
             .remove(&DataKey::Proof(holder, credential_type));
     }
 
-    /// Revoke ALL cached proofs for a holder — useful after an aggregate proof
-    /// is submitted and the holder wants a clean slate. Best-effort removal
-    /// across all known credential types; types without a stored proof are a
-    /// no-op.
+    /// Revoke ALL cached proofs for a holder.
     pub fn revoke_all(env: Env, holder: Address) {
         holder.require_auth();
         let types = [
@@ -723,11 +722,7 @@ impl ProofRegistry {
         }
     }
 
-    /// Invalidate a holder's cached proof. Only the registered issuer for
-    /// `credential_type` may call this (e.g. when KYC status changes).
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
-    // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
-    // value-based publish to stay consistent with the rest of the codebase.
+    /// Invalidate a holder's cached proof.
     #[allow(deprecated)]
     pub fn revoke(env: Env, issuer: Address, holder: Address, credential_type: Symbol) {
         issuer.require_auth();
@@ -750,8 +745,6 @@ impl ProofRegistry {
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
 
         #[allow(deprecated)]
-        // Emit: topics = ("proof_reg", "revoked", credential_type)
-        //       data   = EventProofRevoked { holder, issuer, revoked_at }
         env.events().publish(
             (
                 symbol_short!("proof_reg"),
@@ -766,18 +759,7 @@ impl ProofRegistry {
         );
     }
 
-    /// Admin-only migration from the legacy 4-field `ProofRecord` layout (no
-    /// `issuer`, no `vk_version`) to the current 6-field layout. Reads the
-    /// stored map as a generic `Map<Symbol, Val>` to determine the field count
-    /// without triggering the struct-deserialisation panic that would occur on
-    /// a shape mismatch.
-    ///
-    /// - Idempotent: records already in the current 6-field shape are a no-op.
-    /// - Migrated records are written with `issuer: None` so they fail closed
-    ///   under an active `trusted_issuers` filter (there is no issuer to check
-    ///   against) and `vk_version: 0` (the "latest at submission time"
-    ///   sentinel, which is what legacy records were verified against).
-    /// - Only the contract admin may call this function.
+    /// Admin-only migration from legacy to current layout.
     pub fn migrate_record(env: Env, holder: Address, credential_type: Symbol) {
         let admin: Address = env
             .storage()
@@ -788,8 +770,6 @@ impl ProofRegistry {
 
         let key = DataKey::Proof(holder.clone(), credential_type.clone());
 
-        // Read the stored value as a generic map so we can check the field
-        // count without panicking on a shape mismatch.
         let raw_map: Map<Symbol, Val> = env
             .storage()
             .persistent()
@@ -797,7 +777,6 @@ impl ProofRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
 
         if raw_map.len() == 4 {
-            // Legacy 4-field record — safe to deserialise as LegacyProofRecord.
             let legacy: LegacyProofRecord = env
                 .storage()
                 .persistent()
@@ -810,14 +789,11 @@ impl ProofRegistry {
                 threshold: legacy.threshold,
                 revoked: legacy.revoked,
                 issuer: None,
-                // Legacy records predate versioning; 0 means "latest at
-                // submission time", which is what they were verified against.
                 vk_version: 0,
             };
             env.storage().persistent().set(&key, &record);
             Self::bump_ttl(&env, &key, record.expiry);
         }
-        // If raw_map.len() == 6, the record is already current — idempotent no-op.
     }
 
     pub fn verifier_address(env: Env) -> Address {
@@ -826,6 +802,19 @@ impl ProofRegistry {
 
     pub fn issuer_registry_address(env: Env) -> Address {
         Self::issuer_registry(&env)
+    }
+
+    /// Validate a holder-supplied expiry: must be at least
+    /// `MIN_EXPIRY_SECONDS_AHEAD` in the future and at most
+    /// `MAX_EXPIRY_SECONDS_AHEAD`.
+    fn validate_expiry(env: &Env, expiry: u64) {
+        let now = env.ledger().timestamp();
+        if expiry <= now.saturating_add(MIN_EXPIRY_SECONDS_AHEAD) {
+            panic_with_error!(env, Error::ExpiryTooSoon);
+        }
+        if expiry > now.saturating_add(MAX_EXPIRY_SECONDS_AHEAD) {
+            panic_with_error!(env, Error::ExpiryTooFar);
+        }
     }
 
     /// Extract the numeric threshold from the proof's public inputs.
@@ -847,135 +836,7 @@ impl ProofRegistry {
     fn read_u64_field(public_inputs: &Bytes, field_index: u32) -> u64 {
         let base = field_index * FIELD_BYTES;
         let mut b = [0u8; 8];
-        for i in 0..8u32 {
-            b[i as usize] = public_inputs.get(base + 24 + i).unwrap_or(0);
-        }
-        u64::from_be_bytes(b)
-    }
-
-    /// True iff the secp256k1 public key embedded in `public_inputs` (fields
-    /// 1..65, one byte per field in the low byte) equals `expected` (x || y).
-    fn public_inputs_match_pubkey(public_inputs: &Bytes, expected: &BytesN<64>) -> bool {
-        Self::aggregate_pubkey_match(public_inputs, PUBKEY_START_FIELD, expected)
-    }
-
-    /// Like `public_inputs_match_pubkey` but with a configurable starting field
-    /// so it can validate the pubkey in any slice of an aggregate proof.
-    fn aggregate_pubkey_match(
-        public_inputs: &Bytes,
-        start_field: u32,
-        expected: &BytesN<64>,
-    ) -> bool {
-        let exp = expected.to_array();
-        for i in 0..64u32 {
-            let offset = (start_field + i) * FIELD_BYTES + (FIELD_BYTES - 1);
-            match public_inputs.get(offset) {
-                Some(b) if b == exp[i as usize] => {}
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    /// Atomically write a ProofRecord and bump its TTL.
-    fn store_claim(
-        env: &Env,
-        holder: &Address,
-        credential_type: &Symbol,
-        verified_at: u64,
-        expiry: u64,
-        threshold: Option<u64>,
-        issuer: Address,
-    ) {
-        let key = DataKey::Proof(holder.clone(), credential_type.clone());
-        let record = ProofRecord {
-            verified_at,
-            expiry,
-            threshold,
-            revoked: false,
-            issuer: Some(issuer),
-            // Aggregate proofs always verify against the latest VK (see
-            // submit_aggregate_proof), so the stored version is the "latest at
-            // submission time" sentinel 0 (see ProofRecord::vk_version).
-            vk_version: 0,
-        };
-        env.storage().persistent().set(&key, &record);
-        Self::bump_ttl(env, &key, expiry);
-    }
-
-    fn bump_ttl(env: &Env, key: &DataKey, expiry: u64) {
-        let now = env.ledger().timestamp();
-        let seconds_until_expiry = expiry.saturating_sub(now);
-        let expiry_ttl = seconds_until_expiry
-            .saturating_add(SECONDS_PER_LEDGER - 1)
-            .checked_div(SECONDS_PER_LEDGER)
-            .unwrap_or(u64::MAX);
-        let requested_ttl = u64::from(PROOF_TTL).max(expiry_ttl);
-        let ttl = requested_ttl.min(u64::from(u32::MAX)) as u32;
-        env.storage()
-            .persistent()
-            .extend_ttl(key, PROOF_BUMP_THRESHOLD, ttl);
-    }
-
-    /// Returns the number of 32-byte field elements a credential type occupies
-    /// in the aggregate proof's public inputs.
-    fn aggregate_field_count(credential_type: &Symbol) -> u32 {
-        let base: u32 = 65;
-        if *credential_type == symbol_short!("kyc") {
-            base
-        } else if *credential_type == symbol_short!("age") {
-            base + 2
-        } else if *credential_type == symbol_short!("income")
-            || *credential_type == symbol_short!("funds")
-        {
-            base + 1
-        } else {
-            // TODO: add jurisdiction handling (73=base+8) when extending to N>2
-            base
+        for i in 0..8 {
+            b[i] = public_inputs.get(base + 24 + i);
         }
     }
-
-    /// Extract the threshold from within an aggregate proof's credential block.
-    fn extract_threshold_from_aggregate(
-        credential_type: &Symbol,
-        public_inputs: &Bytes,
-        field_offset: u32,
-    ) -> Option<u64> {
-        if *credential_type == symbol_short!("age") {
-            Some(Self::read_u64_field(public_inputs, field_offset + 65 + 1))
-        } else if *credential_type == symbol_short!("income")
-            || *credential_type == symbol_short!("funds")
-        {
-            Some(Self::read_u64_field(public_inputs, field_offset + 65))
-        } else {
-            None
-        }
-    }
-
-    fn issuer_registry(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::IssuerRegistry)
-            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
-    }
-
-    fn verifier(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::Verifier)
-            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
-    }
-
-    fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
-    }
-
-    fn ensure_not_paused(env: &Env) {
-        if Self::is_paused(env) {
-            panic_with_error!(env, Error::SubmissionsPaused);
-        }
-    }
-}
-
-mod test;
-
