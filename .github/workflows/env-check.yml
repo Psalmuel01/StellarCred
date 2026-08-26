@@ -17,6 +17,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          
+      
       - name: Check environment variable documentation
-        run: npm run check-env
+        run: |
+          if [ -f scripts/check-env-sync.mjs ]; then
+            node scripts/check-env-sync.mjs
+          else
+            echo "⚠️ scripts/check-env-sync.mjs not found"
+            echo "Creating it now..."
+            mkdir -p scripts
+            echo "Script should be at scripts/check-env-sync.mjs"
+            exit 1
+          fi
