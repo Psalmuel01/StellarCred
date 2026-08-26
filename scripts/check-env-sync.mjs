@@ -11,12 +11,14 @@
  *   1 - Missing or undocumented variables found
  */
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT_DIR = join(fileURLToPath(import.meta.url), "..", "..");
 const ENV_EXAMPLE_PATH = join(ROOT_DIR, ".env.example");
+
+// Directories to exclude from scanning
 const EXCLUDE_DIRS = new Set([
   "node_modules",
   ".next",
@@ -27,12 +29,32 @@ const EXCLUDE_DIRS = new Set([
   "public/bb", // Minified browser bundle
 ]);
 
+// Files to exclude from scanning (self-exclude)
+const EXCLUDE_FILES = new Set([
+  "scripts/check-env-sync.mjs",
+]);
+
+// File patterns to exclude (test files, spec files)
+const EXCLUDE_FILE_PATTERNS = [
+  /\.test\.(ts|tsx|js|mjs|jsx)$/,
+  /\.spec\.(ts|tsx|js|mjs|jsx)$/,
+];
+
 // Environment variables provided by the platform/framework
 const SYSTEM_ENV_VARS = new Set([
   "NODE_ENV",
   "NEXT_RUNTIME",
   "DEBUG", // Used in browser bundles
 ]);
+
+/**
+ * Strip // comments from a line before regex matching
+ * Preserves URLs like https:// by checking for preceding colon
+ */
+function stripComments(line) {
+  // Remove // comments (but not URLs like https://)
+  return line.replace(/(^|[^:])\/\/.*$/g, '$1');
+}
 
 /**
  * Recursively collect all source files
@@ -58,6 +80,19 @@ function collectFiles(dir, extensions = new Set([".ts", ".tsx", ".js", ".mjs", "
         continue;
       }
       
+      // Skip excluded files
+      if (EXCLUDE_FILES.has(relativePath)) {
+        continue;
+      }
+      
+      // Skip files matching excluded patterns (test files)
+      const shouldExcludeByPattern = EXCLUDE_FILE_PATTERNS.some(
+        (pattern) => pattern.test(relativePath)
+      );
+      if (shouldExcludeByPattern) {
+        continue;
+      }
+      
       // Only process files with matching extensions
       if (extensions.has(entry.name.slice(entry.name.lastIndexOf(".")))) {
         files.push(fullPath);
@@ -71,30 +106,27 @@ function collectFiles(dir, extensions = new Set([".ts", ".tsx", ".js", ".mjs", "
 
 /**
  * Extract all process.env references from a file
+ * Strips comments before matching to avoid false positives
  */
 function extractEnvVars(filePath) {
   const content = readFileSync(filePath, "utf-8");
   const envVars = new Set();
   
+  // Process line by line to strip comments first
+  const lines = content.split("\n");
+  const cleanedContent = lines.map(stripComments).join("\n");
+  
   // Match process.env.VAR_NAME
   const processEnvPattern = /process\.env\.([A-Z_][A-Z0-9_]*)/g;
   let match;
-  while ((match = processEnvPattern.exec(content)) !== null) {
+  while ((match = processEnvPattern.exec(cleanedContent)) !== null) {
     envVars.add(match[1]);
   }
   
   // Match NEXT_PUBLIC_ variables (even without process.env prefix)
   const nextPublicPattern = /\b(NEXT_PUBLIC_[A-Z_][A-Z0-9_]*)\b/g;
-  while ((match = nextPublicPattern.exec(content)) !== null) {
+  while ((match = nextPublicPattern.exec(cleanedContent)) !== null) {
     envVars.add(match[1]);
-  }
-  
-  // Match dynamic access patterns like process.env[key]
-  // These are handled separately and shouldn't fail the check
-  const dynamicPattern = /process\.env\s*\[/g;
-  const dynamicMatches = content.match(dynamicPattern);
-  if (dynamicMatches) {
-    console.log(`  ℹ️  ${relative(ROOT_DIR, filePath)}: uses dynamic process.env access (skipped)`);
   }
   
   return envVars;
@@ -107,7 +139,7 @@ function extractDocumentedVars() {
   const content = readFileSync(ENV_EXAMPLE_PATH, "utf-8");
   const documented = new Set();
   
-  // Match variable names in the format VAR_NAME= or VAR_NAME =
+  // Match variable names in the format VAR_NAME=
   const pattern = /^([A-Z_][A-Z0-9_]*)=/gm;
   let match;
   while ((match = pattern.exec(content)) !== null) {
