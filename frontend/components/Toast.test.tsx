@@ -39,7 +39,9 @@ describe("ToastProvider", () => {
     });
 
     expect(screen.getAllByRole("button", { name: "Dismiss notification" })).toHaveLength(3);
-    expect(screen.getByText(/Repeated message \(2\)/)).toBeInTheDocument();
+    expect(screen.getByText("Repeated message").closest(".toast-message")).toHaveTextContent(
+      "Repeated message (2)",
+    );
   });
 
   it("refreshes the timer when a duplicate arrives", () => {
