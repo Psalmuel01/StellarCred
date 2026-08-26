@@ -1,6 +1,8 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import type { CredentialType } from "./stellar";
+import { isStorageAvailable } from "./safe-storage";
 
 export interface ClaimParams {
   threshold_years?: string;
@@ -162,4 +164,50 @@ export function parseCredential(json: string): Credential {
     );
   }
   return c as Credential;
+}
+
+// ---- Cross-tab sync hook ---------------------------------------------------
+
+/**
+ * React hook that syncs credentials across browser tabs.
+ * Listens for localStorage 'storage' events (which fire in other tabs on write)
+ * and reloads the credential list when the relevant key changes.
+ * Debounced to avoid thrash on batch writes. Guarded by safe-storage check.
+ */
+export function useCredentialSync(): Credential[] {
+  const [credentials, setCredentials] = useState<Credential[]>(() => loadCredentials());
+
+  // Reload credentials from localStorage
+  const reload = useCallback(() => {
+    setCredentials(loadCredentials());
+  }, []);
+
+  // Debounced reload to avoid thrash on rapid writes
+  const debouncedReload = useCallback(
+    (() => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      return () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(reload, 100); // 100ms debounce
+      };
+    })(),
+    [reload],
+  );
+
+  // Listen for storage events from other tabs
+  useEffect(() => {
+    if (!isStorageAvailable()) return;
+
+    const handleStorage = (e: StorageEvent) => {
+      // Only reload if the credentials key changed
+      if (e.key === KEY) {
+        debouncedReload();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [debouncedReload]);
+
+  return credentials;
 }

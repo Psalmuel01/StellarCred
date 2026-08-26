@@ -45,6 +45,7 @@ import {
   markAllProved,
   parseCredential,
 } from "@/lib/credential";
+import { isStorageAvailable } from "@/lib/safe-storage";
 import { PREVIEW_CREDENTIALS } from "@/lib/preview-fixtures";
 import { usePreviewMode } from "@/lib/wallet-context";
 import CopyButton from "@/components/CopyButton";
@@ -269,6 +270,35 @@ function HolderInner() {
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
 
   useEffect(() => setCreds(loadCredentials()), []);
+
+  // Cross-tab sync: listen for storage events from other tabs
+  useEffect(() => {
+    if (!isStorageAvailable()) return;
+
+    const CREDENTIALS_KEY = "stellarcred:credentials";
+
+    // Debounced reload to avoid thrash on rapid writes
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const debouncedReload = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setCreds(loadCredentials());
+      }, 100); // 100ms debounce
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      // Only reload if the credentials key changed
+      if (e.key === CREDENTIALS_KEY) {
+        debouncedReload();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
 
   // A transfer QR opened directly (native camera app -> /holder?import=...)
   // lands here with the payload already in the URL — prompt for the
