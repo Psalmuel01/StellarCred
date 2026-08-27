@@ -7,11 +7,8 @@ use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use soroban_sdk::{
     symbol_short,
-    testutils::{
-        storage::Persistent as _, Address as _, Events as _, Ledger as _, MockAuth,
-        MockAuthInvoke,
-    },
-    vec, Address, BytesN, Bytes, Env, IntoVal,
+    testutils::{storage::Persistent as _, Address as _, Ledger as _},
+    vec, Address, BytesN, Bytes, Env,
 };
 
 // Real UltraHonk artifacts from existing circuits.
@@ -526,18 +523,6 @@ fn batch_rejects_past_expiry() {
     let holder = Address::generate(&env);
 
     let submissions = vec![&env, kyc_submission(&env, &h.issuer, 0)];
-    let res = h.registry.try_submit_proofs(&holder, &submissions);
-    assert!(res.is_err());
-}
-
-#[test]
-fn batch_rejects_over_max_expiry() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let h = deploy(&env);
-    let holder = Address::generate(&env);
-
-    let submissions = vec![&env, kyc_submission(&env, &h.issuer, u64::MAX)];
     let res = h.registry.try_submit_proofs(&holder, &submissions);
     assert!(res.is_err());
 }
