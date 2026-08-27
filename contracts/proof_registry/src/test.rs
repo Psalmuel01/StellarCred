@@ -6,6 +6,7 @@ use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use soroban_sdk::{
+    contract, contractimpl,
     symbol_short,
     testutils::{
         storage::Persistent as _, Address as _, Events as _, Ledger as _, MockAuth,
@@ -35,6 +36,25 @@ const AGE_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/age/public_in
 const AGGREGATE_VK: &[u8] = include_bytes!("../../../fixtures/aggregate/vk");
 const AGGREGATE_PROOF: &[u8] = include_bytes!("../../../fixtures/aggregate/proof");
 const AGGREGATE_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/aggregate/public_inputs");
+
+/// Test-only verifier used for layout tests. The real aggregate fixture tests
+/// the cryptographic path above; this verifier lets the layout tests vary
+/// individual fields without having to regenerate an UltraHonk proof.
+#[contract]
+struct LayoutTestVerifier;
+
+#[contractimpl]
+impl LayoutTestVerifier {
+    pub fn verify_proof(
+        _env: Env,
+        _credential_type: Symbol,
+        _proof: Bytes,
+        _public_inputs: Bytes,
+        _vk_version: Option<u32>,
+    ) -> bool {
+        true
+    }
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1404,6 +1424,225 @@ fn aggregate_submits_real_proof_and_stores_claims() {
     // enforced by check_claim.
     assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(18), &None));
     assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(19), &None));
+}
+
+// ── Aggregate layout coverage ───────────────────────────────────────────────
+
+const AGGREGATE_FIELD_COUNT: usize = 133;
+const KYC_WIDTH: usize = 65;
+const AGE_WIDTH: usize = 67;
+const AGE_PUBKEY_FIELD: usize = KYC_WIDTH + 1;
+const AGE_THRESHOLD_FIELD: usize = KYC_WIDTH + AGE_WIDTH - 1;
+const NUM_CREDENTIALS_FIELD: usize = 132;
+const KYC_PUBKEY_FIELD: usize = 1;
+
+fn field_bytes(value: u64) -> [u8; 32] {
+    let mut field = [0u8; 32];
+    field[24..].copy_from_slice(&value.to_be_bytes());
+    field
+}
+
+fn aggregate_inputs(first_key: &[u8; 64], second_key: &[u8; 64], threshold: u64) -> Vec<u8> {
+    let mut fields = vec![field_bytes(0); AGGREGATE_FIELD_COUNT];
+    for (i, byte) in first_key.iter().enumerate() {
+        fields[KYC_PUBKEY_FIELD + i][31] = *byte;
+    }
+    for (i, byte) in second_key.iter().enumerate() {
+        fields[AGE_PUBKEY_FIELD + i][31] = *byte;
+    }
+    fields[AGE_THRESHOLD_FIELD] = field_bytes(threshold);
+    fields[NUM_CREDENTIALS_FIELD] = field_bytes(2);
+    fields.into_iter().flatten().collect()
+}
+
+struct LayoutHarness {
+    registry: ProofRegistryClient<'static>,
+    issuer_a: Address,
+    issuer_b: Address,
+    key_a: [u8; 64],
+    key_b: [u8; 64],
+}
+
+fn deploy_layout_harness(env: &Env) -> LayoutHarness {
+    let admin = Address::generate(env);
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(env, &ir_id);
+    let issuer_a = Address::generate(env);
+    let issuer_b = Address::generate(env);
+    let key_a = [0x11; 64];
+    let key_b = [0x22; 64];
+    ir.register_issuer(
+        &issuer_a,
+        &BytesN::from_array(env, &key_a),
+        &vec![env, symbol_short!("kyc")],
+    );
+    ir.register_issuer(
+        &issuer_b,
+        &BytesN::from_array(env, &key_b),
+        &vec![env, symbol_short!("age")],
+    );
+    let verifier_id = env.register(LayoutTestVerifier, ());
+    let registry_id = env.register(ProofRegistry, (admin, verifier_id, ir_id));
+    LayoutHarness {
+        registry: ProofRegistryClient::new(env, &registry_id),
+        issuer_a,
+        issuer_b,
+        key_a,
+        key_b,
+    }
+}
+
+fn submit_layout_aggregate(
+    env: &Env,
+    h: &LayoutHarness,
+    holder: &Address,
+    inputs: &[u8],
+    issuer_ids: Vec<Address>,
+    credential_types: Vec<Symbol>,
+) -> Result<(), Result<Error, soroban_sdk::InvokeError>> {
+    h.registry.try_submit_aggregate_proof(
+        holder,
+        &issuer_ids,
+        &credential_types,
+        &Bytes::new(env),
+        &Bytes::from_slice(env, inputs),
+        &9999,
+    )
+}
+
+#[test]
+fn aggregate_layout_happy_path_stores_claims_and_emits_one_event_each() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy_layout_harness(&env);
+    let holder = Address::generate(&env);
+    let inputs = aggregate_inputs(&h.key_a, &h.key_b, 25);
+
+    submit_layout_aggregate(
+        &env,
+        &h,
+        &holder,
+        &inputs,
+        vec![&env, h.issuer_a.clone(), h.issuer_b.clone()],
+        vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+    )
+    .unwrap();
+
+    // Capture events immediately: the test environment scopes events to the
+    // most recent contract invocation.
+    let submitted_events = env.events().all().filter_by_contract(&h.registry.address);
+    let kyc = h.registry.get_record(&holder, &symbol_short!("kyc")).unwrap();
+    assert_eq!(kyc.issuer, Some(h.issuer_a.clone()));
+    assert_eq!(kyc.threshold, None);
+    assert_eq!(kyc.expiry, 9999);
+    let age = h.registry.get_record(&holder, &symbol_short!("age")).unwrap();
+    assert_eq!(age.issuer, Some(h.issuer_b.clone()));
+    assert_eq!(age.threshold, Some(25));
+    assert_eq!(age.expiry, 9999);
+    assert_eq!(
+        submitted_events,
+        vec![
+            &env,
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.issuer_a.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 9999,
+                }
+                .into_val(&env),
+            ),
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("age"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder,
+                    issuer: h.issuer_b.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 9999,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+    assert!(h.registry.check_claim(&holder, &symbol_short!("age"), &Some(25), &None));
+    assert!(!h.registry.check_claim(&holder, &symbol_short!("age"), &Some(26), &None));
+}
+
+#[test]
+fn aggregate_layout_rejects_invalid_counts_and_vector_lengths() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy_layout_harness(&env);
+    let holder = Address::generate(&env);
+    let inputs = aggregate_inputs(&h.key_a, &h.key_b, 10);
+    let types = vec![&env, symbol_short!("kyc"), symbol_short!("age")];
+    let issuers = vec![&env, h.issuer_a.clone(), h.issuer_b.clone()];
+
+    let mut too_few = inputs.clone();
+    too_few[NUM_CREDENTIALS_FIELD * 32 + 31] = 1;
+    assert_eq!(
+        submit_layout_aggregate(&env, &h, &holder, &too_few, issuers.clone(), types.clone()),
+        Err(Ok(Error::AggregateLayoutInvalid))
+    );
+
+    let mut too_many = inputs.clone();
+    too_many[NUM_CREDENTIALS_FIELD * 32 + 31] = (MAX_BATCH_SIZE + 1) as u8;
+    assert_eq!(
+        submit_layout_aggregate(&env, &h, &holder, &too_many, issuers.clone(), types.clone()),
+        Err(Ok(Error::AggregateLayoutInvalid))
+    );
+
+    assert_eq!(
+        submit_layout_aggregate(
+            &env,
+            &h,
+            &holder,
+            &inputs,
+            vec![&env, h.issuer_a.clone()],
+            types,
+        ),
+        Err(Ok(Error::AggregateLayoutInvalid))
+    );
+    assert!(h.registry.get_record(&holder, &symbol_short!("kyc")).is_none());
+    assert!(h.registry.get_record(&holder, &symbol_short!("age")).is_none());
+}
+
+#[test]
+fn aggregate_layout_rejects_later_issuer_key_and_rolls_back_first_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy_layout_harness(&env);
+    let holder = Address::generate(&env);
+    let wrong_key = [0x33; 64];
+    let inputs = aggregate_inputs(&h.key_a, &wrong_key, 10);
+
+    assert_eq!(
+        submit_layout_aggregate(
+            &env,
+            &h,
+            &holder,
+            &inputs,
+            vec![&env, h.issuer_a.clone(), h.issuer_b.clone()],
+            vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+        ),
+        Err(Ok(Error::IssuerKeyMismatch))
+    );
+    assert!(h.registry.get_record(&holder, &symbol_short!("kyc")).is_none());
+    assert!(h.registry.get_record(&holder, &symbol_short!("age")).is_none());
+    assert_eq!(env.events().all().filter_by_contract(&h.registry.address).len(), 0);
 }
 
 // ── Admin / upgrade tests ────────────────────────────────────────────────────
