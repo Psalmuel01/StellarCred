@@ -95,12 +95,19 @@ const MAX_BATCH_SIZE: u32 = 5;
 // Age  (67 fields): commitment(1) + issuer_x(32) + issuer_y(32) +
 //                    current_date(1) + threshold_years(1)
 //
-// Field indices (0-based) within public_inputs:
+// Field indices (0-based) within public_inputs.
+// These constants document the fixed layout for auditors; runtime logic uses
+// `field_offset + aggregate_field_count` instead of referencing them directly.
+#[allow(dead_code)]
 const AGG_FIELD_KYC_START: u32 = 0;
+#[allow(dead_code)]
 const AGG_FIELD_KYC_PUBKEY: u32 = 1;
+#[allow(dead_code)]
 const AGG_FIELD_AGE_START: u32 = 65;
+#[allow(dead_code)]
 const AGG_FIELD_AGE_PUBKEY: u32 = 66;
-const AGG_FIELD_AGE_THRESHOLD: u32 = 131; // AGG_FIELD_AGE_START(65)+1+32+32+1=131
+#[allow(dead_code)] // AGG_FIELD_AGE_START(65) + 1 + 32 + 32 + 1 = 131
+const AGG_FIELD_AGE_THRESHOLD: u32 = 131;
 const AGG_FIELD_NUM_CREDENTIALS: u32 = 132;
 
 /// Typed client for the deployed CredentialVerifier contract. Declared as an
@@ -693,7 +700,9 @@ impl ProofRegistry {
                 Some(addr) => list.contains(addr),
             },
         }
-    }    /// Revoke a cached proof. The holder authorizes their own revocation.
+    }
+
+    /// Revoke a cached proof. The holder authorizes their own revocation.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
         env.storage()
@@ -749,7 +758,6 @@ impl ProofRegistry {
             .persistent()
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
 
-        #[allow(deprecated)]
         // Emit: topics = ("proof_reg", "revoked", credential_type)
         //       data   = EventProofRevoked { holder, issuer, revoked_at }
         env.events().publish(
