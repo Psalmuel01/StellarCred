@@ -5,8 +5,6 @@ extern crate std;
 use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
-use proptest::prelude::*;
-use proptest::test_runner::Config as ProptestConfig;
 use soroban_sdk::{
     symbol_short,
     testutils::{storage::Persistent as _, Address as _, Ledger as _},
@@ -61,25 +59,10 @@ fn u8_slice_to_vec_u32(env: &Env, slice: &[u8]) -> Vec<u32> {
     vec
 }
 
-fn get_test_wasm(env: &Env) -> Bytes {
-    let paths = [
-        "target/wasm32v1-none/release/proof_registry.wasm",
-        "../../target/wasm32v1-none/release/proof_registry.wasm",
-        "../target/wasm32v1-none/release/proof_registry.wasm",
-    ];
-    for path in paths.iter() {
-        if let Ok(wasm) = std::fs::read(path) {
-            return Bytes::from_slice(env, &wasm);
-        }
-    }
-    panic!("Could not find proof_registry.wasm. Run 'cargo build --target wasm32v1-none --release' first.");
-}
-
 struct Harness {
     registry: ProofRegistryClient<'static>,
     registry_id: Address,
     issuer: Address,
-    admin: Address,
 }
 
 fn deploy(env: &Env) -> Harness {
@@ -97,12 +80,11 @@ fn deploy(env: &Env) -> Harness {
         &Bytes::from_slice(env, VK),
     );
 
-    let pr_id = env.register(ProofRegistry, (admin.clone(), v_id, ir_id));
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
     Harness {
         registry: ProofRegistryClient::new(env, &pr_id),
         registry_id: pr_id,
         issuer,
-        admin,
     }
 }
 
@@ -218,7 +200,7 @@ fn submit_sets_ttl_through_expiry() {
     let key = DataKey::Proof(holder, symbol_short!("kyc"));
     let ttl = env.as_contract(&h.registry_id, || env.storage().persistent().get_ttl(&key));
     assert!(ttl >= 90 * DAY_IN_LEDGERS);
-    assert!(ttl >= ((expiry + SECONDS_PER_LEDGER - 1) / SECONDS_PER_LEDGER) as u32);
+    assert!(ttl >= expiry.div_ceil(SECONDS_PER_LEDGER) as u32);
 }
 
 #[test]
