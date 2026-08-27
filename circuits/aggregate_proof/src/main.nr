@@ -75,6 +75,7 @@ fn main(
 // --- Tests ---------------------------------------------------------------
 // Run: nargo test --package aggregate_proof
 
+// fails on the salt != 0 assert before the signature check is reached
 #[test(should_fail)]
 fn test_zero_kyc_salt_rejected() {
     let zero_sig: [u8; 64] = [0; 64];
@@ -88,6 +89,7 @@ fn test_zero_kyc_salt_rejected() {
     );
 }
 
+// fails on the salt != 0 assert before the signature check is reached
 #[test(should_fail)]
 fn test_zero_age_salt_rejected() {
     let zero_sig: [u8; 64] = [0; 64];
