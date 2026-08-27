@@ -3,7 +3,7 @@
 // Proves a private attribute (e.g. a country code, a role ID, a tier tag)
 // belongs to a public allowlist without revealing which member it is.
 // Membership is checked via a Merkle inclusion proof against a public root,
-// so the set itself never appears on-chain—only its root does.
+// so the set itself never appears on-chain -- only its root does.
 //
 // Public inputs (in order): commitment, issuer_pub_x, issuer_pub_y, merkle_root
 // Private inputs: value, salt, sig, path (sibling hashes), indices (left/right bits)
@@ -37,7 +37,7 @@ use dep::poseidon::poseidon2::Poseidon2;
 global DEPTH: u32 = 8;
 
 fn main(
-    // ── private inputs ────────────────────────────────────────────────────────
+    // --- private inputs ---------------------------------------------------
     // `value` is the set member being proved. Typed u64 (not Field) so it is
     // range-constrained; a raw Field value could be any BN254 scalar.
     value: u64,
@@ -55,7 +55,7 @@ fn main(
     // 1 means it is the RIGHT child. Each bit selects which order to pass the
     // pair into Poseidon2 so the computed root matches the canonical tree layout.
     indices: [u1; DEPTH],
-    // ── public inputs ─────────────────────────────────────────────────────────
+    // --- public inputs ----------------------------------------------------
     // The Poseidon2 commitment binding `value` to the issuer's signature.
     commitment: pub Field,
     // secp256k1 issuer public key (checked in-circuit; contract cross-checks
@@ -68,7 +68,7 @@ fn main(
     // allowed set.
     merkle_root: pub Field,
 ) {
-    // ── Step 1: commitment + issuer signature ─────────────────────────────────
+    // --- Step 1: commitment + issuer signature ----------------------------
     // Binds the private `value` to the issuer-signed commitment and verifies the
     // issuer's secp256k1 signature in-circuit. This is identical to every other
     // credential circuit; see circuits/lib/src/lib.nr for the full rationale.
@@ -84,7 +84,7 @@ fn main(
         issuer_y,
     );
 
-    // ── Step 2: Merkle inclusion proof ────────────────────────────────────────
+    // --- Step 2: Merkle inclusion proof ----------------------------------
     // Hash the value to a leaf. Using a 1-arity Poseidon2 call over the raw
     // value (rather than reusing the commitment) keeps the leaf domain separate
     // from the credential commitment domain: the two Poseidon invocations take
@@ -235,9 +235,9 @@ fn path_for_index_0() -> [Field; 8] {
 
     // Siblings at each level (leaf 0 is always the LEFT child at every level
     // because its binary position is 00000000):
-    //   level 0: sibling = leaf(276)  = l1
-    //   level 1: sibling = node(l2,l3) = n01
-    //   level 2: sibling = node(n02,n03) = n11
+    //   level 0: sibling = leaf(276)      = l1
+    //   level 1: sibling = node(l2,l3)    = n01
+    //   level 2: sibling = node(n02,n03)  = n11
     //   level 3: sibling = n21
     //   level 4: sibling = n31
     //   level 5: sibling = n41
@@ -247,7 +247,7 @@ fn path_for_index_0() -> [Field; 8] {
     [l1, n01, n11, n21, n31, n41, n51, z7]
 }
 
-// ── Merkle logic-only tests (no sig/commitment overhead) ───────────────────
+// --- Merkle logic-only tests (no sig/commitment overhead) -------------------
 
 // Verify that the Merkle traversal alone produces the correct root for the
 // known test tree. This test isolates the path-hashing logic from the
@@ -270,8 +270,8 @@ fn test_merkle_path_produces_correct_root() {
     assert(current == test_root());
 }
 
-// A non-member (value 999) should not be able to reach the root with any path
-// — even if we accidentally used the path for index 0.
+// A non-member (value 999) should not be able to reach the root with any path,
+// even if we accidentally used the path for index 0.
 #[test(should_fail)]
 fn test_non_member_path_rejected() {
     let value: Field = 999;
@@ -292,7 +292,7 @@ fn test_non_member_path_rejected() {
 }
 
 // A valid member with a WRONG index bit flipped at level 0 produces a
-// different root — each bit must be correct.
+// different root -- each bit must be correct.
 #[test(should_fail)]
 fn test_flipped_index_bit_rejected() {
     let value: Field = 840;
@@ -330,7 +330,7 @@ fn test_tampered_sibling_rejected() {
     assert(current == test_root());
 }
 
-// ── Commitment-binding tests ────────────────────────────────────────────────
+// --- Commitment-binding tests -----------------------------------------------
 
 // A tampered commitment (does not match Poseidon2([value, salt], 2)) must be
 // rejected at the commitment check, before the Merkle check even runs.
@@ -344,7 +344,7 @@ fn test_wrong_commitment_rejected() {
         SM_ZERO_SIG,
         path,
         indices,
-        0x0000000000000000000000000000000000000000000000000000000000000001, // bad commitment
+        0x0000000000000000000000000000000000000000000000000000000000000001,
         SM_ZERO_X,
         SM_ZERO_Y,
         test_root(),
