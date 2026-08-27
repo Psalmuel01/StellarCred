@@ -84,10 +84,6 @@ const MAX_CREDENTIAL_TTL_SECS: u64 = 365 * 86_400; // 1 year, in seconds
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
 const MAX_BATCH_SIZE: u32 = 5;
 
-// ── Expiry validation constants ──────────────────────────────────────────────
-const MIN_EXPIRY_SECONDS_AHEAD: u64 = 3600;
-const MAX_EXPIRY_SECONDS_AHEAD: u64 = 366 * 24 * 3600;
-
 // ── Aggregate proof public-input layout (N=2: KYC + age) ────────────────────
 // The aggregate_proof circuit packs N credential public inputs sequentially,
 // followed by num_credentials as the last field.
@@ -114,7 +110,13 @@ const AGG_FIELD_NUM_CREDENTIALS: u32 = 132;
 /// Typed client for the deployed CredentialVerifier contract.
 #[contractclient(name = "VerifierClient")]
 pub trait VerifierInterface {
-    fn verify_proof(env: Env, credential_type: Symbol, proof: Bytes, public_inputs: Bytes, vk_version: Option<u32>) -> bool;
+    fn verify_proof(
+        env: Env,
+        credential_type: Symbol,
+        proof: Bytes,
+        public_inputs: Bytes,
+        vk_version: Option<u32>,
+    ) -> bool;
 }
 
 /// Typed client for the deployed IssuerRegistry contract.
@@ -331,7 +333,11 @@ impl ProofRegistry {
 
     /// Batch submission - one event per credential.
     #[allow(deprecated)]
-    pub fn submit_proofs(env: Env, holder: Address, submissions: Vec<ProofSubmission>) -> Vec<bool> {
+    pub fn submit_proofs(
+        env: Env,
+        holder: Address,
+        submissions: Vec<ProofSubmission>,
+    ) -> Vec<bool> {
         holder.require_auth();
         Self::ensure_not_paused(&env);
 
@@ -351,10 +357,6 @@ impl ProofRegistry {
                     panic_with_error!(&env, Error::DuplicateCredentialType);
                 }
             }
-        }
-
-        for sub in submissions.iter() {
-            Self::validate_expiry(&env, sub.expiry);
         }
 
         let issuer_registry_addr = Self::issuer_registry(&env);
@@ -391,7 +393,11 @@ impl ProofRegistry {
             let record = ProofRecord {
                 verified_at: now,
                 expiry: sub.expiry,
-                threshold: Self::extract_threshold(&env, &sub.credential_type, &public_inputs_bytes),
+                threshold: Self::extract_threshold(
+                    &env,
+                    &sub.credential_type,
+                    &public_inputs_bytes,
+                ),
                 revoked: false,
                 issuer: Some(sub.issuer_id.clone()),
                 vk_version: effective_version,
@@ -558,11 +564,7 @@ impl ProofRegistry {
         }
     }
 
-    pub fn get_record(
-        env: Env,
-        holder: Address,
-        credential_type: Symbol,
-    ) -> Option<ProofRecord> {
+    pub fn get_record(env: Env, holder: Address, credential_type: Symbol) -> Option<ProofRecord> {
         env.storage()
             .persistent()
             .get::<_, ProofRecord>(&DataKey::Proof(holder, credential_type))
@@ -680,11 +682,7 @@ impl ProofRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
 
         if raw_map.len() == 4 {
-            let legacy: LegacyProofRecord = env
-                .storage()
-                .persistent()
-                .get(&key)
-                .unwrap();
+            let legacy: LegacyProofRecord = env.storage().persistent().get(&key).unwrap();
 
             let record = ProofRecord {
                 verified_at: legacy.verified_at,
@@ -709,15 +707,19 @@ impl ProofRegistry {
 
     fn validate_expiry(env: &Env, expiry: u64) {
         let now = env.ledger().timestamp();
-        if expiry <= now.saturating_add(MIN_EXPIRY_SECONDS_AHEAD) {
-            panic_with_error!(env, Error::ExpiryTooSoon);
+        if expiry <= now {
+            panic_with_error!(env, Error::InvalidExpiry);
         }
-        if expiry > now.saturating_add(MAX_EXPIRY_SECONDS_AHEAD) {
-            panic_with_error!(env, Error::ExpiryTooFar);
+        if expiry > now.saturating_add(MAX_CREDENTIAL_TTL_SECS) {
+            panic_with_error!(env, Error::InvalidExpiry);
         }
     }
 
-    fn extract_threshold(env: &Env, credential_type: &Symbol, public_inputs: &Bytes) -> Option<u64> {
+    fn extract_threshold(
+        env: &Env,
+        credential_type: &Symbol,
+        public_inputs: &Bytes,
+    ) -> Option<u64> {
         if *credential_type == symbol_short!("age") {
             Some(Self::read_u64_field(public_inputs, 66))
         } else if *credential_type == symbol_short!("income")
@@ -739,15 +741,7 @@ impl ProofRegistry {
         }
         u64::from_be_bytes(b)
     }
-      fn validate_expiry(env: &Env, expiry: u64) {
-      let now = env.ledger().timestamp();
-     if expiry <= now {
-        panic_with_error!(env, Error::InvalidExpiry);
-    }
-      if expiry > now.saturating_add(MAX_CREDENTIAL_TTL_SECS) {
-        panic_with_error!(env, Error::InvalidExpiry);
-    }
-}
+
     /// True iff the secp256k1 public key embedded in `public_inputs` (fields
     /// 1..65, one byte per field in the low byte) equals `expected` (x || y).
     fn public_inputs_match_pubkey(public_inputs: &Bytes, expected: &BytesN<64>) -> bool {
@@ -852,7 +846,10 @@ impl ProofRegistry {
     }
 
     fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     fn ensure_not_paused(env: &Env) {

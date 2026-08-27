@@ -11,8 +11,8 @@
 //! the demo self-contained; swap in a token client for production.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    Address, Env, Symbol, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error, Address,
+    Env, Symbol, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -58,10 +58,19 @@ pub struct GatedPool;
 #[contractimpl]
 impl GatedPool {
     /// `registry` is the deployed ProofRegistry contract address.
-    pub fn __constructor(env: Env, registry: Address, required_type: Symbol, min_threshold: Option<u64>) {
+    pub fn __constructor(
+        env: Env,
+        registry: Address,
+        required_type: Symbol,
+        min_threshold: Option<u64>,
+    ) {
         env.storage().instance().set(&DataKey::Registry, &registry);
-        env.storage().instance().set(&DataKey::RequiredType, &required_type);
-        env.storage().instance().set(&DataKey::MinThreshold, &min_threshold);
+        env.storage()
+            .instance()
+            .set(&DataKey::RequiredType, &required_type);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinThreshold, &min_threshold);
     }
 
     /// Deposit `amount`. Requires a currently-valid proof for the configured claim.

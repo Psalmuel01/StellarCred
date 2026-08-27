@@ -84,9 +84,8 @@ fn prop_revoked_issuer_never_valid() {
         ..proptest::test_runner::Config::default()
     };
     let mut runner = proptest::test_runner::TestRunner::new(config);
-    runner.run(
-        &(0u64..u64::MAX, 0u64..u64::MAX),
-        |(_seed_a, _seed_b)| {
+    runner
+        .run(&(0u64..u64::MAX, 0u64..u64::MAX), |(_seed_a, _seed_b)| {
             let env = Env::default();
             env.mock_all_auths();
             let (_admin, client) = setup(&env);
@@ -113,9 +112,8 @@ fn prop_revoked_issuer_never_valid() {
             prop_assert!(!kyc_valid, "Revoked issuer should not be valid for kyc");
             prop_assert!(!age_valid, "Revoked issuer should not be valid for age");
             Ok(())
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
 }
 
 /// Property: An unregistered issuer is never valid.
@@ -128,26 +126,27 @@ fn prop_unregistered_issuer_never_valid() {
         ..proptest::test_runner::Config::default()
     };
     let mut runner = proptest::test_runner::TestRunner::new(config);
-    runner.run(&(0u64..u64::MAX), |_seed| {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (_admin, client) = setup(&env);
 
-        // Address::generate creates a unique address not registered
-        // in the IssuerRegistry.
-        let unregistered = Address::generate(&env);
+            // Address::generate creates a unique address not registered
+            // in the IssuerRegistry.
+            let unregistered = Address::generate(&env);
 
-        prop_assert!(
-            !client.is_valid_issuer(&unregistered, &symbol_short!("kyc")),
-            "Unregistered issuer should never be valid"
-        );
-        prop_assert!(
-            !client.is_valid_issuer(&unregistered, &symbol_short!("age")),
-            "Unregistered issuer should never be valid for any type"
-        );
-        Ok(())
-    })
-    .unwrap();
+            prop_assert!(
+                !client.is_valid_issuer(&unregistered, &symbol_short!("kyc")),
+                "Unregistered issuer should never be valid"
+            );
+            prop_assert!(
+                !client.is_valid_issuer(&unregistered, &symbol_short!("age")),
+                "Unregistered issuer should never be valid for any type"
+            );
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -175,7 +174,10 @@ fn set_and_get_issuer_metadata() {
 
     let meta = client.get_issuer_metadata(&issuer).unwrap();
     assert_eq!(meta.name, Some(String::from_str(&env, "Test Issuer")));
-    assert_eq!(meta.url, Some(String::from_str(&env, "https://example.com")));
+    assert_eq!(
+        meta.url,
+        Some(String::from_str(&env, "https://example.com"))
+    );
     assert!(meta.logo.is_none());
 
     // Update to add logo and change name.
