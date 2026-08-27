@@ -145,6 +145,42 @@ fn submit_then_verified() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn rejects_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    submit(&env, &h, &holder, 4999);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn rejects_over_max_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, MAX_CREDENTIAL_TTL_SECS + 1);
+}
+
+  #[test]
+  #[should_panic(expected = "Error(Contract, #12)")]
+ fn batch_rejects_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    let subs = vec![&env, kyc_submission(&env, &h.issuer, 100)];
+    h.registry.submit_proofs(&holder, &subs);
+}
+
+#[test]
 fn submit_sets_ttl_through_expiry() {
     let env = Env::default();
     env.mock_all_auths();

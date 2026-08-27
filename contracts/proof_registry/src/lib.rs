@@ -83,6 +83,7 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const SECONDS_PER_LEDGER: u64 = 5;
 const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
 const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
+const MAX_CREDENTIAL_TTL_SECS: u64 = 365 * 86_400; // 1 year, in seconds
 
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
 const MAX_BATCH_SIZE: u32 = 5;
@@ -222,6 +223,8 @@ pub enum Error {
     AggregateLayoutInvalid = 10,
     /// New submissions are temporarily halted by admin.
     SubmissionsPaused = 11,
+    /// `expiry` is not in the future, or is too far in the future.
+    InvalidExpiry = 12,
 }
 
 #[contract]
@@ -326,6 +329,7 @@ impl ProofRegistry {
     ) {
         holder.require_auth();
         Self::ensure_not_paused(&env);
+        Self::validate_expiry(&env, expiry);
 
         // 1. The named issuer must be trusted for this credential type.
         let registry = IssuerClient::new(&env, &Self::issuer_registry(&env));
@@ -416,6 +420,7 @@ impl ProofRegistry {
         let now = env.ledger().timestamp();
 
         for sub in submissions.iter() {
+            Self::validate_expiry(&env, sub.expiry);
             let public_inputs_bytes = vec_u32_to_bytes(&env, &sub.public_inputs);
 
             if !registry.is_valid_issuer(&sub.issuer_id, &sub.credential_type) {
@@ -852,7 +857,15 @@ impl ProofRegistry {
         }
         u64::from_be_bytes(b)
     }
-
+      fn validate_expiry(env: &Env, expiry: u64) {
+      let now = env.ledger().timestamp();
+     if expiry <= now {
+        panic_with_error!(env, Error::InvalidExpiry);
+    }
+      if expiry > now.saturating_add(MAX_CREDENTIAL_TTL_SECS) {
+        panic_with_error!(env, Error::InvalidExpiry);
+    }
+}
     /// True iff the secp256k1 public key embedded in `public_inputs` (fields
     /// 1..65, one byte per field in the low byte) equals `expected` (x || y).
     fn public_inputs_match_pubkey(public_inputs: &Bytes, expected: &BytesN<64>) -> bool {
