@@ -24,6 +24,7 @@ import { Badge } from "@/components/Badge";
 import { Check } from "@/components/Check";
 import { ConfigBanner } from "@/components/ConfigBanner";
 import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
+import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
 import { computeWitness, proveWithBackend } from "@/lib/proof";
@@ -187,8 +188,16 @@ function CredCard({
           {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
-            disabled={!address || credIsExpired(c)}
-            title={!address ? "Connect a wallet first" : credIsExpired(c) ? "This credential has expired" : undefined}
+            disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
+            title={
+              !address
+                ? "Connect a wallet first"
+                : credIsExpired(c)
+                  ? "This credential has expired"
+                  : !proofSubmissionConfigured()
+                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    : undefined
+            }
             onClick={onProve}
           >
             {status === "proved"  ? "Re-prove" :
@@ -476,11 +485,13 @@ function HolderInner() {
                       id="prove-all-btn"
                       className="btn btn-primary"
                       style={{ gap: "0.45rem", display: "inline-flex", alignItems: "center" }}
-                      disabled={!canSubmitBatch}
+                      disabled={!canSubmitBatch || !proofSubmissionConfigured()}
                       title={
-                        canSubmitBatch
-                          ? undefined
-                          : "Select at least 2 credentials to prove them together"
+                        !proofSubmissionConfigured()
+                          ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                          : canSubmitBatch
+                            ? undefined
+                            : "Select at least 2 credentials to prove them together"
                       }
                       onClick={() => setView({ kind: "batch", creds: selectedCreds })}
                     >
@@ -957,8 +968,14 @@ function ProofFlow({
                 cursor: networkMismatch ? "not-allowed" : "pointer",
               }}
               onClick={onSubmit}
-              disabled={networkMismatch}
-              title={networkMismatch ? "Switch your wallet to the correct network to submit" : undefined}
+              disabled={networkMismatch || !proofSubmissionConfigured()}
+              title={
+                networkMismatch
+                  ? "Switch your wallet to the correct network to submit"
+                  : !proofSubmissionConfigured()
+                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    : undefined
+              }
             >
               Submit to Stellar
               <IconArrowRight size={15} />
@@ -1200,6 +1217,9 @@ function BatchProofFlow({
 
   useEffect(() => {
     if (!allReady || networkMismatch) return;
+    // Defensive: entry buttons are already gated, but never auto-fire an
+    // on-chain submission on a misconfigured deploy either.
+    if (!proofSubmissionConfigured()) return;
     toast.success(`Generated ${creds.length} proofs`);
     setBatchStage("submitting");
 

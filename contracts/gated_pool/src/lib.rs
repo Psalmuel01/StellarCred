@@ -2,16 +2,17 @@
 //! GatedPool (demo)
 //!
 //! A mock DeFi pool that gates **deposits** behind a valid KYC proof in the
-//! ProofRegistry. Withdrawals are open. This is the contract that makes the demo
-//! concrete: same call, two outcomes — "Access Denied" without a proof, "Access
-//! Granted" after one is submitted.
+//! ProofRegistry. Withdrawals are open to the authorized balance owner even
+//! after their credential expires or is revoked. This is the contract that
+//! makes the demo concrete: same call, two outcomes — "Access Denied" without
+//! a proof, "Access Granted" after one is submitted.
 //!
 //! Balances are tracked as a plain ledger here (no real token transfer) to keep
 //! the demo self-contained; swap in a token client for production.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    symbol_short, Address, Env, Symbol, Vec,
+    Address, Env, Symbol, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -85,7 +86,12 @@ impl GatedPool {
         Self::set_balance(&env, &caller, balance);
     }
 
-    /// Withdraw `amount`. Open — no proof required.
+    /// Withdraw `amount` from the caller's balance.
+    ///
+    /// Withdrawal does not require a current credential: a holder retains
+    /// access to their own funds after the credential used for deposit expires
+    /// or is revoked. The caller must still authorize the operation, provide a
+    /// positive amount, and stay within their recorded balance.
     pub fn withdraw(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -95,7 +101,10 @@ impl GatedPool {
         if amount > balance {
             panic_with_error!(&env, Error::InsufficientBalance);
         }
-        Self::set_balance(&env, &caller, balance - amount);
+        let remaining = balance
+            .checked_sub(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InsufficientBalance));
+        Self::set_balance(&env, &caller, remaining);
     }
 
     pub fn get_balance(env: Env, account: Address) -> i128 {
