@@ -92,10 +92,10 @@ jobs:
         run: cargo test --locked
 
       - name: Lint (clippy)
-        # Warn-only — clippy lints should not block CI on first integration,
-        # but the output is captured so reviewers can see any issues.
+        # Blocking — clippy warnings are treated as errors for all contract
+        # crates. Any new lint must either be fixed or explicitly allowed with
+        # a documented reason using #[allow(clippy::lint_name)] inline.
         run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
 
   circuits:
     name: Circuit compile

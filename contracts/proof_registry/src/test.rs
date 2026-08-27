@@ -145,6 +145,42 @@ fn submit_then_verified() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn rejects_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    submit(&env, &h, &holder, 4999);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn rejects_over_max_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, MAX_CREDENTIAL_TTL_SECS + 1);
+}
+
+  #[test]
+  #[should_panic(expected = "Error(Contract, #12)")]
+ fn batch_rejects_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    let subs = vec![&env, kyc_submission(&env, &h.issuer, 100)];
+    h.registry.submit_proofs(&holder, &subs);
+}
+
+#[test]
 fn submit_sets_ttl_through_expiry() {
     let env = Env::default();
     env.mock_all_auths();
@@ -157,7 +193,7 @@ fn submit_sets_ttl_through_expiry() {
     let key = DataKey::Proof(holder, symbol_short!("kyc"));
     let ttl = env.as_contract(&h.registry_id, || env.storage().persistent().get_ttl(&key));
     assert!(ttl >= 90 * DAY_IN_LEDGERS);
-    assert!(ttl >= ((expiry + SECONDS_PER_LEDGER - 1) / SECONDS_PER_LEDGER) as u32);
+    assert!(ttl >= expiry.div_ceil(SECONDS_PER_LEDGER) as u32);
 }
 
 #[test]
@@ -791,8 +827,6 @@ fn age_threshold_stored_and_checked() {
 }
 
 // ── check_claim property & boundary fuzz tests (Issue #26) ───────────────────
-
-use proptest::prelude::*;
 
 fn deploy_registry(env: &Env) -> (ProofRegistryClient<'static>, Address) {
     env.mock_all_auths();
@@ -1523,7 +1557,7 @@ fn legacy_record_missing_issuer_key_fails_to_read() {
 
 #[test]
 fn get_record_returns_full_proof_record_when_present() {
-    let env = Env::default();
+    let _env = Env::default();
     // ... rest of get_record test
 }
 
@@ -1745,7 +1779,7 @@ fn migrate_record_makes_legacy_readable() {
     assert_eq!(record.verified_at, env.ledger().timestamp());
     assert_eq!(record.expiry, 1000);
     assert_eq!(record.threshold, None);
-    assert_eq!(record.revoked, false);
+    assert!(!record.revoked);
     assert_eq!(record.issuer, Some(h.issuer.clone()));
 }
 
@@ -1845,7 +1879,7 @@ fn get_record_populates_threshold_for_parameterised_credentials() {
     assert_eq!(record.verified_at, env.ledger().timestamp());
     assert_eq!(record.expiry, 5000);
     assert_eq!(record.threshold, Some(200_000));
-    assert_eq!(record.revoked, false);
+    assert!(!record.revoked);
     assert_eq!(record.issuer, Some(issuer));
 }
 
@@ -1871,7 +1905,7 @@ fn get_record_returns_raw_record_without_validity_check() {
         .expect("Record should be retrieved as-is");
 
     assert_eq!(record.expiry, 1000);
-    assert_eq!(record.revoked, true);
+    assert!(record.revoked);
     assert_eq!(record.issuer, Some(h.issuer.clone()));
 }
 
