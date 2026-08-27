@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
 import { checkContentLength, bodyErrorResponse } from "../../../lib/request-limits";
+import {
+  checkLimit,
+  extractIp,
+  hashForLog,
+  tooManyRequestsResponse,
+  LIMITS,
+} from "../../../lib/rate-limit";
 import { fetchPlaidBalance } from "../../../lib/plaid";
 
 export async function GET(req: NextRequest) {
@@ -10,6 +17,24 @@ export async function GET(req: NextRequest) {
     response.headers.set("x-request-id", requestId);
     return response;
   };
+
+  // ── Rate limiting ─────────────────────────────────────────────────────────
+  // Applied before the Content-Length check: floods are rejected before any
+  // header inspection or upstream Plaid call.
+  const ip = extractIp(req);
+  const ipResult = checkLimit(`plaid:ip:${ip}`, LIMITS.plaidPerIp(), LIMITS.windowMs());
+  if (ipResult.throttled) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "rate_limited",
+        route: "plaid-balance",
+        dimension: "ip",
+        ipToken: hashForLog(ip),
+        requestId,
+      }),
+    );
+    return sendResponse(tooManyRequestsResponse(ipResult.retryAfterMs));
+  }
 
   // This route reads no body, but it still refuses an oversized one rather
   // than letting the request reach the upstream Plaid call.

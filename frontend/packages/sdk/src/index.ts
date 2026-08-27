@@ -179,6 +179,21 @@ export class ConfigError extends Error {
 }
 
 /**
+ * Error thrown when a wallet address is empty or is not a valid Stellar
+ * Ed25519 public key.
+ *
+ * In the default fail-soft path, public claim-read APIs return `false`, `null`,
+ * or `[]` for an invalid address. Pass `{ throwOnError: true }` to `hasClaim`
+ * / `getClaims` to surface this error to the caller.
+ */
+export class InvalidAddressError extends Error {
+  constructor(message = "Invalid Stellar address") {
+    super(message);
+    this.name = "InvalidAddressError";
+  }
+}
+
+/**
  * Error thrown when an RPC / contract-simulation call fails (network,
  * timeout at the transport layer, simulation error, etc.). Only surfaces
  * when `{ throwOnError: true }` is passed — distinguishing "couldn't check"
@@ -270,6 +285,28 @@ let _sdk: Promise<StellarSDK> | null = null;
 function getSdk(): Promise<StellarSDK> {
   if (!_sdk) _sdk = import("@stellar/stellar-sdk");
   return _sdk;
+}
+
+/**
+ * Normalize and validate a wallet before any on-chain read.
+ *
+ * This is intentionally performed before `getClient()` so malformed input
+ * cannot result in an RPC/client construction attempt.
+ */
+async function normalizeAndValidateWallet(wallet: string): Promise<string> {
+  const normalized = wallet.trim();
+
+  if (!normalized) {
+    throw new InvalidAddressError("Invalid Stellar address: address is empty");
+  }
+
+  const { StrKey } = await getSdk();
+
+  if (!StrKey.isValidEd25519PublicKey(normalized)) {
+    throw new InvalidAddressError("Invalid Stellar address");
+  }
+
+  return normalized;
 }
 
 // The client is stateless per config, so one instance is shared across every
@@ -479,8 +516,9 @@ async function readCheckClaim(
  * });
  *
  * @example
- * // Opt into typed errors — network failure throws RpcError, missing
- * // registryId throws ConfigError; "not verified" still returns false.
+ * // Opt into typed errors — invalid wallets throw InvalidAddressError,
+ * // network failure throws RpcError, missing registryId throws ConfigError;
+ * // "not verified" still returns false.
  * try {
  *   const ok = await hasClaim("G1ABC…", "kyc", { throwOnError: true });
  * } catch (err) {
@@ -499,9 +537,26 @@ export async function hasClaim(
 ): Promise<boolean> {
   warnIfMissingRegistryIdOnce();
   const throwOnError = opts?.throwOnError === true;
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch (err) {
+    if (err instanceof InvalidAddressError) {
+      if (throwOnError) throw err;
+      return false;
+    }
+    // Loading the Stellar SDK itself failed. Treat this like the existing
+    // fail-soft/RPC path rather than misclassifying it as invalid input.
+    if (throwOnError) {
+      throw new RpcError("Failed to validate Stellar address", { cause: err });
+    }
+    return false;
+  }
+
   if (opts?.minThreshold !== undefined) {
     return readCheckClaim(
-      wallet,
+      normalizedWallet,
       claimType,
       opts.minThreshold,
       opts.trustedIssuers,
@@ -509,8 +564,9 @@ export async function hasClaim(
       opts.requestTimeoutMs,
     );
   }
+
   const r = await readIsVerified(
-    wallet,
+    normalizedWallet,
     claimType,
     opts?.trustedIssuers,
     throwOnError,
@@ -548,8 +604,16 @@ export async function getClaim(
   opts?: Pick<ClaimOptions, "trustedIssuers" | "requestTimeoutMs">,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   warnIfMissingRegistryIdOnce();
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch {
+    return null;
+  }
+
   const r = await readIsVerified(
-    wallet,
+    normalizedWallet,
     claimType,
     opts?.trustedIssuers,
     false,
@@ -612,12 +676,24 @@ export async function hasClaims(
   const unique = Array.from(new Set(types));
   const results: Partial<Record<ClaimType, boolean>> = {};
 
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch {
+    // Preserve the fail-soft batch contract: each requested type is false,
+    // and importantly no client/RPC read is attempted.
+    for (const type of unique) {
+      results[type] = false;
+    }
+    return results;
+  }
+
   await fanOut(unique, async (t) => {
     try {
       const minThreshold = opts?.minThresholds?.[t];
       if (minThreshold !== undefined) {
         results[t] = await readCheckClaim(
-          wallet,
+          normalizedWallet,
           t,
           minThreshold,
           opts?.trustedIssuers,
@@ -627,7 +703,7 @@ export async function hasClaims(
         return;
       }
       const r = await readIsVerified(
-        wallet,
+        normalizedWallet,
         t,
         opts?.trustedIssuers,
         false,
@@ -649,10 +725,10 @@ export async function hasClaims(
  * Uses the same batched fan-out as {@link hasClaims}, so all types are read
  * through one shared client.
  *
- * Pass `{ throwOnError: true }` to surface {@link ConfigError} / {@link RpcError}
- * instead of silently dropping failed reads. When `throwOnError` is set, a
- * single failing claim type rejects the whole batch (fail-fast) and discards
- * successful reads for other types.
+ * Pass `{ throwOnError: true }` to surface {@link InvalidAddressError},
+ * {@link ConfigError} / {@link RpcError} instead of silently dropping failed
+ * reads. When `throwOnError` is set, a single failing claim type rejects the
+ * whole batch (fail-fast) and discards successful reads for other types.
  */
 export async function getClaims(
   wallet: string,
@@ -660,13 +736,28 @@ export async function getClaims(
 ): Promise<Claim[]> {
   warnIfMissingRegistryIdOnce();
   const throwOnError = opts?.throwOnError === true;
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch (err) {
+    if (err instanceof InvalidAddressError) {
+      if (throwOnError) throw err;
+      return [];
+    }
+    if (throwOnError) {
+      throw new RpcError("Failed to validate Stellar address", { cause: err });
+    }
+    return [];
+  }
+
   const results = await fanOut(CLAIM_TYPES, async (t) => {
     // Same isolation as `hasClaims` when fail-soft: `readIsVerified` swallows
     // read errors, but its own `getClient()` await can still reject (a failed
     // SDK import), which would otherwise reject the whole fan-out.
     try {
       const r = await readIsVerified(
-        wallet,
+        normalizedWallet,
         t,
         undefined,
         throwOnError,
@@ -960,6 +1051,7 @@ export const StellarCred = {
   CLAIM_TYPES,
   TimeoutError,
   ConfigError,
+  InvalidAddressError,
   RpcError,
 };
 export default StellarCred;

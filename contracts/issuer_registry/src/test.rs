@@ -2,7 +2,7 @@
 
 use super::*;
 use proptest::prelude::*;
-use soroban_sdk::{symbol_short, testutils::{Address as _, Events as _}, vec, Address, BytesN, Env, IntoVal};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, BytesN, Env};
 
 fn setup(env: &Env) -> (Address, IssuerRegistryClient<'_>) {
     let admin = Address::generate(env);
@@ -202,6 +202,139 @@ fn get_issuer_metadata_returns_none_for_unknown() {
     let stranger = Address::generate(&env);
     let meta = client.get_issuer_metadata(&stranger);
     assert!(meta.is_none());
+}
+
+// ── Pagination tests (#287) ──────────────────────────────────────────────────
+
+#[test]
+fn issuer_count_tracks_registrations() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    assert_eq!(client.issuer_count(), 0);
+
+    let pubkey = BytesN::from_array(&env, &[1u8; 64]);
+    let types = vec![&env, symbol_short!("kyc")];
+
+    let a = Address::generate(&env);
+    client.register_issuer(&a, &pubkey, &types);
+    assert_eq!(client.issuer_count(), 1);
+
+    let b = Address::generate(&env);
+    client.register_issuer(&b, &pubkey, &types);
+    assert_eq!(client.issuer_count(), 2);
+
+    // Re-registering an existing issuer must not inflate the count.
+    client.register_issuer(&a, &pubkey, &types);
+    assert_eq!(client.issuer_count(), 2);
+}
+
+#[test]
+fn get_issuers_page_returns_correct_slice() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let pubkey = BytesN::from_array(&env, &[2u8; 64]);
+    let types = vec![&env, symbol_short!("kyc")];
+
+    // Register 5 issuers.
+    let mut issuers: Vec<Address> = Vec::new(&env);
+    for _ in 0..5 {
+        let addr = Address::generate(&env);
+        client.register_issuer(&addr, &pubkey, &types);
+        issuers.push_back(addr);
+    }
+
+    // First page of 2.
+    let page0 = client.get_issuers_page(&0, &2);
+    assert_eq!(page0.len(), 2);
+    assert_eq!(page0.get(0).unwrap(), issuers.get(0).unwrap());
+    assert_eq!(page0.get(1).unwrap(), issuers.get(1).unwrap());
+
+    // Second page of 2.
+    let page1 = client.get_issuers_page(&2, &2);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap(), issuers.get(2).unwrap());
+    assert_eq!(page1.get(1).unwrap(), issuers.get(3).unwrap());
+
+    // Last partial page.
+    let page2 = client.get_issuers_page(&4, &2);
+    assert_eq!(page2.len(), 1);
+    assert_eq!(page2.get(0).unwrap(), issuers.get(4).unwrap());
+}
+
+#[test]
+fn get_issuers_page_out_of_bounds_returns_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    // No issuers at all.
+    let page = client.get_issuers_page(&0, &5);
+    assert_eq!(page.len(), 0);
+
+    // Register one, then request past the end.
+    let pubkey = BytesN::from_array(&env, &[3u8; 64]);
+    client.register_issuer(
+        &Address::generate(&env),
+        &pubkey,
+        &vec![&env, symbol_short!("kyc")],
+    );
+    let page = client.get_issuers_page(&10, &5);
+    assert_eq!(page.len(), 0);
+}
+
+#[test]
+fn get_issuers_page_limit_cap_is_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let pubkey = BytesN::from_array(&env, &[4u8; 64]);
+    let types = vec![&env, symbol_short!("kyc")];
+
+    // Register 25 issuers.
+    for _ in 0..25 {
+        client.register_issuer(&Address::generate(&env), &pubkey, &types);
+    }
+
+    // Requesting 100 must be silently capped at MAX_PAGE_SIZE (20).
+    let page = client.get_issuers_page(&0, &100);
+    assert_eq!(page.len(), 20);
+}
+
+#[test]
+fn get_issuers_page_after_revocation_is_consistent() {
+    // Revocation marks an issuer as revoked but does NOT remove it from the
+    // enumeration list — pagination must remain gap-free, and callers can
+    // filter revoked issuers via get_issuer(...).revoked.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let pubkey = BytesN::from_array(&env, &[5u8; 64]);
+    let types = vec![&env, symbol_short!("kyc")];
+
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    client.register_issuer(&a, &pubkey, &types);
+    client.register_issuer(&b, &pubkey, &types);
+    client.register_issuer(&c, &pubkey, &types);
+
+    client.revoke_issuer(&b);
+
+    // All three addresses are still in the list — no gaps.
+    assert_eq!(client.issuer_count(), 3);
+    let page = client.get_issuers_page(&0, &10);
+    assert_eq!(page.len(), 3);
+
+    // The revoked issuer is identifiable via get_issuer.
+    assert!(client.get_issuer(&b).revoked);
+    assert!(!client.get_issuer(&a).revoked);
+    assert!(!client.get_issuer(&c).revoked);
 }
 
 #[test]
