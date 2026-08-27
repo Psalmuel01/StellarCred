@@ -482,6 +482,30 @@ fn batch_empty_is_rejected() {
     assert!(res.is_err());
 }
 
+#[test]
+fn batch_rejects_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let submissions = vec![&env, kyc_submission(&env, &h.issuer, 0)];
+    let res = h.registry.try_submit_proofs(&holder, &submissions);
+    assert!(res.is_err());
+}
+
+#[test]
+fn batch_rejects_over_max_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let submissions = vec![&env, kyc_submission(&env, &h.issuer, u64::MAX)];
+    let res = h.registry.try_submit_proofs(&holder, &submissions);
+    assert!(res.is_err());
+}
+
 // ── Aggregate proof tests ─────────────────────────────────────────────────────
 
 #[test]
@@ -524,6 +548,129 @@ fn aggregate_submits_real_proof_and_stores_claims() {
     assert!(registry.is_verified(&holder, &symbol_short!("age"), &None).0);
     assert!(registry.check_claim(&holder, &symbol_short!("age"), &Some(18), &None));
     assert!(!registry.check_claim(&holder, &symbol_short!("age"), &Some(19), &None));
+}
+
+#[test]
+fn aggregate_honors_per_credential_expiries() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &demo_pubkey(&env),
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+    );
+
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id).set_vk(
+        &symbol_short!("aggregate"),
+        &1u32,
+        &Bytes::from_slice(&env, AGGREGATE_VK),
+    );
+
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+
+    // KYC gets a long-lived expiry, age gets a shorter one — the two must be
+    // stored independently, not collapsed onto one shared value.
+    registry.submit_aggregate_proof(
+        &holder,
+        &vec![&env, issuer.clone(), issuer.clone()],
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+        &Bytes::from_slice(&env, AGGREGATE_PROOF),
+        &Bytes::from_slice(&env, AGGREGATE_PUBLIC_INPUTS),
+        &vec![&env, 90_000u64, 5_000u64],
+    );
+
+    let kyc_record = registry.get_record(&holder, &symbol_short!("kyc")).unwrap();
+    let age_record = registry.get_record(&holder, &symbol_short!("age")).unwrap();
+    assert_eq!(kyc_record.expiry, 90_000);
+    assert_eq!(age_record.expiry, 5_000);
+    assert_ne!(kyc_record.expiry, age_record.expiry);
+}
+
+#[test]
+fn aggregate_rejects_past_expiry_in_any_slot() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &demo_pubkey(&env),
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+    );
+
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id).set_vk(
+        &symbol_short!("aggregate"),
+        &1u32,
+        &Bytes::from_slice(&env, AGGREGATE_VK),
+    );
+
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+
+    // First slot valid, second slot (age) has a past expiry — whole call must revert.
+    let res = registry.try_submit_aggregate_proof(
+        &holder,
+        &vec![&env, issuer.clone(), issuer.clone()],
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+        &Bytes::from_slice(&env, AGGREGATE_PROOF),
+        &Bytes::from_slice(&env, AGGREGATE_PUBLIC_INPUTS),
+        &vec![&env, 9999u64, 0u64],
+    );
+    assert!(res.is_err());
+    assert!(!registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+}
+
+#[test]
+fn aggregate_rejects_over_max_expiry_in_any_slot() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &demo_pubkey(&env),
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+    );
+
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id).set_vk(
+        &symbol_short!("aggregate"),
+        &1u32,
+        &Bytes::from_slice(&env, AGGREGATE_VK),
+    );
+
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+
+    let res = registry.try_submit_aggregate_proof(
+        &holder,
+        &vec![&env, issuer.clone(), issuer.clone()],
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+        &Bytes::from_slice(&env, AGGREGATE_PROOF),
+        &Bytes::from_slice(&env, AGGREGATE_PUBLIC_INPUTS),
+        &vec![&env, u64::MAX, 9999u64],
+    );
+    assert!(res.is_err());
 }
 
 #[test]
@@ -600,7 +747,7 @@ fn pause_blocks_batch_and_aggregate_submissions() {
 // ── Expiry validation tests ───────────────────────────────────────────────────
 
 #[test]
-fn submit_proof_rejects_expired_expiry() {
+fn rejects_past_expiry() {
     let env = Env::default();
     env.mock_all_auths();
     let h = deploy(&env);
@@ -619,7 +766,7 @@ fn submit_proof_rejects_expired_expiry() {
 }
 
 #[test]
-fn submit_proof_rejects_too_far_expiry() {
+fn rejects_over_max_expiry() {
     let env = Env::default();
     env.mock_all_auths();
     let h = deploy(&env);

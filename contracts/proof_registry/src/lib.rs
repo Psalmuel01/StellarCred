@@ -24,6 +24,15 @@ use soroban_sdk::{
 
 // ── Event topic constants ────────────────────────────────────────────────────
 
+// NOTE: `#[contractevent]` (the newer Soroban SDK macro for typed events) is
+// deliberately not used here. `#[contractevent]` derives fixed topic values
+// from the type/field names and doesn't support runtime-composed topic tuples
+// like `(symbol_short!("proof_reg"), symbol_short!("submitted"), credential_type)`.
+// We publish through `env.events().publish` directly instead, which triggers
+// the SDK's deprecation warning — hence `#[allow(deprecated)]` on every method
+// that emits an event. Revisit if the SDK adds dynamic-topic support to
+// `#[contractevent]`.
+
 /// Payload emitted when a proof is successfully verified and stored.
 #[contracttype]
 #[derive(Clone)]
@@ -463,6 +472,21 @@ impl ProofRegistry {
         }
     }
 
+    /// Read-only verification check for `holder`'s cached `credential_type` claim.
+    ///
+    /// Returns `(valid, verified_at, expiry)`:
+    /// - `valid` is `true` only if the record exists, is not revoked, has not
+    ///   passed `expiry`, and (if `trusted_issuers` is provided) was issued by
+    ///   one of the addresses in that list.
+    /// - `verified_at` / `expiry` are returned even when `valid` is `false`
+    ///   (e.g. an expired or untrusted-issuer record still reports its stored
+    ///   timestamps), so callers can distinguish "never submitted" (both `0`)
+    ///   from "submitted but no longer valid".
+    ///
+    /// `trusted_issuers`:
+    /// - `None` accepts a claim from any issuer registered at submission time.
+    /// - `Some(list)` restricts acceptance to issuers in `list`; a record with
+    ///   no stored issuer (e.g. an un-migrated legacy record) is rejected.
     pub fn is_verified(
         env: Env,
         holder: Address,

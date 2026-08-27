@@ -364,8 +364,11 @@ export async function submitProof(params: {
 
 /**
  * Submit an aggregate proof that bundles N credential proofs into a single
- * on-chain transaction. Accepts arrays of issuer IDs and credential types for
- * extensibility to N≤5.
+ * on-chain transaction. Accepts arrays of issuer IDs, credential types, and
+ * per-credential TTLs (in seconds) so heterogeneous credentials (e.g. a
+ * short-lived funds attestation and a long-lived KYC) can carry different
+ * expiries in one submission — mirrors the contract's `expiries: Vec<u64>`
+ * parameter on `submit_aggregate_proof`.
  */
 export async function submitAggregateProof(params: {
   holder: string;
@@ -373,19 +376,30 @@ export async function submitAggregateProof(params: {
   credentialTypes: string[];
   proof: Uint8Array;
   publicInputs: Uint8Array;
-  ttlSecs: number;
+  /** One TTL (seconds from now) per credential, same order as credentialTypes. */
+  ttlSecsPerCredential: number[];
 }): Promise<string> {
-  const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecs } = params;
-  const expiry = Math.floor(Date.now() / 1000) + ttlSecs;
+  const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecsPerCredential } = params;
+
+  if (ttlSecsPerCredential.length !== credentialTypes.length) {
+    throw new Error(
+      `Expected ${credentialTypes.length} TTL values (one per credential), received ${ttlSecsPerCredential.length}.`,
+    );
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiries = ttlSecsPerCredential.map((ttl) => now + ttl);
 
   return sendAndConfirm(holder, (contract) => {
     const { Address, nativeToScVal, xdr } = sdkSync();
-    // Build ScVec for issuer_ids and credential_types.
     const issuerScVec = xdr.ScVal.scvVec(
       issuerIds.map((id) => Address.fromString(id).toScVal()),
     );
     const typeScVec = xdr.ScVal.scvVec(
       credentialTypes.map((t) => nativeToScVal(t, { type: "symbol" })),
+    );
+    const expiryScVec = xdr.ScVal.scvVec(
+      expiries.map((e) => nativeToScVal(BigInt(e), { type: "u64" })),
     );
     return contract.call(
       "submit_aggregate_proof",
@@ -394,7 +408,7 @@ export async function submitAggregateProof(params: {
       typeScVec,
       xdr.ScVal.scvBytes(Buffer.from(proof)),
       xdr.ScVal.scvBytes(Buffer.from(publicInputs)),
-      nativeToScVal(BigInt(expiry), { type: "u64" }),
+      expiryScVec,
     );
   }, "Aggregate submission");
 }
