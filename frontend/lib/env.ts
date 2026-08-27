@@ -101,6 +101,7 @@ const envSchema = z
     // --- Ops -------------------------------------------------------------------
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
     APP_ORIGIN: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    ERROR_REPORTING_WEBHOOK: z.preprocess(emptyToUndefined, z.string().url().optional()),
   })
   .superRefine((val, ctx) => {
     // The /api/issue route previously discovered this combination missing at
