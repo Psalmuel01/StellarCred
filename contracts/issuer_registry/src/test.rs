@@ -2,7 +2,7 @@
 
 use super::*;
 use proptest::prelude::*;
-use soroban_sdk::{symbol_short, testutils::{Address as _, Events as _}, vec, Address, BytesN, Env, IntoVal};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, BytesN, Env};
 
 fn setup(env: &Env) -> (Address, IssuerRegistryClient<'_>) {
     let admin = Address::generate(env);

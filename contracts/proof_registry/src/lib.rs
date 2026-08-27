@@ -243,6 +243,8 @@ fn vec_u32_to_bytes(env: &Env, vec: &Vec<u32>) -> Bytes {
 }
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)] // submit_proof requires env + 7 domain params; grouping into
+                                     // a struct would hide the on-chain ABI which callers depend on.
 impl ProofRegistry {
     /// `admin`, `verifier` and `issuer_registry` are the deployed contract addresses.
     pub fn __constructor(env: Env, admin: Address, verifier: Address, issuer_registry: Address) {
