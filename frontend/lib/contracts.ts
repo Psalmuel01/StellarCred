@@ -140,7 +140,7 @@ async function sendAndConfirm(
     if (isBadUnionSwitch(e)) return sent.hash;
     throw e;
   }
-  while (result.status === "NOT_FOUND" && Date.now() - start < 30_000) {
+  while (result.status === "NOT_FOUND" && Date.now() - start < 65_000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       result = await srv.getTransaction(sent.hash);
@@ -314,7 +314,7 @@ export async function submitProofs(params: {
     if (isBadUnionSwitch(e)) return sent.hash;
     throw e;
   }
-  while (result.status === "NOT_FOUND" && Date.now() - start < 30_000) {
+  while (result.status === "NOT_FOUND" && Date.now() - start < 65_000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       result = await srv.getTransaction(sent.hash);

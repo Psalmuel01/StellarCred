@@ -13,6 +13,8 @@ import { Badge } from "@/components/Badge";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
 import CopyButton from "@/components/CopyButton";
+import { ConfigBanner } from "@/components/ConfigBanner";
+import { issuanceConfigured } from "@/lib/config";
 import { truncateAddress, truncatePubkey } from "@/lib/format";
 import type { RegisteredIssuer } from "@/lib/issuer-registry";
 
@@ -170,6 +172,10 @@ export default function IssuerPage() {
         </div>
         <WalletButton />
       </div>
+
+      {/* Same shared check as /api/ready — issuance can't work without the
+          demo issuer address and IssuerRegistry, so say so up front. */}
+      <ConfigBanner requireIssuance />
 
       <div
         style={{
@@ -331,7 +337,14 @@ export default function IssuerPage() {
               availableTypes.length === 0 ||
               (needsAttr && !attribute) ||
               busy ||
-              issuersLoading
+              issuersLoading ||
+              // Fail loudly up front instead of mid-request.
+              !issuanceConfigured()
+            }
+            title={
+              issuanceConfigured()
+                ? undefined
+                : "App not configured — NEXT_PUBLIC_ISSUER_ADDRESS / IssuerRegistry missing"
             }
             onClick={onIssue}
           >

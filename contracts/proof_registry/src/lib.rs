@@ -1,4 +1,10 @@
 #![no_std]
+// The `submit_proof` function requires `env` + 7 domain parameters; grouping
+// them into a request struct would change the on-chain ABI that callers depend
+// on. The lint fires through macro expansion (contractimpl / contractclient),
+// where item-level #[allow] attributes are not propagated, so we suppress it
+// at the crate level here.
+#![allow(clippy::too_many_arguments)]
 //! ProofRegistry
 //!
 //! Caches successful verifications so protocols don't re-run the (expensive)
@@ -73,6 +79,7 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const SECONDS_PER_LEDGER: u64 = 5;
 const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
 const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
+const MAX_CREDENTIAL_TTL_SECS: u64 = 365 * 86_400; // 1 year, in seconds
 
 /// Maximum number of submissions accepted by `submit_proofs_batch`.
 const MAX_BATCH_SIZE: u32 = 5;
@@ -82,10 +89,25 @@ const MIN_EXPIRY_SECONDS_AHEAD: u64 = 3600;
 const MAX_EXPIRY_SECONDS_AHEAD: u64 = 366 * 24 * 3600;
 
 // ── Aggregate proof public-input layout (N=2: KYC + age) ────────────────────
+// The aggregate_proof circuit packs N credential public inputs sequentially,
+// followed by num_credentials as the last field.
+//
+// KYC (65 fields): commitment(1) + issuer_x(32) + issuer_y(32)
+// Age  (67 fields): commitment(1) + issuer_x(32) + issuer_y(32) +
+//                    current_date(1) + threshold_years(1)
+//
+// Field indices (0-based) within public_inputs.
+// These constants document the fixed layout for auditors; runtime logic uses
+// `field_offset + aggregate_field_count` instead of referencing them directly.
+#[allow(dead_code)]
 const AGG_FIELD_KYC_START: u32 = 0;
+#[allow(dead_code)]
 const AGG_FIELD_KYC_PUBKEY: u32 = 1;
+#[allow(dead_code)]
 const AGG_FIELD_AGE_START: u32 = 65;
+#[allow(dead_code)]
 const AGG_FIELD_AGE_PUBKEY: u32 = 66;
+#[allow(dead_code)] // AGG_FIELD_AGE_START(65) + 1 + 32 + 32 + 1 = 131
 const AGG_FIELD_AGE_THRESHOLD: u32 = 131;
 const AGG_FIELD_NUM_CREDENTIALS: u32 = 132;
 
@@ -160,9 +182,8 @@ pub enum Error {
     DuplicateCredentialType = 9,
     AggregateLayoutInvalid = 10,
     SubmissionsPaused = 11,
-    ExpiryTooSoon = 12,
-    ExpiryTooFar = 13,
-    ExpiryCountMismatch = 14,
+    /// `expiry` is not in the future, or is too far in the future.
+    InvalidExpiry = 12,
 }
 
 #[contract]
@@ -344,6 +365,7 @@ impl ProofRegistry {
         let now = env.ledger().timestamp();
 
         for sub in submissions.iter() {
+            Self::validate_expiry(&env, sub.expiry);
             let public_inputs_bytes = vec_u32_to_bytes(&env, &sub.public_inputs);
 
             if !registry.is_valid_issuer(&sub.issuer_id, &sub.credential_type) {
@@ -578,6 +600,7 @@ impl ProofRegistry {
         }
     }
 
+    /// Revoke a cached proof. The holder authorizes their own revocation.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
         env.storage()
@@ -624,7 +647,8 @@ impl ProofRegistry {
             .persistent()
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
 
-        #[allow(deprecated)]
+        // Emit: topics = ("proof_reg", "revoked", credential_type)
+        //       data   = EventProofRevoked { holder, issuer, revoked_at }
         env.events().publish(
             (
                 symbol_short!("proof_reg"),
@@ -715,7 +739,17 @@ impl ProofRegistry {
         }
         u64::from_be_bytes(b)
     }
-
+      fn validate_expiry(env: &Env, expiry: u64) {
+      let now = env.ledger().timestamp();
+     if expiry <= now {
+        panic_with_error!(env, Error::InvalidExpiry);
+    }
+      if expiry > now.saturating_add(MAX_CREDENTIAL_TTL_SECS) {
+        panic_with_error!(env, Error::InvalidExpiry);
+    }
+}
+    /// True iff the secp256k1 public key embedded in `public_inputs` (fields
+    /// 1..65, one byte per field in the low byte) equals `expected` (x || y).
     fn public_inputs_match_pubkey(public_inputs: &Bytes, expected: &BytesN<64>) -> bool {
         Self::aggregate_pubkey_match(public_inputs, PUBKEY_START_FIELD, expected)
     }
