@@ -11,6 +11,7 @@ import { buildApp } from "./api";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
+import type { Ingester, IngesterHealth } from "./ingester";
 
 import os from "os";
 import path from "path";
@@ -19,6 +20,27 @@ import fs from "fs";
 let db: Db;
 let app: Application;
 let tmpFile: string;
+
+/** Minimal ingester stub that exposes a controllable health snapshot. */
+function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
+  const health: IngesterHealth = {
+    lastSuccessLedger: 0,
+    headLedger: 0,
+    lag: -1,
+    lastError: null,
+    lastErrorTime: null,
+    consecutiveErrors: 0,
+    fetchAttempts: 0,
+    fetchFailures: 0,
+    ...overrides,
+  };
+  return {
+    tick: async () => 0,
+    start: () => {},
+    stop: () => {},
+    getHealth: () => ({ ...health }),
+  };
+}
 
 function makeConfig(sqlitePath: string): Config {
   return {
@@ -40,7 +62,7 @@ beforeEach(() => {
   tmpFile = path.join(os.tmpdir(), `indexer-test-${Date.now()}-${Math.random()}.db`);
   db = createSqliteDb(makeConfig(tmpFile));
   db.migrate();
-  app = buildApp(db);
+  app = buildApp(db, makeIngester());
 });
 
 afterEach(() => {
@@ -56,7 +78,31 @@ describe("GET /health", () => {
   it("returns 200 with status ok and lastLedger 0 on empty db", async () => {
     const res = await request(app).get("/health");
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: "ok", lastLedger: 0 });
+    expect(res.body).toMatchObject({
+      status: "ok",
+      lastLedger: 0,
+      headLedger: 0,
+      lag: -1,
+      consecutiveErrors: 0,
+      lastError: null,
+    });
+  });
+
+  it("reports degraded when consecutiveErrors is 1-2", async () => {
+    app = buildApp(db, makeIngester({ consecutiveErrors: 2, lastError: "timeout" }));
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("degraded");
+    expect(res.body.consecutiveErrors).toBe(2);
+    expect(res.body.lastError).toBe("timeout");
+  });
+
+  it("reports error when consecutiveErrors >= 3", async () => {
+    app = buildApp(db, makeIngester({ consecutiveErrors: 5, lag: 120 }));
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("error");
+    expect(res.body.lag).toBe(120);
   });
 });
 
