@@ -26,6 +26,7 @@ import {
   StellarCred,
   withRetry,
 } from "./index";
+import { hasClaim as sharedHasClaim } from "./claims";
 
 const WALLET = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -120,6 +121,71 @@ describe("hasClaim — throwOnError", () => {
     configure({ registryId: "C_TEST_REGISTRY" });
     isVerified.mockResolvedValue({ result: [true, 10n, 20n] });
     await expect(hasClaim(WALLET, "kyc", { throwOnError: true })).resolves.toBe(true);
+  });
+});
+
+describe("read request timeout", () => {
+  beforeEach(() => {
+    isVerified.mockReset();
+    checkClaim.mockReset();
+    configure({
+      registryId: "C_TEST_REGISTRY",
+      requestTimeoutMs: 25,
+      retries: 0,
+    });
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns false when is_verified never settles", async () => {
+    isVerified.mockImplementation(() => new Promise(() => {}));
+
+    const result = hasClaim(WALLET, "kyc");
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toBe(false);
+  });
+
+  it("applies the configured timeout to shared framework reads", async () => {
+    vi.useRealTimers();
+    isVerified.mockImplementation(() => new Promise(() => {}));
+
+    await expect(sharedHasClaim(WALLET, "kyc")).resolves.toBe(false);
+  });
+
+  it("returns false when check_claim never settles", async () => {
+    checkClaim.mockImplementation(() => new Promise(() => {}));
+
+    const result = hasClaim(WALLET, "age", { minThreshold: 21 });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toBe(false);
+  });
+
+  it("returns an empty list when getClaims reads never settle", async () => {
+    isVerified.mockImplementation(() => new Promise(() => {}));
+
+    const result = getClaims(WALLET);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toEqual([]);
+    expect(isVerified).toHaveBeenCalledTimes(6);
+  });
+
+  it("preserves RpcError when a timed out read opts into errors", async () => {
+    isVerified.mockImplementation(() => new Promise(() => {}));
+
+    const result = hasClaim(WALLET, "kyc", {
+      requestTimeoutMs: 25,
+      throwOnError: true,
+    });
+    const assertion = expect(result).rejects.toBeInstanceOf(RpcError);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await assertion;
   });
 });
 

@@ -43,6 +43,7 @@ let _config = {
     env("STELLARCRED_NETWORK_PASSPHRASE", "NEXT_PUBLIC_NETWORK_PASSPHRASE") ||
     "Test SDF Network ; September 2015",
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
+  requestTimeoutMs: 10_000,
   retries: 3,
   baseDelayMs: 500,
   maxDelayMs: 5000,
@@ -59,12 +60,24 @@ export function configure(opts: {
   rpcUrl?: string;
   networkPassphrase?: string;
   baseUrl?: string;
+  requestTimeoutMs?: number;
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
   jitter?: boolean;
 }): void {
   _config = { ..._config, ...opts };
+  const sharedOpts: Parameters<typeof configureSharedClaims>[0] = {};
+  if (opts.registryId !== undefined) sharedOpts.registryId = opts.registryId;
+  if (opts.rpcUrl !== undefined) sharedOpts.rpcUrl = opts.rpcUrl;
+  if (opts.networkPassphrase !== undefined) {
+    sharedOpts.networkPassphrase = opts.networkPassphrase;
+  }
+  if (opts.baseUrl !== undefined) sharedOpts.baseUrl = opts.baseUrl;
+  if (opts.requestTimeoutMs !== undefined) {
+    sharedOpts.requestTimeoutMs = opts.requestTimeoutMs;
+  }
+  if (Object.keys(sharedOpts).length > 0) configureSharedClaims(sharedOpts);
   // The cached client is bound to the old config — drop it so the next read
   // rebuilds against the new one.
   _client = null;
@@ -222,6 +235,11 @@ export interface ClaimOptions {
    */
   trustedIssuers?: string[];
   /**
+   * Maximum time in milliseconds allowed for this read, including retries.
+   * Defaults to the value passed to {@link configure}, or 10 seconds.
+   */
+  requestTimeoutMs?: number;
+  /**
    * When `true`, configuration and RPC failures throw {@link ConfigError} /
    * {@link RpcError} instead of being masked as `false` / empty results.
    * Default `false` preserves the historical fail-soft behaviour so a
@@ -245,6 +263,7 @@ export interface Claim {
 // ---------------------------------------------------------------------------
 
 import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+import { configure as configureSharedClaims } from "./claims";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
 let _sdk: Promise<StellarSDK> | null = null;
@@ -323,6 +342,24 @@ function isRetryable(error: any): boolean {
   return true;
 }
 
+class ReadTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`RPC read timed out after ${timeoutMs}ms`);
+    this.name = "ReadTimeoutError";
+  }
+}
+
+function withRequestTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new ReadTimeoutError(timeoutMs)), timeoutMs);
+  });
+
+  return Promise.race([Promise.resolve().then(operation), timeout]).finally(() =>
+    clearTimeout(timeoutId),
+  );
+}
+
 export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   const { retries, baseDelayMs, maxDelayMs, jitter } = _config;
   let attempt = 0;
@@ -348,16 +385,23 @@ async function readIsVerified(
   claimType: string,
   trustedIssuers?: string[],
   throwOnError = false,
+  requestTimeoutMs = _config.requestTimeoutMs,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   const client = await getClient(throwOnError);
   if (!client) return null;
 
   try {
-    const { result } = await withRetry(() => client.is_verified({
-      holder: wallet,
-      credential_type: claimType,
-      trusted_issuers: trustedIssuers,
-    }));
+    const { result } = await withRequestTimeout(
+      () =>
+        withRetry(() =>
+          client.is_verified({
+            holder: wallet,
+            credential_type: claimType,
+            trusted_issuers: trustedIssuers,
+          }),
+        ),
+      requestTimeoutMs,
+    );
     if (!result) return null;
     const [valid, verifiedAt, expiry] = result;
     return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
@@ -375,17 +419,24 @@ async function readCheckClaim(
   minThreshold: number,
   trustedIssuers?: string[],
   throwOnError = false,
+  requestTimeoutMs = _config.requestTimeoutMs,
 ): Promise<boolean> {
   const client = await getClient(throwOnError);
   if (!client) return false;
 
   try {
-    const { result } = await withRetry(() => client.check_claim({
-      holder: wallet,
-      credential_type: claimType,
-      min_threshold: BigInt(minThreshold),
-      trusted_issuers: trustedIssuers,
-    }));
+    const { result } = await withRequestTimeout(
+      () =>
+        withRetry(() =>
+          client.check_claim({
+            holder: wallet,
+            credential_type: claimType,
+            min_threshold: BigInt(minThreshold),
+            trusted_issuers: trustedIssuers,
+          }),
+        ),
+      requestTimeoutMs,
+    );
     return result ?? false;
   } catch (err) {
     if (throwOnError) {
@@ -455,9 +506,16 @@ export async function hasClaim(
       opts.minThreshold,
       opts.trustedIssuers,
       throwOnError,
+      opts.requestTimeoutMs,
     );
   }
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers, throwOnError);
+  const r = await readIsVerified(
+    wallet,
+    claimType,
+    opts?.trustedIssuers,
+    throwOnError,
+    opts?.requestTimeoutMs,
+  );
   return !!r && r.valid;
 }
 
@@ -487,10 +545,16 @@ export async function hasClaim(
 export async function getClaim(
   wallet: string,
   claimType: string,
-  opts?: Pick<ClaimOptions, "trustedIssuers">,
+  opts?: Pick<ClaimOptions, "trustedIssuers" | "requestTimeoutMs">,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   warnIfMissingRegistryIdOnce();
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
+  const r = await readIsVerified(
+    wallet,
+    claimType,
+    opts?.trustedIssuers,
+    false,
+    opts?.requestTimeoutMs,
+  );
   return r && r.valid ? r : null;
 }
 
@@ -513,6 +577,8 @@ export interface BatchClaimOptions {
    * registered issuer, pass an empty array to reject every issuer.
    */
   trustedIssuers?: string[];
+  /** Maximum time in milliseconds allowed for each read. */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -550,10 +616,23 @@ export async function hasClaims(
     try {
       const minThreshold = opts?.minThresholds?.[t];
       if (minThreshold !== undefined) {
-        results[t] = await readCheckClaim(wallet, t, minThreshold, opts?.trustedIssuers);
+        results[t] = await readCheckClaim(
+          wallet,
+          t,
+          minThreshold,
+          opts?.trustedIssuers,
+          false,
+          opts?.requestTimeoutMs,
+        );
         return;
       }
-      const r = await readIsVerified(wallet, t, opts?.trustedIssuers);
+      const r = await readIsVerified(
+        wallet,
+        t,
+        opts?.trustedIssuers,
+        false,
+        opts?.requestTimeoutMs,
+      );
       results[t] = !!r && r.valid;
     } catch {
       results[t] = false;
@@ -577,7 +656,7 @@ export async function hasClaims(
  */
 export async function getClaims(
   wallet: string,
-  opts?: Pick<ClaimOptions, "throwOnError">,
+  opts?: Pick<ClaimOptions, "throwOnError" | "requestTimeoutMs">,
 ): Promise<Claim[]> {
   warnIfMissingRegistryIdOnce();
   const throwOnError = opts?.throwOnError === true;
@@ -586,7 +665,13 @@ export async function getClaims(
     // read errors, but its own `getClient()` await can still reject (a failed
     // SDK import), which would otherwise reject the whole fan-out.
     try {
-      const r = await readIsVerified(wallet, t, undefined, throwOnError);
+      const r = await readIsVerified(
+        wallet,
+        t,
+        undefined,
+        throwOnError,
+        opts?.requestTimeoutMs,
+      );
       return r && r.valid ? { type: t, verifiedAt: r.verifiedAt, expiry: r.expiry } : null;
     } catch (err) {
       if (throwOnError) throw err;
@@ -748,6 +833,8 @@ export interface WatchClaimOptions {
   timeoutMs?: number;
   /** For parameterised claims (e.g. age, funds), minimum threshold to require */
   minThreshold?: number;
+  /** Maximum time in milliseconds allowed for each poll read. */
+  requestTimeoutMs?: number;
 }
 
 export interface WatchClaimCallbackOptions extends WatchClaimOptions {
@@ -807,7 +894,10 @@ export function watchClaim(
       if (isStopped || isPolling) return;
       isPolling = true;
       try {
-        const verified = await hasClaim(wallet, claimType, { minThreshold });
+        const verified = await hasClaim(wallet, claimType, {
+          minThreshold,
+          requestTimeoutMs: opts?.requestTimeoutMs,
+        });
         if (isStopped) return;
         if (verified !== lastState) {
           lastState = verified;
@@ -828,7 +918,10 @@ export function watchClaim(
         if (isStopped || isPolling) return;
         isPolling = true;
         try {
-          const verified = await hasClaim(wallet, claimType, { minThreshold });
+          const verified = await hasClaim(wallet, claimType, {
+            minThreshold,
+            requestTimeoutMs: opts?.requestTimeoutMs,
+          });
           if (isStopped) return;
           if (verified) {
             stop();
