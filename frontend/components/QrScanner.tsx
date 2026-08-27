@@ -47,6 +47,12 @@ export function QrScanner({
     }
 
     async function start() {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setError(
+          "Camera access requires a secure (HTTPS) context. Use the paste option below."
+        );
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
@@ -89,7 +95,25 @@ export function QrScanner({
   return (
     <Modal title={title} onClose={onClose}>
       {error ? (
-        <p style={{ color: "var(--danger)", fontSize: "0.875rem", textAlign: "center" }}>{error}</p>
+        <div style={{ textAlign: "center" }}>
+          <p style={{ color: "var(--danger)", fontSize: "0.875rem", marginBottom: "1rem" }}>{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              const text = window.prompt("Paste QR code content:");
+              if (text) onScan(text.trim());
+            }}
+            style={{
+              padding: "0.5rem 1rem",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              cursor: "pointer",
+            }}
+          >
+            Paste QR content instead
+          </button>
+        </div>
       ) : (
         <div
           style={{

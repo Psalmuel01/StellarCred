@@ -16,6 +16,13 @@ import type { CredentialType } from "@/lib/stellar";
 import { useToast } from "@/components/Toast";
 import { validateVerifyParams } from "@/lib/verifyParams";
 import { QrScanner } from "@/components/QrScanner";
+import { ConfigBanner } from "@/components/ConfigBanner";
+import { issuanceConfigured } from "@/lib/config";
+import {
+  savePersonaPending,
+  loadPersonaPending,
+  clearStalePersonaPending,
+} from "@/lib/persona-pending";
 
 const TYPES = Object.entries(TYPE_META) as [
   CredentialType,
@@ -246,19 +253,22 @@ function VerifyInner() {
       .catch(() => {});
   }, [fundsSelected]);
 
+  // Guarantee cleanup on abandonment: if the user comes back from Persona
+  // without an inquiry-id (cancelled mid-flow) — or never left — any lingering
+  // sc_persona_pending blob is wiped on mount. loadPersonaPending() clears on
+  // read for the success/failure paths below.
+  useEffect(() => {
+    clearStalePersonaPending(Boolean(personaInquiryId));
+  }, [personaInquiryId]);
+
   // When Persona redirects back to /verify?inquiry-id=XXX, resume the pending
   // issue request that was stored in sessionStorage before the redirect.
   useEffect(() => {
     if (!personaInquiryId || !address) return;
-    const raw = sessionStorage.getItem("sc_persona_pending");
-    if (!raw) return;
-    sessionStorage.removeItem("sc_persona_pending");
-    let pending: Record<string, unknown>;
-    try {
-      pending = JSON.parse(raw);
-    } catch {
-      return;
-    }
+    // Read-and-clear: the blob is removed before the resumed call is made,
+    // so it's gone whether the issue succeeds or fails.
+    const pending = loadPersonaPending();
+    if (!pending) return;
     setBusy(true);
     setError("");
     const requestId = getOrCreateRequestId();
@@ -369,7 +379,7 @@ function VerifyInner() {
           ...claimParamsFromUrl,
           ...(selected === "jurisdiction" ? { mode: jurisdictionMode } : {}),
         },
-      };
+      } as const;
       const res = await fetch("/api/issue", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-request-id": requestId },
@@ -381,7 +391,18 @@ function VerifyInner() {
       // 202 means Persona identity verification is required — redirect user.
       if (res.status === 202) {
         const { personaUrl } = (await res.json()) as { personaUrl: string };
-        sessionStorage.setItem("sc_persona_pending", JSON.stringify(payload));
+        // Stash only what resuming issuance needs. savePersonaPending
+        // whitelist-strips `attributes` (PII) and fails loudly if any banned
+        // key would be serialized; the server re-derives DOB/country from the
+        // verified Persona inquiry on resume, so they're not needed here.
+        savePersonaPending({
+          credential_types: [...payload.credential_types],
+          holder: payload.holder,
+          issuerId: payload.issuerId,
+          issuerName: payload.issuerName,
+          expiry: payload.expiry,
+          claimParams: { ...payload.claimParams },
+        });
         window.location.href = personaUrl;
         return; // don't clear busy — page is navigating away
       }
@@ -423,6 +444,10 @@ function VerifyInner() {
         </div>
         <WalletButton />
       </div>
+
+      {/* Same shared check as /api/ready — surfaces misconfiguration before
+          the user fills anything in, instead of failing mid-issue. */}
+      <ConfigBanner requireIssuance />
 
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
         {!locked && (
@@ -929,7 +954,20 @@ function VerifyInner() {
               <button
                 className="btn btn-primary"
                 style={{ width: "100%" }}
-                disabled={busy || !selected || !!urlError || paramErrors.length > 0}
+                disabled={
+                  busy ||
+                  !selected ||
+                  !!urlError ||
+                  paramErrors.length > 0 ||
+                  // Fail loudly up front: without the issuer address +
+                  // IssuerRegistry contract ID this request can't succeed.
+                  !issuanceConfigured()
+                }
+                title={
+                  issuanceConfigured()
+                    ? undefined
+                    : "App not configured — NEXT_PUBLIC_ISSUER_ADDRESS / IssuerRegistry missing"
+                }
                 onClick={onRequest}
               >
                 {busy ? (
