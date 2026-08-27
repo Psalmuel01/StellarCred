@@ -1,4 +1,10 @@
 #![no_std]
+// The `submit_proof` function requires `env` + 7 domain parameters; grouping
+// them into a request struct would change the on-chain ABI that callers depend
+// on. The lint fires through macro expansion (contractimpl / contractclient),
+// where item-level #[allow] attributes are not propagated, so we suppress it
+// at the crate level here.
+#![allow(clippy::too_many_arguments)]
 //! ProofRegistry
 //!
 //! Caches successful verifications so protocols don't re-run the (expensive)
@@ -243,8 +249,6 @@ fn vec_u32_to_bytes(env: &Env, vec: &Vec<u32>) -> Bytes {
 }
 
 #[contractimpl]
-#[allow(clippy::too_many_arguments)] // submit_proof requires env + 7 domain params; grouping into
-                                     // a struct would hide the on-chain ABI which callers depend on.
 impl ProofRegistry {
     /// `admin`, `verifier` and `issuer_registry` are the deployed contract addresses.
     pub fn __constructor(env: Env, admin: Address, verifier: Address, issuer_registry: Address) {
