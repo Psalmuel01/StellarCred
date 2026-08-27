@@ -8,10 +8,17 @@
 //!
 //! Credential types are represented as short `Symbol`s, e.g. `kyc`, `age`,
 //! `jurisdiction`, `income`, `human`, `employer`.
+//!
+//! Privileged actions are governed by role-based access control (RBAC): the
+//! constructor seeds the `admin` role with the deployer address, and issuer
+//! registration / revocation is guarded by that role. Roles are stored as a
+//! `Map<Symbol, Address>` (role name → current holder); the root admin can
+//! delegate or rotate holders via `grant_role` / `revoke_role`, and anyone can
+//! query membership with `has_role`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    BytesN, Env, Map, Symbol, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -35,6 +42,8 @@ pub struct Issuer {
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// RBAC: role name (Symbol) → current holder (Address).
+    Roles,
     Issuer(Address),
     /// Append-only list of registered issuer addresses for enumeration.
     IssuerList,
@@ -46,6 +55,10 @@ pub enum DataKey {
 pub enum Error {
     NotInitialized = 1,
     IssuerNotFound = 2,
+    /// The caller is not the holder of the role required by this function.
+    NotAuthorized = 3,
+    /// `revoke_role` named an address that is not the current holder of the role.
+    RoleHolderMismatch = 4,
 }
 
 #[contract]
@@ -56,16 +69,21 @@ impl IssuerRegistry {
     /// Set the protocol admin once, at deploy time.
     pub fn __constructor(env: Env, admin: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
+        // Seed the admin role with the deployer so the contract works out of the
+        // box; further roles can be delegated via `grant_role`.
+        let mut roles: Map<Symbol, Address> = Map::new(&env);
+        roles.set(symbol_short!("admin"), admin);
+        env.storage().instance().set(&DataKey::Roles, &roles);
     }
 
-    /// Register (or overwrite) a trusted issuer. Admin-only.
+    /// Register (or overwrite) a trusted issuer. Admin-role only.
     pub fn register_issuer(
         env: Env,
         issuer_id: Address,
         pubkey: BytesN<64>,
         credential_types: Vec<Symbol>,
     ) {
-        Self::require_admin(&env);
+        Self::require_role(&env, &symbol_short!("admin"));
         let issuer = Issuer {
             pubkey,
             credential_types,
@@ -88,10 +106,10 @@ impl IssuerRegistry {
         }
     }
 
-    /// Mark an issuer as revoked. Admin-only. Existing proofs are not affected
-    /// here — revocation propagates through `is_valid_issuer` checks.
+    /// Mark an issuer as revoked. Admin-role only. Existing proofs are not
+    /// affected here — revocation propagates through `is_valid_issuer` checks.
     pub fn revoke_issuer(env: Env, issuer_id: Address) {
-        Self::require_admin(&env);
+        Self::require_role(&env, &symbol_short!("admin"));
         let key = DataKey::Issuer(issuer_id);
         let mut issuer: Issuer = env
             .storage()
@@ -143,11 +161,68 @@ impl IssuerRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 
+    /// Assign `address` as the holder of `role`, replacing any previous holder.
+    /// Root-admin only. Use this to delegate or rotate a role's key — e.g. hand
+    /// the `admin` role to an operations key, or prepare an `issuer-manager`
+    /// role for finer-grained issuer governance.
+    pub fn grant_role(env: Env, role: Symbol, address: Address) {
+        Self::require_admin(&env);
+        let mut roles: Map<Symbol, Address> = Self::roles(&env);
+        roles.set(role, address);
+        env.storage().instance().set(&DataKey::Roles, &roles);
+    }
+
+    /// Remove `address` as the holder of `role`. Root-admin only.
+    ///
+    /// The named address must be the current holder (revoking a different
+    /// address is a no-op risk, so it is rejected with `RoleHolderMismatch`
+    /// instead). A role with no holder is simply unassigned — no one can act
+    /// under it until it is granted again.
+    pub fn revoke_role(env: Env, role: Symbol, address: Address) {
+        Self::require_admin(&env);
+        let mut roles: Map<Symbol, Address> = Self::roles(&env);
+        match roles.get(role.clone()) {
+            Some(current) if current == address => {
+                roles.remove(role);
+                env.storage().instance().set(&DataKey::Roles, &roles);
+            }
+            Some(_) => panic_with_error!(&env, Error::RoleHolderMismatch),
+            // Unassigned role — nothing to revoke.
+            None => {}
+        }
+    }
+
+    /// True iff `address` currently holds `role`.
+    pub fn has_role(env: Env, role: Symbol, address: Address) -> bool {
+        match env
+            .storage()
+            .instance()
+            .get::<_, Map<Symbol, Address>>(&DataKey::Roles)
+        {
+            Some(roles) => roles.get(role) == Some(address),
+            None => false,
+        }
+    }
+
     fn load_issuer(env: &Env, issuer_id: &Address) -> Issuer {
         env.storage()
             .persistent()
             .get(&DataKey::Issuer(issuer_id.clone()))
             .unwrap_or_else(|| panic_with_error!(env, Error::IssuerNotFound))
+    }
+
+    fn roles(env: &Env) -> Map<Symbol, Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Roles)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn require_role(env: &Env, role: &Symbol) {
+        let holder: Address = Self::roles(env)
+            .get(role.clone())
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotAuthorized));
+        holder.require_auth();
     }
 
     fn require_admin(env: &Env) {

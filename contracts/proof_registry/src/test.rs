@@ -8,7 +8,7 @@ use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
-    vec, Address, BytesN, Bytes, Env, IntoVal,
+    vec, Address, Bytes, BytesN, Env, IntoVal,
 };
 
 // Real UltraHonk artifacts (kyc_proof circuit, Noir beta.9 + bb 0.87.0), so
@@ -26,7 +26,6 @@ const FUNDS_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/funds/publi
 const AGE_VK: &[u8] = include_bytes!("../../../fixtures/age/vk");
 const AGE_PROOF: &[u8] = include_bytes!("../../../fixtures/age/proof");
 const AGE_PUBLIC_INPUTS: &[u8] = include_bytes!("../../../fixtures/age/public_inputs");
-
 
 // Extract the issuer secp256k1 key (x || y) from any fixture's public inputs
 // (fields 1..65, low byte of each 32-byte field).
@@ -47,7 +46,7 @@ fn u8_slice_to_vec_u32(env: &Env, slice: &[u8]) -> Vec<u32> {
     for i in (0..slice.len()).step_by(4) {
         if i + 4 <= slice.len() {
             let mut chunk = [0u8; 4];
-            chunk.copy_from_slice(&slice[i..i+4]);
+            chunk.copy_from_slice(&slice[i..i + 4]);
             vec.push_back(u32::from_be_bytes(chunk));
         }
     }
@@ -82,11 +81,7 @@ fn deploy(env: &Env) -> Harness {
     let ir_id = env.register(IssuerRegistry, (admin.clone(),));
     let ir = IssuerRegistryClient::new(env, &ir_id);
     let issuer = Address::generate(env);
-    ir.register_issuer(
-        &issuer,
-        &demo_pubkey(env),
-        &vec![env, symbol_short!("kyc")],
-    );
+    ir.register_issuer(&issuer, &demo_pubkey(env), &vec![env, symbol_short!("kyc")]);
 
     // CredentialVerifier with the kyc VK.
     let v_id = env.register(CredentialVerifier, (admin.clone(),));
@@ -122,7 +117,9 @@ fn submit_then_verified() {
 
     submit(&env, &h, &holder, 1000);
 
-    let (valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    let (valid, _at, expiry) = h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(valid);
     assert_eq!(expiry, 1000);
 }
@@ -135,11 +132,19 @@ fn expires_after_ledger_time_passes() {
     let holder = Address::generate(&env);
 
     submit(&env, &h, &holder, 1000); // valid until ts=1000
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 
     // Advance ledger time past the expiry.
     env.ledger().with_mut(|li| li.timestamp = 2000);
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -173,7 +178,11 @@ fn rejects_wrong_issuer_key() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -193,7 +202,11 @@ fn rejects_untrusted_issuer() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -214,7 +227,11 @@ fn rejects_invalid_proof() {
         &1000,
     );
     assert!(res.is_err());
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -223,7 +240,11 @@ fn unverified_holder_returns_false() {
     env.mock_all_auths();
     let h = deploy(&env);
     let stranger = Address::generate(&env);
-    assert!(!h.registry.is_verified(&stranger, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&stranger, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -235,7 +256,11 @@ fn revoke_clears_proof() {
 
     submit(&env, &h, &holder, 1000);
     h.registry.revoke_proof(&holder, &symbol_short!("kyc"));
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -246,15 +271,29 @@ fn issuer_revoke_invalidates_proof() {
     let holder = Address::generate(&env);
 
     submit(&env, &h, &holder, 1000);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
-    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
+    assert!(h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &None));
 
     h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
 
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
-    assert!(!h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
+    assert!(!h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &None));
     // Expiry data preserved for audit even though proof is no longer valid.
-    let (_valid, _at, expiry) = h.registry.is_verified(&holder, &symbol_short!("kyc"), &None);
+    let (_valid, _at, expiry) = h
+        .registry
+        .is_verified(&holder, &symbol_short!("kyc"), &None);
     assert_eq!(expiry, 1000);
 }
 
@@ -267,9 +306,15 @@ fn issuer_revoke_rejects_wrong_issuer() {
     let stranger = Address::generate(&env);
 
     submit(&env, &h, &holder, 1000);
-    let res = h.registry.try_revoke(&stranger, &holder, &symbol_short!("kyc"));
+    let res = h
+        .registry
+        .try_revoke(&stranger, &holder, &symbol_short!("kyc"));
     assert!(res.is_err());
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
 }
 
 #[test]
@@ -312,7 +357,9 @@ fn check_claim_no_threshold_matches_is_verified() {
 
     submit(&env, &h, &holder, 1000);
     // check_claim with no min_threshold should behave like is_verified.
-    assert!(h.registry.check_claim(&holder, &symbol_short!("kyc"), &None, &None));
+    assert!(h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &None));
 }
 
 // ── trusted_issuers tests ────────────────────────────────────────────────────
@@ -368,12 +415,9 @@ fn check_claim_empty_trusted_list_rejects_all() {
     // An empty Some([]) list has no members to match against — rejects every
     // issuer, including the one that actually signed the proof.
     let empty: Vec<Address> = Vec::new(&env);
-    assert!(!h.registry.check_claim(
-        &holder,
-        &symbol_short!("kyc"),
-        &None,
-        &Some(empty),
-    ));
+    assert!(!h
+        .registry
+        .check_claim(&holder, &symbol_short!("kyc"), &None, &Some(empty),));
 }
 
 #[test]
@@ -652,9 +696,21 @@ fn batch_all_pass() {
 
     h.registry.submit_proofs_batch(&holder, &submissions);
 
-    assert!(h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("funds"), &None).0);
-    assert!(h.registry.is_verified(&holder, &symbol_short!("age"), &None).0);
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("funds"), &None)
+            .0
+    );
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("age"), &None)
+            .0
+    );
 }
 
 /// If one proof in the batch is invalid, the entire call reverts.
@@ -693,8 +749,16 @@ fn batch_one_fail_reverts_all() {
     assert!(res.is_err());
 
     // The valid kyc proof must NOT have been stored because the batch reverted.
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("kyc"), &None).0);
-    assert!(!h.registry.is_verified(&holder, &symbol_short!("funds"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
+    assert!(
+        !h.registry
+            .is_verified(&holder, &symbol_short!("funds"), &None)
+            .0
+    );
 }
 
 /// Exactly MAX_BATCH_SIZE (5) submissions — should succeed.
@@ -721,7 +785,14 @@ fn batch_max_size_boundary_accepts_five() {
     ir.register_issuer(
         &issuer,
         &pubkey_from(&env, PUBLIC_INPUTS),
-        &vec![&env, types[0].clone(), types[1].clone(), types[2].clone(), types[3].clone(), types[4].clone()],
+        &vec![
+            &env,
+            types[0].clone(),
+            types[1].clone(),
+            types[2].clone(),
+            types[3].clone(),
+            types[4].clone(),
+        ],
     );
 
     let v_id = env.register(CredentialVerifier, (admin.clone(),));
@@ -738,11 +809,41 @@ fn batch_max_size_boundary_accepts_five() {
     // Build a batch of exactly 5 submissions, each with a unique type.
     let submissions = vec![
         &env,
-        ProofSubmission { credential_type: types[0].clone(), proof: Bytes::from_slice(&env, PROOF), public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS), issuer_id: issuer.clone(), expiry: 9999 },
-        ProofSubmission { credential_type: types[1].clone(), proof: Bytes::from_slice(&env, PROOF), public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS), issuer_id: issuer.clone(), expiry: 9999 },
-        ProofSubmission { credential_type: types[2].clone(), proof: Bytes::from_slice(&env, PROOF), public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS), issuer_id: issuer.clone(), expiry: 9999 },
-        ProofSubmission { credential_type: types[3].clone(), proof: Bytes::from_slice(&env, PROOF), public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS), issuer_id: issuer.clone(), expiry: 9999 },
-        ProofSubmission { credential_type: types[4].clone(), proof: Bytes::from_slice(&env, PROOF), public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS), issuer_id: issuer.clone(), expiry: 9999 },
+        ProofSubmission {
+            credential_type: types[0].clone(),
+            proof: Bytes::from_slice(&env, PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS),
+            issuer_id: issuer.clone(),
+            expiry: 9999,
+        },
+        ProofSubmission {
+            credential_type: types[1].clone(),
+            proof: Bytes::from_slice(&env, PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS),
+            issuer_id: issuer.clone(),
+            expiry: 9999,
+        },
+        ProofSubmission {
+            credential_type: types[2].clone(),
+            proof: Bytes::from_slice(&env, PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS),
+            issuer_id: issuer.clone(),
+            expiry: 9999,
+        },
+        ProofSubmission {
+            credential_type: types[3].clone(),
+            proof: Bytes::from_slice(&env, PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS),
+            issuer_id: issuer.clone(),
+            expiry: 9999,
+        },
+        ProofSubmission {
+            credential_type: types[4].clone(),
+            proof: Bytes::from_slice(&env, PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, PUBLIC_INPUTS),
+            issuer_id: issuer.clone(),
+            expiry: 9999,
+        },
     ];
 
     // Must not panic — 5 distinct types is within the allowed maximum.
@@ -750,8 +851,6 @@ fn batch_max_size_boundary_accepts_five() {
     assert!(registry.is_verified(&holder, &types[0], &None).0);
     assert!(registry.is_verified(&holder, &types[4], &None).0);
 }
-
-
 
 /// Six submissions must be rejected with BatchTooLarge.
 #[test]
@@ -827,10 +926,10 @@ fn upgrade_by_admin_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
     let h = deploy(&env);
-    
+
     let real_wasm = get_test_wasm(&env);
     let new_wasm_hash = env.deployer().upload_contract_wasm(real_wasm);
-    
+
     h.registry.upgrade(&new_wasm_hash);
 }
 
@@ -839,13 +938,11 @@ fn upgrade_by_non_admin_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let h = deploy(&env);
-    
+
     let real_wasm = get_test_wasm(&env);
     let new_wasm_hash = env.deployer().upload_contract_wasm(real_wasm);
-    
-    let res = h.registry
-        .mock_auths(&[])
-        .try_upgrade(&new_wasm_hash);
+
+    let res = h.registry.mock_auths(&[]).try_upgrade(&new_wasm_hash);
     assert!(res.is_err());
 }
 
@@ -854,17 +951,18 @@ fn admin_transfer_works() {
     let env = Env::default();
     env.mock_all_auths();
     let h = deploy(&env);
-    
+
     let new_admin = Address::generate(&env);
-    
+
     h.registry.set_admin(&new_admin);
     assert_eq!(h.registry.admin(), new_admin);
-    
+
     let real_wasm = get_test_wasm(&env);
     let new_wasm_hash = env.deployer().upload_contract_wasm(real_wasm);
-    
+
     // 1. Verify old admin (h.admin) can no longer upgrade:
-    let res = h.registry
+    let res = h
+        .registry
         .mock_auths(&[MockAuth {
             address: &h.admin,
             invoke: &MockAuthInvoke {
@@ -897,10 +995,200 @@ fn set_admin_by_non_admin_panics() {
     env.mock_all_auths();
     let h = deploy(&env);
     let new_admin = Address::generate(&env);
-    let res = h.registry
-        .mock_auths(&[])
-        .try_set_admin(&new_admin);
+    let res = h.registry.mock_auths(&[]).try_set_admin(&new_admin);
     assert!(res.is_err());
+}
+
+// ── RBAC tests ────────────────────────────────────────────────────────────────
+
+#[test]
+fn roles_seeded_at_construction() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+
+    // The deployer starts as both the root admin and the upgrader.
+    assert!(h.registry.has_role(&symbol_short!("admin"), &h.admin));
+    assert!(h.registry.has_role(&symbol_short!("upgrader"), &h.admin));
+
+    let stranger = Address::generate(&env);
+    assert!(!h.registry.has_role(&symbol_short!("admin"), &stranger));
+    assert!(!h.registry.has_role(&symbol_short!("upgrader"), &stranger));
+}
+
+#[test]
+fn admin_can_grant_and_revoke_roles() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let delegate = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    // Grant a new role.
+    h.registry.grant_role(&symbol_short!("upgrader"), &delegate);
+    assert!(h.registry.has_role(&symbol_short!("upgrader"), &delegate));
+
+    // Re-granting moves the role to the new holder.
+    h.registry.grant_role(&symbol_short!("upgrader"), &other);
+    assert!(!h.registry.has_role(&symbol_short!("upgrader"), &delegate));
+    assert!(h.registry.has_role(&symbol_short!("upgrader"), &other));
+
+    // Revoking an address that is not the current holder is rejected.
+    let res = h
+        .registry
+        .try_revoke_role(&symbol_short!("upgrader"), &delegate);
+    assert!(res.is_err());
+
+    // Revoke.
+    h.registry.revoke_role(&symbol_short!("upgrader"), &other);
+    assert!(!h.registry.has_role(&symbol_short!("upgrader"), &other));
+
+    // Revoking an unassigned role is a harmless no-op.
+    let res = h
+        .registry
+        .try_revoke_role(&symbol_short!("upgrader"), &other);
+    assert!(res.is_ok());
+}
+
+#[test]
+fn grant_and_revoke_require_root_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let delegate = Address::generate(&env);
+
+    // No auths mocked → the root admin's required auth fails.
+    let res = h
+        .registry
+        .mock_auths(&[])
+        .try_grant_role(&symbol_short!("upgrader"), &delegate);
+    assert!(res.is_err());
+    let res = h
+        .registry
+        .mock_auths(&[])
+        .try_revoke_role(&symbol_short!("upgrader"), &delegate);
+    assert!(res.is_err());
+}
+
+#[test]
+fn upgrade_requires_upgrader_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+
+    let real_wasm = get_test_wasm(&env);
+    let new_wasm_hash = env.deployer().upload_contract_wasm(real_wasm);
+
+    // Delegate the upgrader role away from the root admin.
+    let upgrader = Address::generate(&env);
+    h.registry.grant_role(&symbol_short!("upgrader"), &upgrader);
+
+    // The role holder can upgrade…
+    h.registry
+        .mock_auths(&[MockAuth {
+            address: &upgrader,
+            invoke: &MockAuthInvoke {
+                contract: &h.registry.address,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .upgrade(&new_wasm_hash);
+
+    // …a non-holder cannot.
+    let stranger = Address::generate(&env);
+    let res = h
+        .registry
+        .mock_auths(&[MockAuth {
+            address: &stranger,
+            invoke: &MockAuthInvoke {
+                contract: &h.registry.address,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_upgrade(&new_wasm_hash);
+    assert!(res.is_err());
+
+    // After revocation the former holder loses upgrade power too.
+    h.registry
+        .revoke_role(&symbol_short!("upgrader"), &upgrader);
+    let res = h
+        .registry
+        .mock_auths(&[MockAuth {
+            address: &upgrader,
+            invoke: &MockAuthInvoke {
+                contract: &h.registry.address,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_upgrade(&new_wasm_hash);
+    assert!(res.is_err());
+
+    // Unassigned upgrader role: even the root admin cannot upgrade until the
+    // role is granted again.
+    let res = h
+        .registry
+        .mock_auths(&[MockAuth {
+            address: &h.admin,
+            invoke: &MockAuthInvoke {
+                contract: &h.registry.address,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_upgrade(&new_wasm_hash);
+    assert!(res.is_err());
+}
+
+#[test]
+fn admin_transfer_moves_roles_to_new_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let new_admin = Address::generate(&env);
+
+    // Delegate the upgrader role to a third party before the transfer.
+    let upgrader = Address::generate(&env);
+    h.registry.grant_role(&symbol_short!("upgrader"), &upgrader);
+
+    h.registry.set_admin(&new_admin);
+
+    // Root admin + admin role moved.
+    assert_eq!(h.registry.admin(), new_admin);
+    assert!(!h.registry.has_role(&symbol_short!("admin"), &h.admin));
+    assert!(h.registry.has_role(&symbol_short!("admin"), &new_admin));
+
+    // The delegated upgrader role is untouched by the transfer.
+    assert!(h.registry.has_role(&symbol_short!("upgrader"), &upgrader));
+    assert!(!h.registry.has_role(&symbol_short!("upgrader"), &new_admin));
+}
+
+#[test]
+fn has_role_is_a_public_view() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let delegate = Address::generate(&env);
+
+    // has_role requires no auth — readable by anyone (still true even with
+    // zero mocked auths).
+    assert!(h
+        .registry
+        .mock_auths(&[])
+        .has_role(&symbol_short!("admin"), &h.admin));
+    assert!(h
+        .registry
+        .mock_auths(&[])
+        .has_role(&symbol_short!("upgrader"), &h.admin));
+
+    h.registry.grant_role(&symbol_short!("pauser"), &delegate);
+    assert!(h.registry.has_role(&symbol_short!("pauser"), &delegate));
 }
 
 // A record shaped like `ProofRecord` before the `issuer` field was added —
@@ -944,6 +1232,8 @@ fn legacy_record_missing_issuer_key_fails_to_read() {
         env.storage().persistent().set(&key, &legacy);
     });
 
-    let result = h.registry.try_is_verified(&holder, &symbol_short!("kyc"), &None);
+    let result = h
+        .registry
+        .try_is_verified(&holder, &symbol_short!("kyc"), &None);
     assert!(result.is_err());
 }

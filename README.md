@@ -197,7 +197,7 @@ full reference.
    result. Identity fields are sent once to the provider and never stored.
 4. **Proof expiry.** `ProofRegistry` uses persistent storage with an explicit
    `expiry` (checked against ledger time) plus TTL extension.
-5. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
+5. **Contract governance is role-based.** Privileged actions on `CredentialVerifier`, `ProofRegistry`, and `IssuerRegistry` are gated by a role map (`Map<Symbol, Address>`): the deployer is seeded the `admin` role (and `upgrader` on `ProofRegistry`) at construction, and the root admin can delegate or rotate keys with `grant_role` / `revoke_role` (`has_role` is a public view). `ProofRegistry.upgrade` is guarded by the `upgrader` role, so upgrade power can live on a separate key (multisig, release engineer, DAO) from day-to-day administration. This makes keys scoped and rotatable independently as governance matures.
 
 ---
 

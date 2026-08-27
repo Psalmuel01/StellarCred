@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 2,
+    "address": 6,
     "nonce": 0,
     "mux_id": 0
   },
@@ -13,6 +13,36 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "register_issuer",
+              "args": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "bytes": "3e48e98b0178c25ba63e442b4fe89c5b59a528537d5ae808e477113bc44820fb07d9c45867751ca8f9eac3bc2f170d00a8587dd538be209078d3f4aa3761e365"
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "kyc"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "function_name": "set_vk",
               "args": [
                 {
@@ -28,6 +58,10 @@
         }
       ]
     ],
+    [],
+    [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -66,7 +100,156 @@
           "data": {
             "contract_data": {
               "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "5541220902715666415"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Issuer"
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "credential_types"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "kyc"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "pubkey"
+                    },
+                    "val": {
+                      "bytes": "3e48e98b0178c25ba63e442b4fe89c5b59a528537d5ae808e477113bc44820fb07d9c45867751ca8f9eac3bc2f170d00a8587dd538be209078d3f4aa3761e365"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "revoked"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 2073600
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "key": "ledger_key_contract_instance",
+              "durability": "persistent",
+              "val": {
+                "contract_instance": {
+                  "executable": {
+                    "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  },
+                  "storage": [
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Admin"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "IssuerList"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Roles"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "admin"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "key": {
                 "vec": [
                   {
@@ -93,7 +276,7 @@
           "data": {
             "contract_data": {
               "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -133,6 +316,95 @@
                             }
                           }
                         ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "key": "ledger_key_contract_instance",
+              "durability": "persistent",
+              "val": {
+                "contract_instance": {
+                  "executable": {
+                    "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  },
+                  "storage": [
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Admin"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "IssuerRegistry"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Roles"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "admin"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "upgrader"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Verifier"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                       }
                     }
                   ]

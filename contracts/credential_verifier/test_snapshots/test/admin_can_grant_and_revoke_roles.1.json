@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 3,
+    "address": 4,
     "nonce": 0,
     "mux_id": 0
   },
@@ -13,23 +13,36 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-              "function_name": "register_issuer",
+              "function_name": "grant_role",
               "args": [
                 {
+                  "symbol": "admin"
+                },
+                {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "grant_role",
+              "args": [
+                {
+                  "symbol": "admin"
                 },
                 {
-                  "bytes": "07070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707"
-                },
-                {
-                  "vec": [
-                    {
-                      "symbol": "kyc"
-                    },
-                    {
-                      "symbol": "age"
-                    }
-                  ]
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 }
               ]
             }
@@ -41,7 +54,51 @@
     [],
     [],
     [],
-    []
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "revoke_role",
+              "args": [
+                {
+                  "symbol": "admin"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "revoke_role",
+              "args": [
+                {
+                  "symbol": "admin"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ]
   ],
   "ledger": {
     "protocol_version": 26,
@@ -79,58 +136,59 @@
           "data": {
             "contract_data": {
               "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
               "key": {
-                "vec": [
-                  {
-                    "symbol": "Issuer"
-                  },
-                  {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                  }
-                ]
+                "ledger_key_nonce": {
+                  "nonce": "2032731177588607455"
+                }
               },
-              "durability": "persistent",
-              "val": {
-                "map": [
-                  {
-                    "key": {
-                      "symbol": "credential_types"
-                    },
-                    "val": {
-                      "vec": [
-                        {
-                          "symbol": "kyc"
-                        },
-                        {
-                          "symbol": "age"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "pubkey"
-                    },
-                    "val": {
-                      "bytes": "07070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "revoked"
-                    },
-                    "val": {
-                      "bool": false
-                    }
-                  }
-                ]
-              }
+              "durability": "temporary",
+              "val": "void"
             }
           },
           "ext": "v0"
         },
-        "live_until": 2073600
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "4837995959683129791"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "5541220902715666415"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -163,37 +221,12 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "IssuerList"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "Roles"
                           }
                         ]
                       },
                       "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "admin"
-                            },
-                            "val": {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                            }
-                          }
-                        ]
+                        "map": []
                       }
                     }
                   ]

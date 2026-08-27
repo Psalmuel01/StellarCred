@@ -13,10 +13,18 @@
 //! `submit_proofs_batch` accepts up to 5 `ProofSubmission` entries and verifies
 //! and stores all of them atomically: if any single proof fails the entire call
 //! reverts, saving the holder from multiple wallet confirmations and fee payments.
+//!
+//! Privileged actions are governed by role-based access control (RBAC): the
+//! constructor seeds the `admin` and `upgrader` roles with the deployer
+//! address, and each privileged function is guarded by the role it maps to
+//! (`upgrade` → `upgrader`, `set_admin` → root admin). Roles are stored as a
+//! `Map<Symbol, Address>` (role name → current holder); the root admin can
+//! delegate or rotate holders via `grant_role` / `revoke_role`, and anyone can
+//! query membership with `has_role`.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec,
+    symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
 
 // Persistent-entry lifetime management (~5s ledgers).
@@ -93,6 +101,8 @@ pub struct ProofSubmission {
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// RBAC: role name (Symbol) → current holder (Address).
+    Roles,
     Verifier,
     IssuerRegistry,
     /// Cached verification, keyed by (holder, credential_type).
@@ -118,6 +128,10 @@ pub enum Error {
     /// Two or more submissions in the batch share the same `credential_type`;
     /// only the last write would survive, so the batch is rejected outright.
     DuplicateCredentialType = 9,
+    /// The caller is not the holder of the role required by this function.
+    RoleNotHeld = 10,
+    /// `revoke_role` named an address that is not the current holder of the role.
+    RoleHolderMismatch = 11,
 }
 
 #[contract]
@@ -136,29 +150,44 @@ impl ProofRegistry {
     /// `admin`, `verifier` and `issuer_registry` are the deployed contract addresses.
     pub fn __constructor(env: Env, admin: Address, verifier: Address, issuer_registry: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
+        // Seed the admin and upgrader roles with the deployer so the contract
+        // works out of the box; further roles can be delegated via `grant_role`.
+        let mut roles: Map<Symbol, Address> = Map::new(&env);
+        roles.set(symbol_short!("admin"), admin.clone());
+        roles.set(symbol_short!("upgrader"), admin);
+        env.storage().instance().set(&DataKey::Roles, &roles);
         env.storage().instance().set(&DataKey::Verifier, &verifier);
         env.storage()
             .instance()
             .set(&DataKey::IssuerRegistry, &issuer_registry);
     }
 
+    /// Replace the contract wasm. Upgrader-role only — the holder of the
+    /// `upgrader` role may be a different key than the root admin, so upgrade
+    /// power can be delegated or rotated independently of other governance.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
-        admin.require_auth();
+        Self::require_role(&env, &symbol_short!("upgrader"));
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
+    /// Transfer the root admin to `new_admin`. Root-admin only.
+    ///
+    /// This is a wholesale governance transfer: the `Admin` key and every role
+    /// currently held by the old root admin move to `new_admin`, so the old
+    /// root loses all privileged access (including upgrade power) exactly as it
+    /// did before roles existed. Fine-grained delegation afterwards uses
+    /// `grant_role` / `revoke_role`.
     pub fn set_admin(env: Env, new_admin: Address) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        let admin: Address = Self::admin(env.clone());
         admin.require_auth();
+
+        let mut roles: Map<Symbol, Address> = Self::roles(&env);
+        for (role, holder) in roles.iter() {
+            if holder == admin {
+                roles.set(role, new_admin.clone());
+            }
+        }
+        env.storage().instance().set(&DataKey::Roles, &roles);
         env.storage().instance().set(&DataKey::Admin, &new_admin);
     }
 
@@ -169,13 +198,56 @@ impl ProofRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 
+    /// Assign `address` as the holder of `role`, replacing any previous holder.
+    /// Root-admin only. Use this to delegate or rotate a role's key — e.g. hand
+    /// the `upgrader` role to a release engineer, or prepare a `pauser` key
+    /// before pause functionality is enabled.
+    pub fn grant_role(env: Env, role: Symbol, address: Address) {
+        Self::require_admin(&env);
+        let mut roles: Map<Symbol, Address> = Self::roles(&env);
+        roles.set(role, address);
+        env.storage().instance().set(&DataKey::Roles, &roles);
+    }
+
+    /// Remove `address` as the holder of `role`. Root-admin only.
+    ///
+    /// The named address must be the current holder (revoking a different
+    /// address is a no-op risk, so it is rejected with `RoleHolderMismatch`
+    /// instead). A role with no holder is simply unassigned — no one can act
+    /// under it until it is granted again.
+    pub fn revoke_role(env: Env, role: Symbol, address: Address) {
+        Self::require_admin(&env);
+        let mut roles: Map<Symbol, Address> = Self::roles(&env);
+        match roles.get(role.clone()) {
+            Some(current) if current == address => {
+                roles.remove(role);
+                env.storage().instance().set(&DataKey::Roles, &roles);
+            }
+            Some(_) => panic_with_error!(&env, Error::RoleHolderMismatch),
+            // Unassigned role — nothing to revoke.
+            None => {}
+        }
+    }
+
+    /// True iff `address` currently holds `role`.
+    pub fn has_role(env: Env, role: Symbol, address: Address) -> bool {
+        match env
+            .storage()
+            .instance()
+            .get::<_, Map<Symbol, Address>>(&DataKey::Roles)
+        {
+            Some(roles) => roles.get(role) == Some(address),
+            None => false,
+        }
+    }
+
     /// Verify a proof and, if valid, cache it for `holder` until `expiry`
     /// (ledger timestamp, seconds). The holder authorizes their own submission.
     /// `issuer_id` must be registered and trusted for `credential_type`.
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here. 
-    // The idiomatic Soroban v26 replacement is to define a typed event struct using the 
-    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the 
-    // value-based `publish` API, we maintain consistency with other modules to avoid 
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is to define a typed event struct using the
+    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the
+    // value-based `publish` API, we maintain consistency with other modules to avoid
     // introducing architectural mismatch.
     #[allow(deprecated)]
     pub fn submit_proof(
@@ -232,10 +304,10 @@ impl ProofRegistry {
 
     /// One event is emitted per successfully verified credential, matching
     /// the event emission shape in the single-proof path.
-    // NOTE: We suppress the deprecation warning for `env.events().publish` here. 
-    // The idiomatic Soroban v26 replacement is to define a typed event struct using the 
-    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the 
-    // value-based `publish` API, we maintain consistency with other modules to avoid 
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is to define a typed event struct using the
+    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the
+    // value-based `publish` API, we maintain consistency with other modules to avoid
     // introducing architectural mismatch.
     #[allow(deprecated)]
     pub fn submit_proofs_batch(env: Env, holder: Address, submissions: Vec<ProofSubmission>) {
@@ -294,7 +366,11 @@ impl ProofRegistry {
             let record = ProofRecord {
                 verified_at: now,
                 expiry: sub.expiry,
-                threshold: Self::extract_threshold(&env, &sub.credential_type, &public_inputs_bytes),
+                threshold: Self::extract_threshold(
+                    &env,
+                    &sub.credential_type,
+                    &public_inputs_bytes,
+                ),
                 revoked: false,
                 issuer: Some(sub.issuer_id.clone()),
             };
@@ -447,7 +523,11 @@ impl ProofRegistry {
     ///   income:     field 65 = threshold
     ///   funds:      field 65 = threshold
     ///   kyc:        (no extra fields)
-    fn extract_threshold(env: &Env, credential_type: &Symbol, public_inputs: &Bytes) -> Option<u64> {
+    fn extract_threshold(
+        env: &Env,
+        credential_type: &Symbol,
+        public_inputs: &Bytes,
+    ) -> Option<u64> {
         if *credential_type == symbol_short!("age") {
             // field 66, bytes 2112-2143, u64 in last 8 bytes
             Some(Self::read_u64_field(public_inputs, 66))
@@ -498,6 +578,25 @@ impl ProofRegistry {
             .instance()
             .get(&DataKey::IssuerRegistry)
             .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn roles(env: &Env) -> Map<Symbol, Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Roles)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn require_role(env: &Env, role: &Symbol) {
+        let holder: Address = Self::roles(env)
+            .get(role.clone())
+            .unwrap_or_else(|| panic_with_error!(env, Error::RoleNotHeld));
+        holder.require_auth();
+    }
+
+    fn require_admin(env: &Env) {
+        let admin: Address = Self::admin(env.clone());
+        admin.require_auth();
     }
 }
 

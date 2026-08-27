@@ -4,7 +4,7 @@ use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use proof_registry::{ProofRegistry, ProofRegistryClient};
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, BytesN, Bytes, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Bytes, BytesN, Env};
 
 // Real UltraHonk artifacts, so the KYC gate exercises genuine verification.
 const VK: &[u8] = include_bytes!("../../../fixtures/kyc/vk");
