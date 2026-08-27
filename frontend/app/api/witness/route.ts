@@ -3,6 +3,13 @@ import type { InputMap } from "@noir-lang/noir_js";
 import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
 import { readJsonBody, bodyErrorResponse } from "../../../lib/request-limits";
 import {
+  checkLimit,
+  extractIp,
+  hashForLog,
+  tooManyRequestsResponse,
+  LIMITS,
+} from "../../../lib/rate-limit";
+import {
   normalizeRestricted,
   validateWitnessCredential,
   type ClaimParams,
@@ -155,6 +162,24 @@ export async function POST(req: NextRequest) {
     response.headers.set("x-request-id", requestId);
     return response;
   };
+
+  // ── Rate limiting ─────────────────────────────────────────────────────────
+  // Applied before the body is parsed: an abusive caller is rejected cheaply
+  // without running any Noir circuit work.
+  const ip = extractIp(req);
+  const ipResult = checkLimit(`witness:ip:${ip}`, LIMITS.witnessPerIp(), LIMITS.windowMs());
+  if (ipResult.throttled) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "rate_limited",
+        route: "witness",
+        dimension: "ip",
+        ipToken: hashForLog(ip),
+        requestId,
+      }),
+    );
+    return sendResponse(tooManyRequestsResponse(ipResult.retryAfterMs));
+  }
 
   // Size-guarded read — an oversized payload is refused before it is parsed,
   // and the body is never logged.
