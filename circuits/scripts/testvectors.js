@@ -35,6 +35,7 @@ const CIRCUITS = [
   "income_proof",
   "jurisdiction_proof",
   "funds_proof",
+  "set_membership",
 ];
 
 function run(cmd, args, cwd) {

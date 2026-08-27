@@ -84,6 +84,25 @@ C=$(commit3 1 5 11)
   echo "commitment = \"$C\""; echo "min_seniority = \"3\""; node "$SCRIPTS/sign.js" "$C"; } \
   > "$ROOT/employment_proof/Prover.toml"
 
+echo "set_membership..."
+# Allowlist: [840, 276, 566, 356] — ISO 3166-1 numeric codes for US, Germany,
+# Nigeria, Israel (a small sample covering varied regions).
+# We prove membership for value 840 (US, leaf index 0).
+SM_VALUES="840 276 566 356"
+SM_MEMBER="840"
+SM_SALT="42"
+C=$(commit $SM_MEMBER $SM_SALT)
+# Compute merkle_root and the Merkle path lines for the member value.
+MERKLE_ROOT=$(node "$SCRIPTS/merkle_tree.js" root $SM_VALUES)
+MERKLE_LINES=$(node "$SCRIPTS/merkle_tree.js" path $SM_VALUES --for $SM_MEMBER)
+{
+  echo "value = \"$SM_MEMBER\""
+  echo "salt = \"$SM_SALT\""
+  echo "commitment = \"$C\""
+  echo "$MERKLE_LINES"
+  node "$SCRIPTS/sign.js" "$C"
+} > "$ROOT/set_membership/Prover.toml"
+
 echo "done. demo issuer public key:"
 node "$SCRIPTS/sign.js" --pubkey
 
