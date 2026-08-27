@@ -100,6 +100,8 @@ frontend/               Next.js 14 app (App Router)
   packages/sdk/           @stellarcred/sdk — hasClaim / getClaims / buildVerifyUrl
   packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
+services/
+  indexer/                off-chain event indexing service (SQLite/Postgres, [README](services/indexer/README.md))
 scripts/deploy.sh       deploy + wire + register issuer + install all VKs on testnet
 scripts/benchmark.sh    measure instruction budget for every public function on testnet
 BENCHMARKS.md           per-function instruction counts, ledger I/O, and fee estimates
