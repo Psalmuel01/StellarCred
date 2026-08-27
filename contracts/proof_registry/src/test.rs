@@ -506,6 +506,18 @@ fn batch_rejects_over_max_expiry() {
     assert!(res.is_err());
 }
 
+#[test]
+fn batch_rejects_over_max_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let submissions = vec![&env, kyc_submission(&env, &h.issuer, u64::MAX)];
+    let res = h.registry.try_submit_proofs(&holder, &submissions);
+    assert!(res.is_err());
+}
+
 // ── Aggregate proof tests ─────────────────────────────────────────────────────
 
 #[test]
