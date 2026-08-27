@@ -203,6 +203,33 @@ full reference.
 
 ---
 
+## Where your credentials live
+
+Credentials — including the raw attribute value and its random salt — are stored
+**only in the browser's `localStorage`** (key `stellarcred:credentials`). There is
+no StellarCred account and no server-side credential database. This means:
+
+- **Credentials are device-bound.** Clearing site data, switching browsers or
+  devices, or browsing privately erases them — there is no server copy to
+  recover them from.
+- **Back up before you lose them.** On the **Holder** page, click **Export
+  backup** to download a JSON file of every credential (treat it like a
+  password — it contains the raw values). Restore on any device with **Import
+  credential JSON**.
+- **Move one credential at a time.** A credential's detail view offers
+  **Transfer to another device**: you pick a passphrase and the app shows a QR
+  code whose payload is encrypted (AES-256-GCM, PBKDF2 key derivation) before
+  leaving the device — scan it on the other device and enter the passphrase to
+  import.
+- **What reaches the server and chain.** The only server round-trip is
+  `POST /api/witness` (rate-limited, never logged or persisted), which runs the
+  Noir circuit and returns witness bytes for in-browser proving. On chain, only
+  the public inputs — commitment (a hash), issuer key, credential type, expiry —
+  and the proof bytes are written. See the in-app docs (`/docs`) for the full
+  breakdown.
+
+---
+
 ## Prerequisites
 
 - Rust (nightly ok) + the `wasm32v1-none` target: `rustup target add wasm32v1-none`

@@ -95,7 +95,16 @@ export function randomField(): string {
 
 // ---- Local wallet (this browser) ----------------------------------------
 
-const KEY = "stellarcred:credentials";
+/**
+ * localStorage key under which all credentials are persisted. Credentials
+ * (including the raw `value` / `salt` secrets) live ONLY in this browser's
+ * localStorage — they are never stored on a server. See the README's
+ * "Where your credentials live" section for the full model and the
+ * backup/restore flow.
+ */
+export const CREDENTIALS_STORAGE_KEY = "stellarcred:credentials";
+
+const KEY = CREDENTIALS_STORAGE_KEY;
 
 export function loadCredentials(): Credential[] {
   if (typeof window === "undefined") return [];
@@ -104,6 +113,17 @@ export function loadCredentials(): Credential[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Serialize every locally stored credential to a JSON string for backup.
+ * Pairs with the holder page's "Import credential JSON" flow: the exported
+ * file's contents can be pasted back (or into another browser) to restore.
+ * The export contains the sensitive attribute values, so it must be handled
+ * like a password.
+ */
+export function exportCredentials(): string {
+  return JSON.stringify(loadCredentials(), null, 2);
 }
 
 export function saveCredential(cred: Credential): Credential[] {
