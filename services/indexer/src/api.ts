@@ -1,3 +1,26 @@
+
+export interface ClaimResponse {
+  id: string;
+  issuer: string;
+  holder: string;
+  claim_type: string;
+  verified_at: number;
+  expiry: number | null;
+  revoked: boolean;
+}
+
+export function normalizeClaimRow(row: any): ClaimResponse {
+  return {
+    id: String(row.id),
+    issuer: String(row.issuer),
+    holder: String(row.holder),
+    claim_type: String(row.claim_type),
+    verified_at: Number(row.verified_at),
+    expiry: row.expiry !== null && row.expiry !== undefined ? Number(row.expiry) : null,
+    revoked: Boolean(row.revoked === true || row.revoked === 1 || row.revoked === "1"),
+  };
+}
+
 /**
  * api.ts — Read-only HTTP API for the indexer.
  *
