@@ -42,15 +42,34 @@ async function getServer() {
   return server;
 }
 
-const PROOF_REGISTRY_ERRORS: Record<number, string> = {
+// Mirrors the ProofRegistry Error enum in contracts/proof_registry/src/lib.rs.
+// Keep this map in sync with that enum: every variant must have an entry.
+//
+//   NotInitialized        = 1
+//   VerificationFailed    = 2
+//   NotAuthorized         = 3
+//   IssuerNotTrusted      = 4
+//   IssuerKeyMismatch     = 5
+//   ProofNotFound         = 6
+//   BatchTooLarge         = 7
+//   BatchEmpty            = 8
+//   DuplicateCredentialType = 9
+//   AggregateLayoutInvalid  = 10
+//   SubmissionsPaused       = 11
+//   InvalidExpiry           = 12
+export const PROOF_REGISTRY_ERRORS: Record<number, string> = {
   1: "Contracts not initialised — check that all contract IDs are set in the environment.",
   2: "Proof verification failed — the ZK proof is invalid or was generated against the wrong circuit VK.",
   3: "Not authorised — wallet signature missing or wrong account.",
   4: "Issuer not trusted — the issuer address isn't registered for this credential type.",
   5: "Issuer key mismatch — this credential was signed with a key that doesn't match what's registered on-chain. Re-issue the credential and try again.",
-  6: "Duplicate credential type — a proof for this claim type is already on-chain for this wallet. Revoke or wait for expiry before submitting again.",
-  7: "Credential revoked — the issuer has revoked this credential. Re-issue through the verify flow.",
-  8: "Credential expired — the on-chain proof has passed its validity window. Re-issue to get a fresh proof.",
+  6: "Proof not found — no on-chain proof exists for this holder and credential type.",
+  7: "Batch too large — reduce the number of proofs and try again.",
+  8: "Batch is empty — include at least one proof submission.",
+  9: "Duplicate credential type — the batch contains two proofs for the same claim type. Remove the duplicate and try again.",
+  10: "Aggregate proof layout invalid — the number of credentials or public inputs don't match the expected format. Re-generate the aggregate proof.",
+  11: "Submissions paused — the protocol admin has temporarily halted new proof submissions. Try again later.",
+  12: "Invalid expiry — the credential expiry is either in the past or too far in the future. Re-issue with a valid validity window.",
 };
 
 export interface ContractError {
