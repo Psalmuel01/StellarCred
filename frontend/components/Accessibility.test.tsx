@@ -93,19 +93,23 @@ describe("Accessibility Pass - Components ARIA Semantics", () => {
     render(
       <TransferExportModal
         cred={{
-          id: "cred-1",
-          type: "age_over_18",
+          type: "age",
           title: "Age Over 18",
           claim: "18+",
           issuer: "StellarCred Demo Issuer",
           issuerId: "GBBB",
+          holder: "GAAA",
+          value: "20",
+          salt: "0x123",
           commitment: "0x123",
+          sig: [1, 2, 3],
+          issuerPubX: [1, 2, 3],
+          issuerPubY: [1, 2, 3],
           issuedAt: 1700000000,
           expiry: "30 days",
-          secret: "0xabc",
         }}
         onClose={handleClose}
-      />,
+      />
     );
     const dialog = screen.getByRole("dialog", { name: /transfer credential/i });
     expect(dialog).toBeInTheDocument();
