@@ -93,16 +93,6 @@ jobs:
           export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
           bash ./circuits/scripts/build.sh
 
-      - name: Upload set_membership fixtures
-        uses: actions/upload-artifact@v4
-        with:
-          name: set-membership-fixtures-${{ github.sha }}
-          path: |
-            fixtures/set_membership/vk
-            fixtures/set_membership/proof
-            fixtures/set_membership/public_inputs
-          retention-days: 7
-
       - name: Build WASM artifacts
         # --locked ensures Cargo.lock is respected exactly (no silent dep upgrades).
         run: cargo build --release --target wasm32v1-none --locked
@@ -134,7 +124,7 @@ jobs:
       - name: Compile circuits
         run: |
           export PATH="$HOME/.nargo/bin:$PATH"
-          for dir in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof aggregate_proof; do
+          for dir in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof aggregate_proof set_membership; do
             echo "=== $dir ==="
             (cd "$dir" && nargo compile)
           done
@@ -157,6 +147,8 @@ jobs:
               employment_proof) echo employment ;;
               accreditation_proof) echo accreditation ;;
               aggregate_proof) echo aggregate ;;
+              accreditation_proof) echo accreditation ;;
+              set_membership) echo set_membership ;;
               *) echo "$1" ;;
             esac
           }
@@ -165,7 +157,7 @@ jobs:
           VK_TMP="/tmp/vk_check"
           rm -rf "$VK_TMP"
 
-          for dir in kyc_proof age_proof income_proof jurisdiction_proof funds_proof employment_proof aggregate_proof; do
+          for dir in kyc_proof age_proof income_proof jurisdiction_proof funds_proof employment_proof aggregate_proof accreditation_proof set_membership; do
             type=$(type_of "$dir")
             json="target/${dir}.json"
             out="$VK_TMP/$type"
