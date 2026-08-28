@@ -31,8 +31,9 @@ const INITIAL_TOC: TocItem[] = [
   { id: "credentials", label: "Credential types", level: 2, content: "" },
   { id: "zk-proofs", label: "ZK proof system", level: 2, content: "" },
   { id: "contracts", label: "Smart contracts", level: 2, content: "" },
-  { id: "privacy", label: "Privacy model", level: 2, content: "" },
-  { id: "toolchain", label: "Toolchain", level: 2, content: "" },
+  { id: "privacy",     label: "Privacy model", level: 2, content: "" },
+  { id: "storage",     label: "Where your credentials live", level: 2, content: "" },
+  { id: "toolchain",   label: "Toolchain", level: 2, content: "" },
   { id: "get-started", label: "Get started", level: 2, content: "" },
 ];
 
@@ -1070,6 +1071,153 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               observer learns only that <em>some</em> holder with <em>some</em> credential passed
               verification at a given time.
             </Callout>
+          </section>
+
+          {/* Where your credentials live ────────────────────────── */}
+          <section style={{ marginBottom: "3.5rem" }}>
+            <SectionHeading id="storage">
+              <IconDatabase size={20} color="var(--accent)" stroke={1.8} />
+              Where your credentials live
+            </SectionHeading>
+
+            <P>
+              Your credentials — including the raw attribute value (date of birth, income,
+              balance…) and its random salt — are stored <strong style={{color:"var(--text)"}}>only in
+              this browser's <Code>localStorage</Code></strong>, under the key{" "}
+              <Code>stellarcred:credentials</Code>. There is no StellarCred account and no
+              server-side credential database: the credential JSON exists only on the device
+              that received it.
+            </P>
+
+            <Callout variant="warn">
+              <strong>Credentials are browser-specific and can be lost permanently.</strong>{" "}
+              Clearing site data, switching to a different browser or device, or browsing in
+              private/incognito mode erases them — there is no server-side copy to recover
+              them from. Back up (below) before any of those happen.
+            </Callout>
+
+            <SubHeading>Back up and restore</SubHeading>
+            <P>
+              Open the <strong style={{color:"var(--text)"}}>Holder</strong> page and click{" "}
+              <strong style={{color:"var(--text)"}}>Export backup</strong> — the browser downloads a JSON
+              file containing every credential. Keep that file somewhere safe: it contains the
+              raw sensitive attribute values, so treat it like a password. To restore — on a new
+              browser, a new device, or after clearing site data — open the Holder page there,
+              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and paste the
+              file's contents. Restored credentials generate and submit proofs exactly like
+              newly issued ones.
+            </P>
+            <P>
+              To move a single credential to another device, open its details (click the
+              credential on the Holder page) and choose{" "}
+              <strong style={{color:"var(--text)"}}>Transfer to another device</strong>. You pick a
+              passphrase and the app shows a QR code; the credential is encrypted with that
+              passphrase (AES-256-GCM, key derived via PBKDF2 — see <Code>lib/crypto.ts</Code>)
+              before it ever becomes a QR code, so the code alone reveals nothing. On the other
+              device, scan the QR and enter the same passphrase to import.
+            </P>
+
+            <SubHeading>What is stored, and where</SubHeading>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <div className="card" style={{ padding: "1.1rem 1.25rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--faint)",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  Stored on this device
+                </div>
+                {[
+                  "Raw attribute (age, income, country, …)",
+                  "Random salt",
+                  "Full credential JSON + issuer signature",
+                  "Proof status (provedAt / tx hash)",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      fontSize: "0.8375rem",
+                      color: "var(--muted)",
+                      padding: "0.3rem 0",
+                    }}
+                  >
+                    <IconLock size={11} color="var(--faint)" />
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <div className="card card-accent" style={{ padding: "1.1rem 1.25rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--accent)",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  Never stored on a server
+                </div>
+                {[
+                  "Credential value / salt",
+                  "Credential JSON (discarded after use)",
+                  "Passphrase or derived key",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      fontSize: "0.8375rem",
+                      color: "var(--muted)",
+                      padding: "0.3rem 0",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: "var(--accent)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <P>
+              One nuance: while <em>stored</em> credentials never leave your device, generating a
+              proof sends your credential inputs to <Code>POST /api/witness</Code> (StellarCred's
+              own server), which executes the Noir circuit and returns the witness bytes; the
+              proof itself is then computed in your browser. That route is rate-limited, never
+              logs the sensitive fields, and does not persist the credential — the values exist
+              only in transit for that single request (see <em>How it works</em> above).
+            </P>
+            <P>
+              On the chain side, submitting a proof writes only the public inputs — the
+              commitment (a hash), the issuer's public key, the credential type, and an expiry
+              timestamp — plus the ~14 KB proof bytes. See <em>Privacy model</em> above for the
+              full breakdown.
+            </P>
           </section>
 
           {/* Toolchain ──────────────────────────────────────────── */}

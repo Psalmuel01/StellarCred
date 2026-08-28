@@ -6,6 +6,18 @@ on:
     paths:
       - 'frontend/**'
 
+# ── Security: least-privilege permissions ──────────────────────────────────
+# contents:read   – checkout source only; no write to any ref.
+# pull-requests:write – post/update the preview comment on PRs.
+#
+# Safety against fork PRs:
+#   • Trigger is `pull_request` (not `pull_request_target`), so GitHub does
+#     NOT expose repository secrets to workflows triggered by fork PRs.
+#   • The deploy-preview job additionally enforces
+#     head.repo.full_name == github.repository, ensuring even non-secret
+#     steps never run for fork-sourced PRs.
+#   • VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID are only accessed
+#     inside steps guarded by that check.
 permissions:
   contents: read
   pull-requests: write
@@ -14,10 +26,17 @@ jobs:
   deploy-preview:
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # Job-level permissions: same as top-level, declared explicitly for
+    # auditability. This job needs contents:read (checkout) and
+    # pull-requests:write (PR comment via actions/github-script).
     permissions:
       contents: read
       pull-requests: write
     steps:
+      # Default checkout: merges base into head for the PR merge-commit ref.
+      # This is safe — it never checks out arbitrary fork code with secrets
+      # in scope, because the fork guard above prevents this step from running
+      # on fork PRs.
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -101,6 +120,8 @@ jobs:
   teardown-preview:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # teardown-preview only reads PR comments to find the preview URL,
+    # then removes the Vercel deployment. No PR write needed.
     permissions:
       contents: read
       pull-requests: read
