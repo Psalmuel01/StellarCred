@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Credential } from "./credential";
+import { isStorageAvailable } from "./safe-storage";
 
 export type TimelineEventStage = "issued" | "generated" | "submitted" | "verified" | "expired";
 
@@ -47,7 +48,7 @@ export function useProofTimeline(cred: Credential | null) {
     if (!cred) return;
     const { commitment } = cred;
     const data = loadTimeline(commitment);
-    
+
     // Reconcile issuedAt
     if (cred.issuedAt && !data.events.some((e) => e.stage === "issued")) {
       data.events.push({ stage: "issued", timestamp: cred.issuedAt });
@@ -63,7 +64,7 @@ export function useProofTimeline(cred: Credential | null) {
     const match = cred.expiry?.match(/(\d+)/);
     const ttlSecs = (match ? parseInt(match[1]) : 30) * 86_400;
     const isExpired = cred.provedAt ? cred.provedAt + ttlSecs <= Math.floor(Date.now() / 1000) : false;
-    
+
     if (isExpired && !data.events.some((e) => e.stage === "expired")) {
       data.events.push({ stage: "expired", timestamp: cred.provedAt! + ttlSecs });
     } else if (!isExpired) {
@@ -73,10 +74,40 @@ export function useProofTimeline(cred: Credential | null) {
 
     // Sort events by timestamp
     data.events.sort((a, b) => a.timestamp - b.timestamp);
-    
+
     saveTimeline(commitment, data);
     setEvents(data.events);
   }, [cred, loadTimeline, saveTimeline]);
+
+  // Cross-tab sync: listen for storage events from other tabs
+  useEffect(() => {
+    if (!cred || !isStorageAvailable()) return;
+    const { commitment } = cred;
+    const timelineKey = `${TIMELINE_PREFIX}${commitment}`;
+
+    // Debounced reload to avoid thrash on rapid writes
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const debouncedReload = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        const data = loadTimeline(commitment);
+        setEvents(data.events);
+      }, 100); // 100ms debounce
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      // Only reload if this credential's timeline key changed
+      if (e.key === timelineKey) {
+        debouncedReload();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [cred, loadTimeline]);
 
   // Hook to add a new event from the UI
   const addEvent = useCallback(
