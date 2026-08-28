@@ -136,7 +136,12 @@ export function saveCredential(cred: Credential): Credential[] {
       (c) => !(c.type === cred.type && c.commitment === cred.commitment),
     ),
   ];
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable (private mode / quota exceeded) — in-memory state
+    // is still returned so the UI stays consistent for this session
+  }
   return next;
 }
 
@@ -146,7 +151,11 @@ export function markProved(commitment: string, txHash: string): Credential[] {
       ? { ...c, provedAt: Math.floor(Date.now() / 1000), provedTxHash: txHash }
       : c,
   );
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable (private mode / quota exceeded) — no-op
+  }
   return next;
 }
 
@@ -160,13 +169,21 @@ export function markAllProved(
   const next = loadCredentials().map((c) =>
     set.has(c.commitment) ? { ...c, provedAt: now, provedTxHash: txHash } : c,
   );
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable (private mode / quota exceeded) — no-op
+  }
   return next;
 }
 
 export function removeCredential(commitment: string): Credential[] {
   const next = loadCredentials().filter((c) => c.commitment !== commitment);
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable (private mode / quota exceeded) — no-op
+  }
   return next;
 }
 
