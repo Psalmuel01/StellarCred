@@ -4,7 +4,8 @@
  * Endpoints (all public, no authentication):
  *
  *   GET /health
- *     → { status: "ok", lastLedger: number }
+ *     → { status, lastLedger, headLedger, lag, lastError, lastErrorTime,
+ *         consecutiveErrors, fetchAttempts, fetchFailures }
  *
  *   GET /claims?wallet=G…
  *     → { wallet: string, claims: ClaimRow[] }
@@ -26,6 +27,7 @@ import express, {
   RequestHandler,
 } from "express";
 import type { Db } from "./db";
+import type { Ingester } from "./ingester";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
@@ -39,7 +41,7 @@ function asyncHandler(
   };
 }
 
-export function buildApp(db: Db): express.Application {
+export function buildApp(db: Db, ingester: Ingester): express.Application {
   const app = express();
 
   // Security: no body parsing (read-only), conservative headers.
@@ -51,11 +53,39 @@ export function buildApp(db: Db): express.Application {
   });
 
   // ── GET /health ──────────────────────────────────────────────────────────
+  // Exposes ingester lag so operators can alert when the indexer falls behind.
+  //
+  // status semantics:
+  //   "ok"       — consecutiveErrors === 0
+  //   "degraded" — last fetch failed but some succeeded before it
+  //   "error"    — 3+ consecutive failures (stale data, indexer likely stalled)
   app.get(
     "/health",
     asyncHandler(async (_req, res) => {
       const lastLedger = await db.getLastLedger();
-      res.json({ status: "ok", lastLedger });
+      const h = ingester.getHealth();
+
+      let status: "ok" | "degraded" | "error";
+      if (h.consecutiveErrors === 0) {
+        status = "ok";
+      } else if (h.consecutiveErrors < 3) {
+        status = "degraded";
+      } else {
+        status = "error";
+      }
+
+      res.json({
+        status,
+        lastLedger,
+        headLedger: h.headLedger,
+        lag: h.lag,
+        lastSuccessLedger: h.lastSuccessLedger,
+        lastError: h.lastError,
+        lastErrorTime: h.lastErrorTime,
+        consecutiveErrors: h.consecutiveErrors,
+        fetchAttempts: h.fetchAttempts,
+        fetchFailures: h.fetchFailures,
+      });
     })
   );
 
