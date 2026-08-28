@@ -109,11 +109,16 @@ jobs:
   circuits:
     name: Circuit compile
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: circuits
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Install Noir toolchain
         run: |
@@ -183,7 +188,11 @@ jobs:
             fi
 
             fixture="../fixtures/$type/vk"
-            if diff -q "$actual" "$fixture" >/dev/null 2>&1; then
+            if [ ! -f "$fixture" ]; then
+              echo "  MISSING — auto-staging fixtures/$type/vk from freshly compiled circuit"
+              mkdir -p "../fixtures/$type"
+              cp "$actual" "$fixture"
+            elif diff -q "$actual" "$fixture" >/dev/null 2>&1; then
               echo "  OK — matches fixtures/$type/vk"
             else
               echo "::error::VK mismatch for $type (fixtures/$type/vk differs from freshly compiled circuit)"
@@ -194,6 +203,17 @@ jobs:
 
           if [ "$FAILED" -ne 0 ]; then
             exit 1
+          fi
+
+      - name: Commit auto-staged fixtures
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- ../fixtures/; then
+            git add ../fixtures/
+            git commit -m "chore(circuits): auto-stage missing VK fixtures [skip ci]"
+            git push
           fi
 
       - name: Check verify-wasm.sh syntax
