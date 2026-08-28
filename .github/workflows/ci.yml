@@ -147,7 +147,6 @@ jobs:
               employment_proof) echo employment ;;
               accreditation_proof) echo accreditation ;;
               aggregate_proof) echo aggregate ;;
-              accreditation_proof) echo accreditation ;;
               set_membership) echo set_membership ;;
               *) echo "$1" ;;
             esac
