@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# ── Security: top-level least-privilege ────────────────────────────────────
+# Set the narrowest default; jobs that need more declare it explicitly.
+# • contents:read – checkout source for every job.
+# • No pull-requests or packages access at the top level.
+# This workflow does not use repository secrets (only GITHUB_TOKEN for
+# PR comments and npm cache), so fork PRs cannot exfiltrate anything.
+permissions:
+  contents: read
+
 jobs:
   commitlint:
     name: Lint commit messages

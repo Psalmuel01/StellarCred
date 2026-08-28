@@ -16,11 +16,64 @@
  * only after all rows for that ledger have been written. Restarting replays from
  * the last saved cursor; duplicate events are absorbed by upsertClaim's
  * ON CONFLICT DO UPDATE clause.
+ *
+ * Retry / backoff: transient Horizon errors (5xx, network, 429) are retried
+ * with exponential backoff (up to MAX_RETRIES attempts) before giving up for
+ * the current tick. The cursor is NEVER advanced past unprocessed events.
+ *
+ * Health observability: every tick updates an IngesterHealth snapshot that the
+ * HTTP /health endpoint exposes. Operators can alert on `lag > N` or
+ * `consecutiveErrors > 0`.
  */
 
 import { Horizon } from "@stellar/stellar-sdk";
 import type { Config } from "./config";
 import type { Db } from "./db";
+
+// ── Retry configuration ───────────────────────────────────────────────────
+
+/** Maximum number of fetch attempts per tick (1 = no retry). */
+const MAX_RETRIES = 3;
+
+/** Base delay in ms before the first retry (doubled each subsequent attempt). */
+const BASE_RETRY_DELAY_MS = 500;
+
+/** Maximum single-retry delay (caps exponential growth). */
+const MAX_RETRY_DELAY_MS = 8_000;
+
+// ── Health / lag observability ─────────────────────────────────────────────
+
+export interface IngesterHealth {
+  /** Ledger sequence of the last successfully processed event. 0 if none. */
+  lastSuccessLedger: number;
+  /** Current Horizon head ledger (best-effort, fetched once per tick). */
+  headLedger: number;
+  /** `headLedger - lastSuccessLedger` or -1 if head is unknown. */
+  lag: number;
+  /** Human-readable message from the most recent failed fetch, if any. */
+  lastError: string | null;
+  /** Timestamp (ms) of the most recent failed fetch. */
+  lastErrorTime: number | null;
+  /** How many consecutive ticks have failed (0 = healthy). */
+  consecutiveErrors: number;
+  /** Total fetch attempts (including retries) since start. */
+  fetchAttempts: number;
+  /** Total failed fetch attempts (all retries exhausted) since start. */
+  fetchFailures: number;
+}
+
+function freshHealth(): IngesterHealth {
+  return {
+    lastSuccessLedger: 0,
+    headLedger: 0,
+    lag: -1,
+    lastError: null,
+    lastErrorTime: null,
+    consecutiveErrors: 0,
+    fetchAttempts: 0,
+    fetchFailures: 0,
+  };
+}
 
 // ── Horizon event shape (Soroban contract events) ──────────────────────────
 
@@ -62,6 +115,11 @@ interface HorizonEventsPage {
   _embedded: { records: HorizonContractEvent[] };
 }
 
+/** Horizon root response — used to read the current ledger. */
+interface HorizonRoot {
+  core_latest_ledger: number;
+}
+
 // ── XDR decode helpers (no external XDR lib required) ─────────────────────
 
 /**
@@ -99,6 +157,108 @@ function decodeScVal(b64: string): unknown {
     return native;
   } catch {
     return null;
+  }
+}
+
+// ── Retry helper ───────────────────────────────────────────────────────────
+
+/**
+ * Sleep for `ms` milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Determine whether `err` is a transient error worth retrying.
+ *
+ * Retries on: network errors (ECONNRESET, ENOTFOUND, etc.), HTTP 5xx,
+ * and HTTP 429 (rate limited).
+ * Does NOT retry on: HTTP 4xx (except 429) — those are permanent request
+ * errors (e.g. 404 = contract has no events, which we handle separately).
+ */
+function isTransientError(err: unknown): boolean {
+  const msg = (err as Error).message?.toLowerCase() ?? "";
+  // Node fetch network errors (fetch failed, terminated, ECONNRESET, etc.)
+  if (
+    msg.includes("fetch failed") ||
+    msg.includes("terminated") ||
+    msg.includes("econnreset") ||
+    msg.includes("enotfound") ||
+    msg.includes("socket hang up") ||
+    msg.includes("network") ||
+    msg.includes("timeout")
+  ) {
+    return true;
+  }
+  // Horizon HTTP-level transient errors are caught by the status code checks
+  // in fetchEventsWithRetry. Anything else is non-transient.
+  return false;
+}
+
+/**
+ * Fetch with bounded exponential backoff. Returns the parsed Horizon events
+ * page, or throws after all retries are exhausted.
+ *
+ * @param url       Full URL to fetch
+ * @param signal    AbortSignal for timeout
+ * @param retries   Remaining retries (internal, do not pass)
+ * @param attempt   Current attempt number (1-based, internal)
+ */
+async function fetchEventsWithRetry(
+  url: string,
+  signal: AbortSignal,
+  retries = MAX_RETRIES,
+  attempt = 1,
+): Promise<HorizonEventsPage> {
+  try {
+    const res = await fetch(url, { signal });
+    if (res.ok) {
+      return (await res.json()) as HorizonEventsPage;
+    }
+    // 404 = contract has no events yet — not an error, not transient.
+    if (res.status === 404) {
+      // Return an empty page rather than throwing so the caller sees
+      // records.length === 0 and returns 0 events cleanly.
+      return { _embedded: { records: [] } };
+    }
+    // 429 = rate limited — transient, worth retrying.
+    // 5xx = server error — transient.
+    if (res.status === 429 || res.status >= 500) {
+      if (retries <= 0) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `Horizon responded ${res.status} after ${attempt} attempts: ${text}`,
+        );
+      }
+      // For 429, honour Retry-After if present; otherwise use exponential backoff.
+      const retryAfter = res.headers.get("retry-after");
+      const delayMs = retryAfter
+        ? Math.min(Number(retryAfter) * 1000, MAX_RETRY_DELAY_MS)
+        : Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS);
+      console.warn(
+        `[indexer] Horizon ${res.status} on attempt ${attempt}/${attempt + retries}, retrying in ${delayMs}ms…`,
+      );
+      await sleep(delayMs);
+      return fetchEventsWithRetry(url, signal, retries - 1, attempt + 1);
+    }
+    // Other 4xx = permanent error, no retry.
+    const text = await res.text().catch(() => "");
+    throw new Error(`Horizon responded ${res.status}: ${text}`);
+  } catch (err) {
+    // If it's a non-transient error or we've exhausted retries, throw.
+    if (!isTransientError(err) || retries <= 0) {
+      throw err;
+    }
+    const delayMs = Math.min(
+      BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1),
+      MAX_RETRY_DELAY_MS,
+    );
+    console.warn(
+      `[indexer] transient fetch error on attempt ${attempt}/${attempt + retries}: ${(err as Error).message}; retrying in ${delayMs}ms…`,
+    );
+    await sleep(delayMs);
+    return fetchEventsWithRetry(url, signal, retries - 1, attempt + 1);
   }
 }
 
@@ -201,6 +361,8 @@ export interface Ingester {
   start(): void;
   /** Stop the polling loop. */
   stop(): void;
+  /** Current health snapshot — safe to read at any time. */
+  getHealth(): IngesterHealth;
 }
 
 export function createIngester(config: Config, db: Db): Ingester {
@@ -210,6 +372,37 @@ export function createIngester(config: Config, db: Db): Ingester {
 
   let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const health = freshHealth();
+
+  // ── Fetch current Horizon head ledger (cached per tick) ────────────────
+  // We fetch this once at the start of each tick so lag is observable
+  // without adding a second network call on every cycle.
+  let cachedHeadLedger = 0;
+  let cachedHeadTime = 0;
+  const HEAD_CACHE_MS = 30_000;
+
+  async function fetchHeadLedger(): Promise<number> {
+    const now = Date.now();
+    if (cachedHeadLedger > 0 && now - cachedHeadTime < HEAD_CACHE_MS) {
+      return cachedHeadLedger;
+    }
+    try {
+      const res = await fetch(config.horizonUrl, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.ok) {
+        const root = (await res.json()) as HorizonRoot;
+        const seq = root.core_latest_ledger ?? 0;
+        if (seq > 0) {
+          cachedHeadLedger = seq;
+          cachedHeadTime = now;
+        }
+      }
+    } catch {
+      // Best-effort — head is not critical for tick correctness.
+    }
+    return cachedHeadLedger;
+  }
 
   async function tick(): Promise<number> {
     const lastLedger = await db.getLastLedger();
@@ -244,24 +437,35 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
-    let page: HorizonEventsPage;
-    try {
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        if (res.status === 404) {
-          // Contract has no events yet — not an error.
-          return 0;
+    // Fetch head ledger (best-effort) so lag is visible in /health.
+    // We fire this in parallel with the events fetch so we don't add
+    // serial latency to every tick.
+    const [, page] = await Promise.all([
+      fetchHeadLedger(),
+      (async () => {
+        health.fetchAttempts++;
+        try {
+          return await fetchEventsWithRetry(url.toString(), AbortSignal.timeout(15_000));
+        } catch (err) {
+          // All retries exhausted — record the error but do NOT advance cursor.
+          health.lastError = (err as Error).message;
+          health.lastErrorTime = Date.now();
+          health.consecutiveErrors++;
+          health.fetchFailures++;
+          throw err;
         }
-        throw new Error(`Horizon responded ${res.status}: ${await res.text()}`);
-      }
-      page = (await res.json()) as HorizonEventsPage;
-    } catch (err) {
-      console.warn("[indexer] Horizon fetch error:", (err as Error).message);
-      return 0;
-    }
+      })(),
+    ]);
 
     const records = page._embedded?.records ?? [];
-    if (records.length === 0) return 0;
+    if (records.length === 0) {
+      // Successful empty fetch — reset error state and update lag.
+      health.consecutiveErrors = 0;
+      health.lastError = null;
+      health.headLedger = cachedHeadLedger;
+      health.lag = cachedHeadLedger > 0 ? cachedHeadLedger - lastLedger : -1;
+      return 0;
+    }
 
     let maxLedger = lastLedger;
     let processed = 0;
@@ -296,6 +500,13 @@ export function createIngester(config: Config, db: Db): Ingester {
     if (maxLedger > lastLedger) {
       await db.setLastLedger(maxLedger);
     }
+
+    // Update health on success.
+    health.lastSuccessLedger = maxLedger;
+    health.headLedger = cachedHeadLedger;
+    health.lag = cachedHeadLedger > 0 ? cachedHeadLedger - maxLedger : -1;
+    health.consecutiveErrors = 0;
+    health.lastError = null;
 
     return processed;
   }
@@ -332,6 +543,9 @@ export function createIngester(config: Config, db: Db): Ingester {
         clearTimeout(timer);
         timer = null;
       }
+    },
+    getHealth() {
+      return { ...health };
     },
   };
 }

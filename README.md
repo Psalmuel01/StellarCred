@@ -100,6 +100,8 @@ frontend/               Next.js 14 app (App Router)
   packages/sdk/           @stellarcred/sdk — hasClaim / getClaims / buildVerifyUrl
   packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
+services/
+  indexer/                off-chain event indexing service (SQLite/Postgres, [README](services/indexer/README.md))
 scripts/deploy.sh       deploy + wire + register issuer + install all VKs on testnet
 scripts/benchmark.sh    measure instruction budget for every public function on testnet
 BENCHMARKS.md           per-function instruction counts, ledger I/O, and fee estimates
@@ -200,6 +202,33 @@ full reference.
 4. **Proof expiry.** `ProofRegistry` uses persistent storage with an explicit
    `expiry` (checked against ledger time) plus TTL extension.
 5. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
+
+---
+
+## Where your credentials live
+
+Credentials — including the raw attribute value and its random salt — are stored
+**only in the browser's `localStorage`** (key `stellarcred:credentials`). There is
+no StellarCred account and no server-side credential database. This means:
+
+- **Credentials are device-bound.** Clearing site data, switching browsers or
+  devices, or browsing privately erases them — there is no server copy to
+  recover them from.
+- **Back up before you lose them.** On the **Holder** page, click **Export
+  backup** to download a JSON file of every credential (treat it like a
+  password — it contains the raw values). Restore on any device with **Import
+  credential JSON**.
+- **Move one credential at a time.** A credential's detail view offers
+  **Transfer to another device**: you pick a passphrase and the app shows a QR
+  code whose payload is encrypted (AES-256-GCM, PBKDF2 key derivation) before
+  leaving the device — scan it on the other device and enter the passphrase to
+  import.
+- **What reaches the server and chain.** The only server round-trip is
+  `POST /api/witness` (rate-limited, never logged or persisted), which runs the
+  Noir circuit and returns witness bytes for in-browser proving. On chain, only
+  the public inputs — commitment (a hash), issuer key, credential type, expiry —
+  and the proof bytes are written. See the in-app docs (`/docs`) for the full
+  breakdown.
 
 ---
 

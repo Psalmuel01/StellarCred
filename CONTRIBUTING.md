@@ -8,6 +8,7 @@ Thanks for your interest in contributing. StellarCred is a ZK credential layer f
 contracts/    Soroban workspace (Rust, soroban-sdk 26)
 circuits/     Noir circuits (UltraHonk · Noir 1.0.0-beta.9 / bb 0.87.0)
 frontend/     Next.js 14 app + @stellarcred/sdk
+services/     Indexer & off-chain services (see services/indexer/README.md)
 scripts/      deploy.sh — wires all contracts on testnet
 fixtures/     real vk / proof / public_inputs used by contract tests
 ```
@@ -60,6 +61,12 @@ cd frontend
 cp .env.example .env.local        # fill in contract IDs + ISSUER_PRIVATE_KEY
 pnpm install
 pnpm dev
+
+# indexer (optional — off-chain Soroban event indexing)
+cd services/indexer
+cp .env.example .env
+npm install
+npm run dev
 ```
 
 ## Development workflow

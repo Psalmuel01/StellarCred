@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
 
+# ── Security: least-privilege permissions ──────────────────────────────────
+# contents:write – push updated CHANGELOG.md back to main.
+#
+# This workflow only fires on tag pushes (v*), never on pull_request or
+# pull_request_target. Fork PRs cannot trigger it, so NPM_TOKEN is never
+# exposed to untrusted code.
 permissions:
   contents: write
 
