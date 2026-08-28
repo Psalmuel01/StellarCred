@@ -196,6 +196,14 @@ jobs:
             exit 1
           fi
 
+      - name: Upload freshly-derived VKs for stale-fixture repair
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-vks-${{ github.sha }}
+          path: /tmp/vk_check/
+          retention-days: 3
+
       - name: Check verify-wasm.sh syntax
         run: bash -n ../scripts/verify-wasm.sh
 
