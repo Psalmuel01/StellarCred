@@ -467,7 +467,6 @@ impl ProofRegistry {
         for i in 0..credential_types.len() {
             let ct = credential_types.get(i).unwrap();
             let issuer = issuer_ids.get(i).unwrap();
-            let expiry = expiries.get(i).unwrap();
 
             if !registry.is_valid_issuer(&issuer, &ct) {
                 panic_with_error!(&env, Error::IssuerNotTrusted);
@@ -480,7 +479,7 @@ impl ProofRegistry {
 
             let threshold =
                 Self::extract_threshold_from_aggregate(&ct, &public_inputs, field_offset);
-            Self::store_claim(&env, &holder, &ct, now, expiry, threshold, issuer.clone());
+            Self::store_claim(&env, &holder, &ct, now, expiries.get(i).unwrap(), threshold, issuer.clone());
 
             env.events().publish(
                 (
@@ -492,7 +491,7 @@ impl ProofRegistry {
                     holder: holder.clone(),
                     issuer: issuer.clone(),
                     verified_at: now,
-                    expiry,
+                    expiry: expiries.get(i).unwrap(),
                 },
             );
 
