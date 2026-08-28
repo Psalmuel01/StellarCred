@@ -48,7 +48,7 @@ jobs:
           node-version: 20
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
@@ -136,7 +136,7 @@ jobs:
       VERCEL_TOKEN_SET: ${{ secrets.VERCEL_TOKEN != '' }}
     steps:
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
