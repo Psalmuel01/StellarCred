@@ -93,6 +93,30 @@ describe("GET /claims", () => {
     expect(res.body.claims[0]).toMatchObject({
       wallet: "GALICE",
       credential_type: "kyc",
+      threshold: null,
+      revoked: 0,
+    });
+  });
+
+  it("returns inserted parameterized claim with threshold for known wallet", async () => {
+    (db as ReturnType<typeof createSqliteDb>).upsertClaim({
+      wallet: "GBOB",
+      credential_type: "age",
+      issuer: "GISSUER",
+      verified_at: 1000,
+      expiry: 9999999,
+      ledger_sequence: 42,
+      threshold: 21,
+      revoked: 0,
+    });
+
+    const res = await request(app).get("/claims?wallet=GBOB");
+    expect(res.status).toBe(200);
+    expect(res.body.claims).toHaveLength(1);
+    expect(res.body.claims[0]).toMatchObject({
+      wallet: "GBOB",
+      credential_type: "age",
+      threshold: 21,
       revoked: 0,
     });
   });

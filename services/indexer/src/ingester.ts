@@ -104,7 +104,7 @@ function decodeScVal(b64: string): unknown {
 
 // ── Event parser ───────────────────────────────────────────────────────────
 
-type ParsedEvent =
+export type ParsedEvent =
   | {
       kind: "verified";
       holder: string;
@@ -113,6 +113,7 @@ type ParsedEvent =
       expiry: number;
       ledgerSequence: number;
       verifiedAt: number;
+      threshold: number | null;
     }
   | {
       kind: "revoked";
@@ -126,25 +127,38 @@ type ParsedEvent =
  *
  * ProofRegistry event topology
  * ─────────────────────────────
- * Verified:
- *   topics[0] = ScvSymbol "proof"
- *   topics[1] = ScvSymbol "verified"
- *   value     = ScvU64 expiry
+ * Submitted (verified):
+ *   topics[0] = ScvSymbol "proof_reg"  (or legacy "proof")
+ *   topics[1] = ScvSymbol "submitted"  (or legacy "verified")
+ *   topics[2] = ScvSymbol credential_type  (e.g. "kyc", "age", "income")
+ *   value     = EventProofSubmitted { holder, issuer, verified_at, expiry }
+ *              (decoded as an object by scValToNative)
  *
- *   The holder and credential_type are NOT in the topics; they are implicit in
- *   the storage key.  Horizon does, however, surface the transaction's
- *   source_account which is the holder (they must sign submit_proof).
+ *   Legacy events may emit value = ScvU64 expiry and omit structured data.
+ *   The holder is also available via ev.source_account (they must sign
+ *   submit_proof).
+ *
+ *   Threshold: The on-chain ProofRecord stores a threshold field for
+ *   parameterized types (age, income, funds, accreditation, employment),
+ *   but the current EventProofSubmitted struct does not include it.
+ *   When a future events schema revision (#124) adds threshold to the
+ *   event payload, this parser will automatically pick it up. Until then,
+ *   the threshold is extracted from the event if present, otherwise null.
  *
  * Revoked (issuer-initiated, from revoke()):
- *   topics[0] = ScvSymbol "revoked"
- *   value     = ScvVec [holder, credential_type, issuer, timestamp]
+ *   topics[0] = ScvSymbol "proof_reg"  (or legacy "revoked")
+ *   topics[1] = ScvSymbol "revoked"
+ *   topics[2] = ScvSymbol credential_type
+ *   value     = EventProofRevoked { holder, issuer, revoked_at }
+ *
+ *   Legacy events: topics[0] = "revoked", value = ScvVec [holder, cred_type, issuer, ts]
  *
  * Revoked (holder self-revoke, revoke_proof()):
  *   No event is emitted by the contract for self-revoke — holder just removes
  *   the storage key.  We therefore won't see a chain event; claims will expire
  *   naturally.
  */
-function parseEvent(
+export function parseEvent(
   ev: HorizonContractEvent,
   contractId: string
 ): ParsedEvent {
@@ -157,31 +171,92 @@ function parseEvent(
       ? parseInt(ev.ledger, 10)
       : ev.ledger;
 
-  // verified event
-  if (topics[0] === "proof" && topics[1] === "verified") {
-    const holder = ev.source_account ?? "";
-    // credential_type is the 3rd topic (index 2) when emitted — but the
-    // contract's current publish call only emits 2 topics + value.
-    // We extract credential_type from the 3rd topic if present, else "unknown".
+  // ── Submitted / verified event ──────────────────────────────────────────
+  // Current contract topics: ("proof_reg", "submitted", credential_type)
+  // Legacy / earlier versions:  ("proof", "verified")
+  const isSubmitted =
+    (topics[0] === "proof_reg" && topics[1] === "submitted") ||
+    (topics[0] === "proof" && topics[1] === "verified");
+
+  if (isSubmitted) {
+    let holder = ev.source_account ?? "";
+    // credential_type is the 3rd topic (index 2) when present.
     const credentialType =
       typeof topics[2] === "string" ? topics[2] : "unknown";
-    const expiry = typeof value === "number" ? value : 0;
+
+    // The value may be a struct (object) or a plain number depending on
+    // the contract version.
+    let expiry = 0;
+    let issuer = "";
+    let threshold: number | null = null;
+
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      // Structured event payload (EventProofSubmitted from current contract).
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.holder === "string" && obj.holder) {
+        holder = obj.holder;
+      }
+      expiry =
+        typeof obj.expiry === "number"
+          ? obj.expiry
+          : typeof obj.expiry === "bigint"
+          ? Number(obj.expiry)
+          : 0;
+      issuer = typeof obj.issuer === "string" ? obj.issuer : "";
+      // threshold is not in the current EventProofSubmitted struct, but will
+      // be picked up automatically when events schema work (#124) adds it.
+      if (typeof obj.threshold === "number") {
+        threshold = obj.threshold;
+      } else if (typeof obj.threshold === "bigint") {
+        threshold = Number(obj.threshold);
+      } else if (
+        typeof obj.threshold === "string" &&
+        obj.threshold.trim() !== "" &&
+        !isNaN(Number(obj.threshold))
+      ) {
+        threshold = Number(obj.threshold);
+      }
+    } else {
+      // Legacy scalar value — just the expiry as a u64.
+      expiry = typeof value === "number" ? value : 0;
+    }
 
     return {
       kind: "verified",
       holder,
       credentialType,
-      issuer: "",
+      issuer,
       expiry,
       ledgerSequence,
       verifiedAt: Math.floor(
         new Date(ev.ledger_closed_at).getTime() / 1000
       ),
+      threshold,
     };
   }
 
-  // revoked event
-  if (topics[0] === "revoked") {
+  // ── Revoked event ────────────────────────────────────────────────────────
+  // Current contract topics: ("proof_reg", "revoked", credential_type)
+  //   value = EventProofRevoked { holder, issuer, revoked_at }
+  // Legacy: topics[0] = "revoked", value = [holder, cred_type, issuer, ts]
+  const isRevoked =
+    (topics[0] === "proof_reg" && topics[1] === "revoked") ||
+    topics[0] === "revoked";
+
+  if (isRevoked) {
+    // Current format: credential_type in topics[2], holder in value struct
+    if (topics[0] === "proof_reg" && typeof topics[2] === "string") {
+      const credentialType = String(topics[2]);
+      let holder = ev.source_account ?? "";
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        const obj = value as Record<string, unknown>;
+        if (typeof obj.holder === "string") holder = obj.holder;
+      }
+      if (holder) {
+        return { kind: "revoked", holder, credentialType };
+      }
+    }
+    // Legacy format: value = [holder, cred_type, ...]
     if (Array.isArray(value) && value.length >= 2) {
       const holder = String(value[0]);
       const credentialType = String(value[1]);
@@ -281,7 +356,7 @@ export function createIngester(config: Config, db: Db): Ingester {
           verified_at: parsed.verifiedAt,
           expiry: parsed.expiry,
           ledger_sequence: parsed.ledgerSequence,
-          threshold: null,
+          threshold: parsed.threshold,
           revoked: 0,
         });
         processed++;
