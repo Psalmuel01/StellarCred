@@ -1,10 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WalletButton } from "./WalletButton";
 import { ThemeToggle } from "./ThemeToggle";
 import CopyButton from "./CopyButton";
 import { ProofProgress } from "./ProofProgress";
 import { Timeline } from "./Timeline";
+import { Modal } from "./Modal";
+import { ToastProvider, useToast } from "./Toast";
+import { TransferExportModal } from "./TransferExportModal";
+import { TransferImportModal } from "./TransferImportModal";
 
 // Mock wallet context
 vi.mock("@/lib/wallet-context", () => ({
@@ -68,4 +72,83 @@ describe("Accessibility Pass - Components ARIA Semantics", () => {
     const link = screen.getByRole("link", { name: /view transaction/i });
     expect(link).toBeInTheDocument();
   });
+
+  it("Modal exposes role='dialog', aria-modal='true', labels by title, and closes on Escape", () => {
+    const handleClose = vi.fn();
+    render(
+      <Modal title="Test Modal" onClose={handleClose}>
+        <div>Modal Content</div>
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog", { name: /test modal/i });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(handleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("TransferExportModal exposes dialog role and labelled form fields", () => {
+    const handleClose = vi.fn();
+    render(
+      <TransferExportModal
+        cred={{
+          id: "cred-1",
+          type: "age_over_18",
+          title: "Age Over 18",
+          claim: "18+",
+          issuer: "StellarCred Demo Issuer",
+          issuerId: "GBBB",
+          commitment: "0x123",
+          issuedAt: 1700000000,
+          expiry: "30 days",
+          secret: "0xabc",
+        }}
+        onClose={handleClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: /transfer credential/i });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByLabelText(/^passphrase$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/confirm passphrase/i)).toBeInTheDocument();
+  });
+
+  it("TransferImportModal exposes dialog role and labelled form fields", () => {
+    const handleClose = vi.fn();
+    const handleImported = vi.fn();
+    render(
+      <TransferImportModal
+        payload="v1.testpayload"
+        onImported={handleImported}
+        onClose={handleClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: /import credential/i });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByLabelText(/^passphrase$/i)).toBeInTheDocument();
+  });
+
+  it("ToastProvider announces status messages with role='status' and aria-live", () => {
+    function TestConsumer() {
+      const toast = useToast();
+      return (
+        <button onClick={() => toast.success("Proof generated successfully")}>
+          Trigger Toast
+        </button>
+      );
+    }
+
+    render(
+      <ToastProvider>
+        <TestConsumer />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /trigger toast/i }));
+    const statusRegion = screen.getByRole("status");
+    expect(statusRegion).toBeInTheDocument();
+    expect(statusRegion).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByText("Proof generated successfully")).toBeInTheDocument();
+  });
 });
+
