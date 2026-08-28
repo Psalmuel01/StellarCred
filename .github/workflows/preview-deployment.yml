@@ -38,7 +38,7 @@ jobs:
       # in scope, because the fork guard above prevents this step from running
       # on fork PRs.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
