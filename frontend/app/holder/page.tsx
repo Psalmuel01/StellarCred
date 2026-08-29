@@ -862,6 +862,9 @@ function ProofFlow({
   const [showRaw, setShowRaw] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const { addEvent } = useProofTimeline(cred);
 
@@ -946,7 +949,21 @@ function ProofFlow({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cred]);
+  useEffect(() => {
+    switch (stage) {
+      case "generated":
+        submitButtonRef.current?.focus();
+        break;
 
+      case "confirmed":
+        successRef.current?.focus();
+        break;
+
+      case "error":
+        errorRef.current?.focus();
+        break;
+    }
+  }, [stage]);
   async function onSubmit() {
     if (!proof || networkMismatch) return;
     setStage("submitting");
@@ -1104,6 +1121,7 @@ function ProofFlow({
             )}
             <button
               className="btn btn-primary"
+              ref={submitButtonRef}
               style={{
                 marginTop: networkMismatch ? 0 : "1.5rem",
                 width: "100%",
@@ -1128,6 +1146,9 @@ function ProofFlow({
 
         {error && (
           <div
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
             style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
@@ -1193,6 +1214,10 @@ function ProofFlow({
 
         {stage === "confirmed" && (
           <div
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
             className="reveal"
             style={{
               marginTop: "1.5rem",
@@ -1258,6 +1283,9 @@ function BatchProofFlow({
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
   const holderRef = useRef(holder);
+   const networkMismatchRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { credsRef.current = creds; }, [creds]);
   useEffect(() => { holderRef.current = holder; }, [holder]);
 
@@ -1408,6 +1436,22 @@ function BatchProofFlow({
   const isConfirmed = batchStage === "confirmed";
   const isError = batchStage === "error";
 
+  useEffect(() => {
+  if (blockedByNetwork) {
+    networkMismatchRef.current?.focus();
+    return;
+  }
+
+  switch (batchStage) {
+    case "confirmed":
+      successRef.current?.focus();
+      break;
+
+    case "error":
+      errorRef.current?.focus();
+      break;
+  }
+  }, [blockedByNetwork, batchStage]);
   return (
     <div className="reveal" style={{ maxWidth: 560, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
@@ -1479,7 +1523,7 @@ function BatchProofFlow({
 
         {/* Network mismatch — proofs are ready but submission is blocked */}
         {blockedByNetwork && (
-          <div style={{ marginTop: "1.5rem" }}>
+          <div  ref={networkMismatchRef} tabIndex={-1} role="status" style={{ marginTop: "1.5rem" }}>
             <NetworkMismatchBanner />
           </div>
         )}
@@ -1487,7 +1531,10 @@ function BatchProofFlow({
         {/* Error banner */}
         {isError && batchError && (
           <div
-            style={{
+          ref={errorRef}
+          tabIndex={-1}
+          role="alert"  
+          style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
               borderRadius: "var(--radius)",
@@ -1540,6 +1587,9 @@ function BatchProofFlow({
         {isConfirmed && (
           <div
             className="reveal"
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
             style={{
               marginTop: "1.5rem",
               padding: "1.25rem",
