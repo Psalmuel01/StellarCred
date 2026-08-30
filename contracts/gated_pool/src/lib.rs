@@ -11,9 +11,31 @@
 //! the demo self-contained; swap in a token client for production.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    Env, Symbol, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
+    symbol_short, Address, Env, Symbol, Vec,
 };
+
+// ── Event payload structs ───────────────────────────────────────────────────
+
+/// Payload emitted when a caller successfully deposits into the gated pool.
+/// Topics: (symbol_short!("gate_pool"), symbol_short!("deposit"))
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventDeposit {
+    pub caller: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
+
+/// Payload emitted when a caller successfully withdraws from the gated pool.
+/// Topics: (symbol_short!("gate_pool"), symbol_short!("withdraw"))
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventWithdraw {
+    pub caller: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
 
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -74,6 +96,7 @@ impl GatedPool {
     }
 
     /// Deposit `amount`. Requires a currently-valid proof for the configured claim.
+    #[allow(deprecated)]
     pub fn deposit(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -93,6 +116,15 @@ impl GatedPool {
 
         let balance = Self::balance_of(&env, &caller) + amount;
         Self::set_balance(&env, &caller, balance);
+
+        env.events().publish(
+            (symbol_short!("gate_pool"), symbol_short!("deposit")),
+            EventDeposit {
+                caller,
+                amount,
+                new_balance: balance,
+            },
+        );
     }
 
     /// Withdraw `amount` from the caller's balance.
@@ -101,6 +133,7 @@ impl GatedPool {
     /// access to their own funds after the credential used for deposit expires
     /// or is revoked. The caller must still authorize the operation, provide a
     /// positive amount, and stay within their recorded balance.
+    #[allow(deprecated)]
     pub fn withdraw(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -114,6 +147,15 @@ impl GatedPool {
             .checked_sub(amount)
             .unwrap_or_else(|| panic_with_error!(&env, Error::InsufficientBalance));
         Self::set_balance(&env, &caller, remaining);
+
+        env.events().publish(
+            (symbol_short!("gate_pool"), symbol_short!("withdraw")),
+            EventWithdraw {
+                caller,
+                amount,
+                new_balance: remaining,
+            },
+        );
     }
 
     pub fn get_balance(env: Env, account: Address) -> i128 {
