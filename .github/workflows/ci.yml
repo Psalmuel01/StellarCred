@@ -63,6 +63,9 @@ jobs:
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
 
+      - name: Update Cargo.lock
+        run: cargo update --aggressive
+
       - name: Install Noir
         shell: bash
         run: |
