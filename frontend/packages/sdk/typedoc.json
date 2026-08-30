@@ -2,7 +2,10 @@
   "entryPoints": ["src/index.ts", "src/react.ts"],
   "out": "docs/api",
   "tsconfig": "tsconfig.json",
+  "name": "@stellarcred/sdk",
+  "readme": "README.md",
   "excludePrivate": true,
   "excludeProtected": true,
-  "excludeInternal": true
+  "excludeInternal": true,
+  "highlightLanguages": ["bash", "typescript", "tsx", "javascript", "jsx", "json", "vue", "svelte"]
 }
