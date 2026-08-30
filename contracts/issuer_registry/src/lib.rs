@@ -14,6 +14,13 @@ use soroban_sdk::{
     BytesN, Env, String, Symbol, Vec,
 };
 
+// ── Contract versioning ──────────────────────────────────────────────────────
+// Semantic version: MAJOR.MINOR.PATCH
+// Increment MAJOR on breaking changes (new entry points, changed ABI)
+// Increment MINOR on additive changes (new events, new query endpoints)
+// Increment PATCH on bug fixes with no ABI changes
+const CONTRACT_VERSION: u32 = 1_000_000; // 1.0.0 encoded as (major * 1000000) + (minor * 1000) + patch
+
 // ── Event types ──────────────────────────────────────────────────────────────
 // Topics follow the convention: (contract, action, credential_type_or_unit).
 // `contract` is always `symbol_short!("iss_reg")` for IssuerRegistry events.
@@ -105,6 +112,14 @@ impl IssuerRegistry {
     /// Set the protocol admin once, at deploy time.
     pub fn __constructor(env: Env, admin: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    /// Returns the contract version as an encoded u32.
+    /// Encoding: (major * 1000000) + (minor * 1000) + patch
+    /// Example: 1.2.3 -> 1002003
+    pub fn version(env: Env) -> u32 {
+        let _ = env; // Silence unused warning
+        CONTRACT_VERSION
     }
 
     /// Register (or overwrite) a trusted issuer. Admin-only.
