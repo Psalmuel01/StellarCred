@@ -353,7 +353,8 @@ fn issuer_revoke_invalidates_proof() {
     let holder = Address::generate(&env);
 
     submit(&env, &h, &holder, 9999);
-    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+    h.registry
+        .revoke(&h.issuer, &holder, &symbol_short!("kyc"), &None);
     assert!(
         !h.registry
             .is_verified(&holder, &symbol_short!("kyc"), &None)
@@ -372,8 +373,71 @@ fn issuer_revoke_rejects_wrong_issuer() {
     submit(&env, &h, &holder, 9999);
     let res = h
         .registry
-        .try_revoke(&stranger, &holder, &symbol_short!("kyc"));
+        .try_revoke(&stranger, &holder, &symbol_short!("kyc"), &None);
     assert!(res.is_err());
+}
+
+#[test]
+fn revoke_stores_default_reason_when_none() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 9999);
+    h.registry
+        .revoke(&h.issuer, &holder, &symbol_short!("kyc"), &None);
+    let record = h
+        .registry
+        .get_record(&holder, &symbol_short!("kyc"))
+        .unwrap();
+    assert_eq!(record.revoked, true);
+    assert_eq!(record.revoked_reason, Some(RevocationReason::Other as u32));
+}
+
+#[test]
+fn revoke_stores_each_reason_code() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let reasons = [
+        (10, RevocationReason::Expired),
+        (20, RevocationReason::Superseded),
+        (30, RevocationReason::Fraud),
+        (40, RevocationReason::UserRequest),
+        (50, RevocationReason::Other),
+    ];
+
+    for (idx, (code, expected)) in reasons.iter().enumerate() {
+        submit(&env, &h, &holder, 9999);
+        h.registry
+            .revoke(&h.issuer, &holder, &symbol_short!("kyc"), &Some(*code));
+        let record = h
+            .registry
+            .get_record(&holder, &symbol_short!("kyc"))
+            .unwrap();
+        assert_eq!(record.revoked, true);
+        assert_eq!(record.revoked_reason, Some(*expected as u32), "code {idx}");
+    }
+}
+
+#[test]
+fn revoke_coerces_unknown_reason_to_other() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 9999);
+    h.registry
+        .revoke(&h.issuer, &holder, &symbol_short!("kyc"), &Some(999));
+    let record = h
+        .registry
+        .get_record(&holder, &symbol_short!("kyc"))
+        .unwrap();
+    assert_eq!(record.revoked_reason, Some(RevocationReason::Other as u32));
 }
 
 #[test]
