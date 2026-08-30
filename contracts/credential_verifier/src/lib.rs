@@ -311,7 +311,12 @@ impl CredentialVerifier {
 
         // Reject submissions against a deprecated VK version.
         let dep_key = DataKey::DeprecatedVersion(credential_type.clone(), version);
-        if env.storage().persistent().get::<_, bool>(&dep_key).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&dep_key)
+            .unwrap_or(false)
+        {
             panic_with_error!(&env, Error::VersionDeprecated);
         }
 

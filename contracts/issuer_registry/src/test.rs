@@ -2,7 +2,7 @@
 
 use super::*;
 use proptest::prelude::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, BytesN, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Bytes, BytesN, Env};
 
 fn setup(env: &Env) -> (Address, IssuerRegistryClient<'_>) {
     let admin = Address::generate(env);
@@ -84,9 +84,8 @@ fn prop_revoked_issuer_never_valid() {
         ..proptest::test_runner::Config::default()
     };
     let mut runner = proptest::test_runner::TestRunner::new(config);
-    runner.run(
-        &(0u64..u64::MAX, 0u64..u64::MAX),
-        |(_seed_a, _seed_b)| {
+    runner
+        .run(&(0u64..u64::MAX, 0u64..u64::MAX), |(_seed_a, _seed_b)| {
             let env = Env::default();
             env.mock_all_auths();
             let (_admin, client) = setup(&env);
@@ -113,9 +112,8 @@ fn prop_revoked_issuer_never_valid() {
             prop_assert!(!kyc_valid, "Revoked issuer should not be valid for kyc");
             prop_assert!(!age_valid, "Revoked issuer should not be valid for age");
             Ok(())
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
 }
 
 /// Property: An unregistered issuer is never valid.
@@ -128,26 +126,27 @@ fn prop_unregistered_issuer_never_valid() {
         ..proptest::test_runner::Config::default()
     };
     let mut runner = proptest::test_runner::TestRunner::new(config);
-    runner.run(&(0u64..u64::MAX), |_seed| {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_admin, client) = setup(&env);
+    runner
+        .run(&(0u64..u64::MAX), |_seed| {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (_admin, client) = setup(&env);
 
-        // Address::generate creates a unique address not registered
-        // in the IssuerRegistry.
-        let unregistered = Address::generate(&env);
+            // Address::generate creates a unique address not registered
+            // in the IssuerRegistry.
+            let unregistered = Address::generate(&env);
 
-        prop_assert!(
-            !client.is_valid_issuer(&unregistered, &symbol_short!("kyc")),
-            "Unregistered issuer should never be valid"
-        );
-        prop_assert!(
-            !client.is_valid_issuer(&unregistered, &symbol_short!("age")),
-            "Unregistered issuer should never be valid for any type"
-        );
-        Ok(())
-    })
-    .unwrap();
+            prop_assert!(
+                !client.is_valid_issuer(&unregistered, &symbol_short!("kyc")),
+                "Unregistered issuer should never be valid"
+            );
+            prop_assert!(
+                !client.is_valid_issuer(&unregistered, &symbol_short!("age")),
+                "Unregistered issuer should never be valid for any type"
+            );
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -175,7 +174,10 @@ fn set_and_get_issuer_metadata() {
 
     let meta = client.get_issuer_metadata(&issuer).unwrap();
     assert_eq!(meta.name, Some(String::from_str(&env, "Test Issuer")));
-    assert_eq!(meta.url, Some(String::from_str(&env, "https://example.com")));
+    assert_eq!(
+        meta.url,
+        Some(String::from_str(&env, "https://example.com"))
+    );
     assert!(meta.logo.is_none());
 
     // Update to add logo and change name.
@@ -345,4 +347,104 @@ fn set_issuer_metadata_requires_admin() {
     let (_admin, client) = setup(&env);
     let issuer = Address::generate(&env);
     client.set_issuer_metadata(&issuer, &Some(String::from_str(&env, "x")), &None, &None);
+}
+
+// ── Metadata length-boundary tests (#340) ──────────────────────────────────
+
+/// Helper: generate a Soroban String of exactly `len` bytes.
+fn str_of_len(env: &Env, len: u32) -> String {
+    // Build via Bytes (which has push_back), then convert to String.
+    let mut bytes = Bytes::new(env);
+    for _ in 0..len {
+        bytes.push_back(b'a');
+    }
+    String::from(&bytes)
+}
+
+#[test]
+fn metadata_at_max_length_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    // Exactly at the limits: name=64, url=256, logo=256.
+    let name = str_of_len(&env, 64);
+    let url = str_of_len(&env, 256);
+    let logo = str_of_len(&env, 256);
+
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(name.clone()),
+        &Some(url.clone()),
+        &Some(logo.clone()),
+    );
+
+    let meta = client.get_issuer_metadata(&issuer).unwrap();
+    assert_eq!(meta.name, Some(name));
+    assert_eq!(meta.url, Some(url));
+    assert_eq!(meta.logo, Some(logo));
+}
+
+#[test]
+#[should_panic(expected = "Contract, #3")]
+fn metadata_name_over_limit_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    // name = 65 bytes, one over the 64-byte limit.
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(str_of_len(&env, 65)),
+        &None,
+        &None,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Contract, #3")]
+fn metadata_url_over_limit_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    // url = 257 bytes, one over the 256-byte limit.
+    client.set_issuer_metadata(
+        &issuer,
+        &None,
+        &Some(str_of_len(&env, 257)),
+        &None,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Contract, #3")]
+fn metadata_logo_over_limit_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    // logo = 257 bytes, one over the 256-byte limit.
+    client.set_issuer_metadata(
+        &issuer,
+        &None,
+        &None,
+        &Some(str_of_len(&env, 257)),
+    );
 }

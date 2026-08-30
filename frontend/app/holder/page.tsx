@@ -13,11 +13,9 @@ import {
   IconTrash,
   IconCertificate,
   IconLoader2,
-  IconServer,
   IconCpu,
   IconCloudUpload,
   IconStack2,
-  IconInfoCircle,
   IconDownload,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
@@ -29,7 +27,7 @@ import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
 import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
-import { computeWitness, proveWithBackend } from "@/lib/proof";
+import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "@/lib/proof";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
@@ -56,7 +54,7 @@ import CopyButton from "@/components/CopyButton";
 import dynamic from "next/dynamic";
 import CredentialDetailModal from "@/components/CredentialDetailModal";
 import { useToast } from "@/components/Toast";
-import { QrScanner } from "@/components/QrScanner";
+
 import { IMPORT_PARAM } from "@/lib/transfer";
 
 // The encrypted-transfer modals are heavy (crypto.ts PBKDF2/AES-GCM, QR
@@ -103,6 +101,13 @@ function proofStatus(cred: Credential): "unproved" | "proved" | "expired" {
     : "expired";
 }
 
+function isExpiringSoon(cred: Credential, windowDays = 7): boolean {
+  if (!cred.provedAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = cred.provedAt + credTtlSecs(cred);
+  return expiry > now && expiry <= now + windowDays * 86_400;
+}
+
 function daysRemaining(cred: Credential): number {
   if (!cred.provedAt) return 0;
   const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
@@ -144,9 +149,9 @@ function CredCard({
   address,
   onProve,
   onRemove,
-  onInspect,
+  onInspect: _onInspect,
   isPreview,
-  selection,
+  selection: _selection,
 }: {
   c: Credential;
   address: string;
@@ -219,7 +224,15 @@ function CredCard({
         <div className="card-actions">
           {isPreview && <Badge variant="pending">Preview</Badge>}
           <Badge variant="verified" dot={false}>Held</Badge>
-          {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
+          {status === "proved" && !isExpiringSoon(c) && (
+            <Badge variant="verified" dot={false}>On-chain</Badge>
+          )}
+          {status === "proved" && isExpiringSoon(c) && (
+            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+          )}
+          {status === "expired" && (
+            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
@@ -357,8 +370,12 @@ function HolderInner() {
   }, [searchParams]);
 
   const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
-  const unproved = displayCreds.filter((c) => proofStatus(c) !== "proved");
-  const proved   = displayCreds.filter((c) => proofStatus(c) === "proved");
+  const unproved = displayCreds.filter((c) => proofStatus(c) === "unproved");
+  const expiringSoon = displayCreds
+    .filter((c) => proofStatus(c) === "proved" && isExpiringSoon(c, 7))
+    .sort((a, b) => daysRemaining(a) - daysRemaining(b));
+  const activeProved = displayCreds.filter((c) => proofStatus(c) === "proved" && !isExpiringSoon(c, 7));
+  const expired = displayCreds.filter((c) => proofStatus(c) === "expired");
 
   // Warm the UltraHonk backend for whatever credential types the user still
   // needs to prove, in the background, once the wallet is actually connected
@@ -490,6 +507,40 @@ function HolderInner() {
       ) : (
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
 
+          {/* ── Expiry Warning Banner ── */}
+          {(expiringSoon.length > 0 || expired.length > 0) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="card"
+              style={{
+                padding: "0.85rem 1.15rem",
+                backgroundColor: expired.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(234, 179, 8, 0.08)",
+                borderColor: expired.length > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(234, 179, 8, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
+                <IconAlertTriangle
+                  size={18}
+                  style={{ color: expired.length > 0 ? "var(--danger)" : "var(--warn)", flexShrink: 0 }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {expired.length > 0
+                    ? `${expired.length} proof${expired.length > 1 ? "s have" : " has"} expired and ${expired.length > 1 ? "need" : "needs"} re-proving.`
+                    : `${expiringSoon.length} proof${expiringSoon.length > 1 ? "s are" : " is"} expiring within 7 days.`}
+                </span>
+              </div>
+              <span className="mono faint" style={{ fontSize: "0.75rem" }}>
+                One-click re-prove available below
+              </span>
+            </div>
+          )}
+
           {/* ── Empty state ── */}
           {creds.length === 0 && !importing && (
             <div
@@ -510,7 +561,7 @@ function HolderInner() {
                 className="faint"
                 style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}
               >
-                Credentials are stored only in this browser's local storage — clearing
+                Credentials are stored only in this browser&apos;s local storage — clearing
                 site data, switching browsers/devices, or private mode erases them.{" "}
                 <Link
                   href="/docs#storage"
@@ -519,6 +570,42 @@ function HolderInner() {
                   Where your credentials live
                 </Link>
               </p>
+            </div>
+          )}
+
+          {/* ── Expiring Soon (Action Recommended) ── */}
+          {expiringSoon.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expiring soon · Re-prove recommended</SectionLabel>
+              {expiringSoon.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Expired (Action Required) ── */}
+          {expired.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expired proofs · Re-prove required</SectionLabel>
+              {expired.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
             </div>
           )}
 
@@ -604,11 +691,11 @@ function HolderInner() {
             </div>
           )}
 
-          {/* ── Already proved ── */}
-          {proved.length > 0 && (
+          {/* ── Active proved ── */}
+          {activeProved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>On-chain · active proofs</SectionLabel>
-              {proved.map((c) => (
+              {activeProved.map((c) => (
                 <CredCard
                   key={c.commitment}
                   c={c}
@@ -860,10 +947,13 @@ function ProofFlow({
   const [proof, setProof] = useState<{ proof: Uint8Array; publicInputs: Uint8Array } | null>(null);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
-  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | null>(null);
+  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | "timeout" | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const { addEvent } = useProofTimeline(cred);
 
@@ -879,12 +969,17 @@ function ProofFlow({
           () => setElapsed(Math.floor((Date.now() - start) / 1000)),
           1000,
         );
-        // Stage 1: witness (server)
+        // Stage 1: witness (server) — wrapped with a deadline so a stalled
+        // prover fails visibly instead of spinning forever.
         setStage("witness");
-        const witness = await computeWitness(
-          cred.type,
-          cred as unknown as Record<string, unknown>,
-          signal,
+        const witness = await withTimeout(
+          (sig) =>
+            computeWitness(
+              cred.type,
+              cred as unknown as Record<string, unknown>,
+              sig,
+            ),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
         if (signal.aborted) return;
 
@@ -896,15 +991,13 @@ function ProofFlow({
           1000,
         );
 
-        const result = await proveWithBackend(
-          cred.type,
-          witness,
-          signal,
-          (step) => {
-            if (!signal.aborted) setStage(step);
-          }
+        const result = await withTimeout(
+          (sig) =>
+            proveWithBackend(cred.type, witness, sig, (step) => {
+              if (!sig.aborted) setStage(step);
+            }),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
 
         setProof(result);
@@ -912,13 +1005,31 @@ function ProofFlow({
         addEvent("generated");
         toast.success(`Proof generated for ${cred.title}`);
       } catch (e) {
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
+        // ProofTimeoutError gets a distinct user-visible message — half the
+        // point is that stalled provers fail visibly, not as a generic error.
+        if (e instanceof ProofTimeoutError) {
+          setError({
+            code: null,
+            friendly:
+              "Proof generation timed out. The prover took too long — this can happen on slow devices or with large circuits. Please try again.",
+            raw: e.message,
+          });
+          setErrorPhase("timeout");
+          setStage("error");
+          toast.error("Proof timed out — please try again.");
+          return;
+        }
         const parsed = parseContractError((e as Error).message);
         setError(parsed);
         setErrorPhase("proving");
         setStage("error");
         toast.error(`Proof generation failed: ${parsed.friendly}`);
+      } finally {
+        // Always clean up: timer + abort controller. The finally-style
+        // pattern guarantees no early-return can leak a pending timeout
+        // or interval.
+        clearInterval(timerRef.current!);
       }
     })();
     return () => {
@@ -927,7 +1038,21 @@ function ProofFlow({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cred]);
+  useEffect(() => {
+    switch (stage) {
+      case "generated":
+        submitButtonRef.current?.focus();
+        break;
 
+      case "confirmed":
+        successRef.current?.focus();
+        break;
+
+      case "error":
+        errorRef.current?.focus();
+        break;
+    }
+  }, [stage]);
   async function onSubmit() {
     if (!proof || networkMismatch) return;
     setStage("submitting");
@@ -1085,6 +1210,7 @@ function ProofFlow({
             )}
             <button
               className="btn btn-primary"
+              ref={submitButtonRef}
               style={{
                 marginTop: networkMismatch ? 0 : "1.5rem",
                 width: "100%",
@@ -1109,6 +1235,9 @@ function ProofFlow({
 
         {error && (
           <div
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
             style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
@@ -1119,11 +1248,13 @@ function ProofFlow({
           >
             <div className="row" style={{ gap: "0.5rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.875rem" }}>
               <IconAlertTriangle size={15} />
-              {errorPhase === "proving"
-                ? "Proof generation failed"
-                : errorPhase === "submitting"
-                  ? "Submission failed — proof is ready to retry"
-                  : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
+              {errorPhase === "timeout"
+                ? "Proof timed out"
+                : errorPhase === "proving"
+                  ? "Proof generation failed"
+                  : errorPhase === "submitting"
+                    ? "Submission failed — proof is ready to retry"
+                    : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>
@@ -1172,6 +1303,10 @@ function ProofFlow({
 
         {stage === "confirmed" && (
           <div
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
             className="reveal"
             style={{
               marginTop: "1.5rem",
@@ -1237,6 +1372,9 @@ function BatchProofFlow({
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
   const holderRef = useRef(holder);
+   const networkMismatchRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { credsRef.current = creds; }, [creds]);
   useEffect(() => { holderRef.current = holder; }, [holder]);
 
@@ -1387,6 +1525,22 @@ function BatchProofFlow({
   const isConfirmed = batchStage === "confirmed";
   const isError = batchStage === "error";
 
+  useEffect(() => {
+  if (blockedByNetwork) {
+    networkMismatchRef.current?.focus();
+    return;
+  }
+
+  switch (batchStage) {
+    case "confirmed":
+      successRef.current?.focus();
+      break;
+
+    case "error":
+      errorRef.current?.focus();
+      break;
+  }
+  }, [blockedByNetwork, batchStage]);
   return (
     <div className="reveal" style={{ maxWidth: 560, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
@@ -1458,7 +1612,7 @@ function BatchProofFlow({
 
         {/* Network mismatch — proofs are ready but submission is blocked */}
         {blockedByNetwork && (
-          <div style={{ marginTop: "1.5rem" }}>
+          <div  ref={networkMismatchRef} tabIndex={-1} role="status" style={{ marginTop: "1.5rem" }}>
             <NetworkMismatchBanner />
           </div>
         )}
@@ -1466,7 +1620,10 @@ function BatchProofFlow({
         {/* Error banner */}
         {isError && batchError && (
           <div
-            style={{
+          ref={errorRef}
+          tabIndex={-1}
+          role="alert"  
+          style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
               borderRadius: "var(--radius)",
@@ -1519,6 +1676,9 @@ function BatchProofFlow({
         {isConfirmed && (
           <div
             className="reveal"
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
             style={{
               marginTop: "1.5rem",
               padding: "1.25rem",

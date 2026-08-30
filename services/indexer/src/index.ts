@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   ingester.start();
 
   // ── HTTP API ──────────────────────────────────────────────────────────────
-  const app = buildApp(db, ingester);
+  const app = buildApp(db, ingester, config);
   const server = http.createServer(app);
 
   await new Promise<void>((resolve, reject) => {

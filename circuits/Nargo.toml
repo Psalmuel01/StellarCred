@@ -12,4 +12,5 @@ members = [
     "range_proof",
     "employment_proof",
     "aggregate_proof",
+    "set_membership",
 ]

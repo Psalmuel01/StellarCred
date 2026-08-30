@@ -54,6 +54,11 @@ function makeConfig(sqlitePath: string): Config {
     pollIntervalMs: 6000,
     startLedger: 0,
     port: 3001,
+    finalityLag: 6,
+    corsOrigins: ["http://localhost:3000"],
+    rateLimitWindowMs: 60000,
+    rateLimitMax: 120,
+    rateLimitEnabled: true,
   };
 }
 
@@ -245,5 +250,87 @@ describe("unknown routes", () => {
   it("returns 404 for unknown path", async () => {
     const res = await request(app).get("/nonexistent");
     expect(res.status).toBe(404);
+  });
+});
+
+// ── CORS & Rate Limiting Integration ─────────────────────────────────────────
+
+describe("CORS & Rate Limiting integration in API", () => {
+  it("emits CORS headers for allowed origin and handles preflight", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      corsOrigins: ["https://app.stellarcred.xyz"],
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    // GET request from allowed origin
+    const getRes = await request(customApp)
+      .get("/health")
+      .set("Origin", "https://app.stellarcred.xyz");
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers["access-control-allow-origin"]).toBe(
+      "https://app.stellarcred.xyz"
+    );
+
+    // OPTIONS preflight request
+    const optRes = await request(customApp)
+      .options("/claims")
+      .set("Origin", "https://app.stellarcred.xyz")
+      .set("Access-Control-Request-Method", "GET");
+    expect(optRes.status).toBe(204);
+    expect(optRes.headers["access-control-allow-origin"]).toBe(
+      "https://app.stellarcred.xyz"
+    );
+  });
+
+  it("does not emit CORS headers for untrusted origins", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      corsOrigins: ["https://app.stellarcred.xyz"],
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    const res = await request(customApp)
+      .get("/stats")
+      .set("Origin", "https://evil.site");
+    expect(res.status).toBe(200);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("enforces rate limits and returns 429 + Retry-After when exceeded", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      rateLimitMax: 3,
+      rateLimitWindowMs: 60000,
+      rateLimitEnabled: true,
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    // 3 allowed requests
+    for (let i = 1; i <= 3; i++) {
+      const res = await request(customApp)
+        .get("/stats")
+        .set("X-Forwarded-For", "203.0.113.50");
+      expect(res.status).toBe(200);
+      expect(res.headers["ratelimit-limit"]).toBe("3");
+      expect(res.headers["ratelimit-remaining"]).toBe(String(3 - i));
+    }
+
+    // 4th request -> 429
+    const throttled = await request(customApp)
+      .get("/stats")
+      .set("X-Forwarded-For", "203.0.113.50");
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers["retry-after"]).toBeDefined();
+    expect(throttled.body).toMatchObject({
+      error: "too many requests",
+      retryAfter: expect.any(Number),
+    });
+
+    // Another IP is not throttled
+    const otherIpRes = await request(customApp)
+      .get("/stats")
+      .set("X-Forwarded-For", "203.0.113.99");
+    expect(otherIpRes.status).toBe(200);
   });
 });

@@ -190,7 +190,7 @@ export default function IssuerPage() {
         }}
       >
         <strong style={{ color: "var(--text)" }}>
-          Simulates the issuer's side.
+          Simulates the issuer&apos;s side.
         </strong>{" "}
         In production this would be a separate authenticated app run by the
         institution — KYC provider, bank, employer — after verifying the holder

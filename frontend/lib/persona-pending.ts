@@ -74,7 +74,12 @@ export function savePersonaPending(payload: PersonaPendingPayload): void {
     ...(payload.expiry ? { expiry: payload.expiry } : {}),
     ...(payload.claimParams ? { claimParams: payload.claimParams } : {}),
   }) as PersonaPendingPayload;
-  sessionStorage.setItem(PERSONA_PENDING_KEY, JSON.stringify(sanitized));
+  try {
+    sessionStorage.setItem(PERSONA_PENDING_KEY, JSON.stringify(sanitized));
+  } catch {
+    // storage unavailable (private mode / blocked) — the Persona redirect
+    // will still proceed; resume issuance will simply find no pending payload
+  }
 }
 
 /**
@@ -84,8 +89,14 @@ export function savePersonaPending(payload: PersonaPendingPayload): void {
  * the page's mount-time sweep via clearStalePersonaPending().
  */
 export function loadPersonaPending(): PersonaPendingPayload | null {
-  const raw = sessionStorage.getItem(PERSONA_PENDING_KEY);
-  sessionStorage.removeItem(PERSONA_PENDING_KEY);
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(PERSONA_PENDING_KEY);
+    sessionStorage.removeItem(PERSONA_PENDING_KEY);
+  } catch {
+    // storage unavailable (private mode / blocked) — treat as no pending payload
+    return null;
+  }
   if (!raw) return null;
   try {
     // Defensively re-strip in case an older build stored something that is
@@ -97,7 +108,11 @@ export function loadPersonaPending(): PersonaPendingPayload | null {
 }
 
 export function clearPersonaPending(): void {
-  sessionStorage.removeItem(PERSONA_PENDING_KEY);
+  try {
+    sessionStorage.removeItem(PERSONA_PENDING_KEY);
+  } catch {
+    // storage unavailable — nothing to clear
+  }
 }
 
 /**

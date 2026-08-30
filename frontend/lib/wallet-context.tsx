@@ -40,11 +40,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // Restore a prior connection on mount (full reload).
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      // storage unavailable (private mode / blocked) — skip restore
+      return;
+    }
     if (!saved) return;
     kitRestore(saved)
       .then(setAddress)
-      .catch(() => localStorage.removeItem(STORAGE_KEY));
+      .catch(() => {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          // storage unavailable — nothing to remove
+        }
+      });
   }, []);
 
   // Poll the wallet's live network while connected, so a network switch made
@@ -88,7 +100,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const disconnect = useCallback(() => {
     setAddress("");
     setError(null);
-    localStorage.removeItem(STORAGE_KEY);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // storage unavailable — nothing to remove
+    }
   }, []);
 
   return (

@@ -1,19 +1,14 @@
 #![cfg(test)]
 
-use proptest::prelude::*;
 use super::*;
 use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use proof_registry::{ProofRegistry, ProofRegistryClient};
+use proptest::prelude::*;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger as _},
-    vec,
-    Address,
-    Bytes,
-    BytesN,
-    Env,
-    Symbol,
+    vec, Address, Bytes, BytesN, Env, Symbol,
 };
 
 // Real UltraHonk artifacts, so the KYC gate exercises genuine verification.
@@ -54,10 +49,17 @@ fn deploy_with_gate(env: &Env, required_type: Symbol, min_threshold: Option<u64>
     let verifier_id = env.register(CredentialVerifier, (admin.clone(),));
     let verifier = CredentialVerifierClient::new(env, &verifier_id);
     verifier.set_vk(&symbol_short!("kyc"), &1u32, &Bytes::from_slice(env, VK));
-    verifier.set_vk(&symbol_short!("funds"), &1u32, &Bytes::from_slice(env, FUNDS_VK));
+    verifier.set_vk(
+        &symbol_short!("funds"),
+        &1u32,
+        &Bytes::from_slice(env, FUNDS_VK),
+    );
 
     let registry_id = env.register(ProofRegistry, (admin, verifier_id, ir_id));
-    let pool_id = env.register(GatedPool, (registry_id.clone(), required_type, min_threshold));
+    let pool_id = env.register(
+        GatedPool,
+        (registry_id.clone(), required_type, min_threshold),
+    );
 
     Harness {
         registry: ProofRegistryClient::new(env, &registry_id),
@@ -196,7 +198,11 @@ fn withdraw_remains_available_after_kyc_expires() {
     h.pool.deposit(&user, &100);
 
     env.ledger().with_mut(|li| li.timestamp = 3);
-    assert!(!h.registry.is_verified(&user, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&user, &symbol_short!("kyc"), &None)
+            .0
+    );
 
     h.pool.withdraw(&user, &100);
     assert_eq!(h.pool.get_balance(&user), 0);
@@ -212,7 +218,11 @@ fn withdraw_remains_available_after_kyc_is_revoked() {
     prove_kyc(&env, &h, &user);
     h.pool.deposit(&user, &100);
     h.registry.revoke(&h.issuer, &user, &symbol_short!("kyc"));
-    assert!(!h.registry.is_verified(&user, &symbol_short!("kyc"), &None).0);
+    assert!(
+        !h.registry
+            .is_verified(&user, &symbol_short!("kyc"), &None)
+            .0
+    );
 
     h.pool.withdraw(&user, &100);
     assert_eq!(h.pool.get_balance(&user), 0);
@@ -299,3 +309,34 @@ fn deposit_uses_constructor_provided_registry_not_an_unrelated_one() {
     h.pool.deposit(&user, &100);
     assert_eq!(h.pool.get_balance(&user), 100);
 }
+
+#[test]
+fn deposit_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &250);
+
+    // Verify balance was updated
+    assert_eq!(h.pool.get_balance(&user), 250);
+}
+
+#[test]
+fn withdraw_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &500);
+
+    h.pool.withdraw(&user, &200);
+
+    // Verify balance was updated
+    assert_eq!(h.pool.get_balance(&user), 300);
+}
+

@@ -322,6 +322,31 @@ cp frontend/.env.example frontend/.env.local
 cd frontend && pnpm install && pnpm dev
 ```
 
+---
+
+## Development & Common Commands (`Makefile`)
+
+StellarCred spans four toolchains (Rust contracts, Noir zk-circuits, Next.js frontend/SDK, and Node.js indexer). A top-level `Makefile` provides unified build, test, and lint commands:
+
+| Command | Workspace | Description |
+|---|---|---|
+| `make all` | All | Runs `build`, `test`, and `lint` across all workspaces (mirrors CI). |
+| `make build` | All | Builds Soroban contracts, frontend bundles, and indexer service. |
+| `make test` | All | Runs contract unit/snapshot tests, frontend/SDK tests, and indexer tests. |
+| `make lint` | All | Runs cargo clippy (`-D warnings`) and frontend ESLint/typecheck. |
+| `make fmt` | Rust | Checks code formatting across all contract crates (`cargo fmt --check`). |
+| `make build-contracts` | Contracts | Compiles contracts to `wasm32v1-none`. |
+| `make test-contracts` | Contracts | Runs `cargo test --locked`. |
+| `make compile-circuits`| Circuits | Compiles Noir circuits and verifies verification keys (`bb`). |
+| `make test-frontend` | Frontend | Runs frontend SDK tests, theme tests, and issuer package tests. |
+| `make test-sdk` | SDK | Runs standalone `@stellarcred/sdk` integration tests. |
+| `make test-a11y` | Frontend | Runs axe-core accessibility checks via Playwright. |
+| `make test-indexer` | Indexer | Runs Jest test suite for the indexer service. |
+| `make run-indexer` | Indexer | Starts the local indexer service. |
+| `make clean` | All | Cleans all target outputs and build artifacts. |
+
+---
+
 In the browser: install a Stellar wallet (**Freighter**, Albedo, xBull, and
 others via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)
 are supported), switch it to **testnet**, and fund the account

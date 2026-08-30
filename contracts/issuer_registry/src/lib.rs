@@ -87,7 +87,15 @@ pub enum DataKey {
 pub enum Error {
     NotInitialized = 1,
     IssuerNotFound = 2,
+    MetadataTooLong = 3,
 }
+
+/// Maximum byte length for on-chain metadata fields.
+/// These caps prevent unbounded storage blobs that would inflate rent
+/// and read costs.
+const MAX_NAME_LEN: u32 = 64;
+const MAX_URL_LEN: u32 = 256;
+const MAX_LOGO_LEN: u32 = 256;
 
 #[contract]
 pub struct IssuerRegistry;
@@ -138,11 +146,7 @@ impl IssuerRegistry {
                 .extend_ttl(&list_key, BUMP_THRESHOLD, ENTRY_TTL);
             // Bump the count.
             let count_key = DataKey::IssuerCount;
-            let count: u32 = env
-                .storage()
-                .persistent()
-                .get(&count_key)
-                .unwrap_or(0u32);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0u32);
             env.storage().persistent().set(&count_key, &(count + 1));
             env.storage()
                 .persistent()
@@ -280,8 +284,28 @@ impl IssuerRegistry {
         logo: Option<String>,
     ) {
         Self::require_admin(&env);
-        if !env.storage().persistent().has(&DataKey::Issuer(issuer.clone())) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Issuer(issuer.clone()))
+        {
             panic_with_error!(&env, Error::IssuerNotFound);
+        }
+        // Enforce per-field length caps to bound storage rent.
+        if let Some(ref n) = name {
+            if n.len() > MAX_NAME_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
+        }
+        if let Some(ref u) = url {
+            if u.len() > MAX_URL_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
+        }
+        if let Some(ref l) = logo {
+            if l.len() > MAX_LOGO_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
         }
         let metadata = IssuerMetadata { name, url, logo };
         let key = DataKey::IssuerMetadata(issuer.clone());

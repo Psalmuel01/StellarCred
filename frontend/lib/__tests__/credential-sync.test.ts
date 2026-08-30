@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
-import { useCredentialSync, saveCredential, loadCredentials, type Credential } from "../credential";
+import { useCredentialSync, type Credential } from "../credential";
 import { isStorageAvailable } from "../safe-storage";
 
 // Mock safe-storage
