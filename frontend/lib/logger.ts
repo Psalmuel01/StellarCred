@@ -35,6 +35,14 @@ const SAFE_FIELDS = [
   "hostname",
   "error",
   "needsPersona",
+  "method",
+  "path",
+  "status",
+  "demoIssuer",
+  "plaidMock",
+  "personaDemo",
+  "environment",
+  "timestamp",
 ];
 
 export function stripSensitiveFields<T extends Record<string, unknown>>(obj: T): Partial<T> {

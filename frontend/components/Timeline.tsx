@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { IconCheck, IconExternalLink, IconAlertTriangle, IconCertificate, IconCpu, IconCloudUpload, IconServer } from "@tabler/icons-react";
+import { IconCheck, IconExternalLink, IconAlertTriangle, IconCertificate, IconCpu, IconCloudUpload } from "@tabler/icons-react";
 import { EXPLORER_TX } from "@/lib/stellar";
 import type { TimelineEvent } from "@/lib/useProofTimeline";
 

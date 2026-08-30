@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { RPC_URL, CONTRACTS } from "../../../lib/stellar";
+import { RPC_URL } from "../../../lib/stellar";
+import { missingContractEnvVars } from "../../../lib/config";
 import { env } from "../../../lib/env";
 
 export const dynamic = "force-dynamic";
@@ -51,9 +52,10 @@ function checkSigner(): SignerStatus {
 }
 
 function checkContracts(): DependencyStatus {
-  const missing = Object.entries(CONTRACTS)
-    .filter(([, v]) => !v)
-    .map(([k]) => k);
+  // Same shared check the client-side ConfigBanner uses (lib/config.ts), so
+  // readiness monitoring and the user-facing banner can never disagree on
+  // which env vars are missing.
+  const missing = missingContractEnvVars();
   if (missing.length > 0) {
     return { status: "error", message: `Missing: ${missing.join(", ")}` };
   }

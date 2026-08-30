@@ -11,6 +11,7 @@ import { buildApp } from "./api";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
+import type { Ingester, IngesterHealth } from "./ingester";
 
 import os from "os";
 import path from "path";
@@ -19,6 +20,27 @@ import fs from "fs";
 let db: Db;
 let app: Application;
 let tmpFile: string;
+
+/** Minimal ingester stub that exposes a controllable health snapshot. */
+function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
+  const health: IngesterHealth = {
+    lastSuccessLedger: 0,
+    headLedger: 0,
+    lag: -1,
+    lastError: null,
+    lastErrorTime: null,
+    consecutiveErrors: 0,
+    fetchAttempts: 0,
+    fetchFailures: 0,
+    ...overrides,
+  };
+  return {
+    tick: async () => 0,
+    start: () => {},
+    stop: () => {},
+    getHealth: () => ({ ...health }),
+  };
+}
 
 function makeConfig(sqlitePath: string): Config {
   return {
@@ -32,6 +54,11 @@ function makeConfig(sqlitePath: string): Config {
     pollIntervalMs: 6000,
     startLedger: 0,
     port: 3001,
+    finalityLag: 6,
+    corsOrigins: ["http://localhost:3000"],
+    rateLimitWindowMs: 60000,
+    rateLimitMax: 120,
+    rateLimitEnabled: true,
   };
 }
 
@@ -40,7 +67,7 @@ beforeEach(() => {
   tmpFile = path.join(os.tmpdir(), `indexer-test-${Date.now()}-${Math.random()}.db`);
   db = createSqliteDb(makeConfig(tmpFile));
   db.migrate();
-  app = buildApp(db);
+  app = buildApp(db, makeIngester());
 });
 
 afterEach(() => {
@@ -56,7 +83,31 @@ describe("GET /health", () => {
   it("returns 200 with status ok and lastLedger 0 on empty db", async () => {
     const res = await request(app).get("/health");
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: "ok", lastLedger: 0 });
+    expect(res.body).toMatchObject({
+      status: "ok",
+      lastLedger: 0,
+      headLedger: 0,
+      lag: -1,
+      consecutiveErrors: 0,
+      lastError: null,
+    });
+  });
+
+  it("reports degraded when consecutiveErrors is 1-2", async () => {
+    app = buildApp(db, makeIngester({ consecutiveErrors: 2, lastError: "timeout" }));
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("degraded");
+    expect(res.body.consecutiveErrors).toBe(2);
+    expect(res.body.lastError).toBe("timeout");
+  });
+
+  it("reports error when consecutiveErrors >= 3", async () => {
+    app = buildApp(db, makeIngester({ consecutiveErrors: 5, lag: 120 }));
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("error");
+    expect(res.body.lag).toBe(120);
   });
 });
 
@@ -199,5 +250,87 @@ describe("unknown routes", () => {
   it("returns 404 for unknown path", async () => {
     const res = await request(app).get("/nonexistent");
     expect(res.status).toBe(404);
+  });
+});
+
+// ── CORS & Rate Limiting Integration ─────────────────────────────────────────
+
+describe("CORS & Rate Limiting integration in API", () => {
+  it("emits CORS headers for allowed origin and handles preflight", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      corsOrigins: ["https://app.stellarcred.xyz"],
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    // GET request from allowed origin
+    const getRes = await request(customApp)
+      .get("/health")
+      .set("Origin", "https://app.stellarcred.xyz");
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers["access-control-allow-origin"]).toBe(
+      "https://app.stellarcred.xyz"
+    );
+
+    // OPTIONS preflight request
+    const optRes = await request(customApp)
+      .options("/claims")
+      .set("Origin", "https://app.stellarcred.xyz")
+      .set("Access-Control-Request-Method", "GET");
+    expect(optRes.status).toBe(204);
+    expect(optRes.headers["access-control-allow-origin"]).toBe(
+      "https://app.stellarcred.xyz"
+    );
+  });
+
+  it("does not emit CORS headers for untrusted origins", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      corsOrigins: ["https://app.stellarcred.xyz"],
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    const res = await request(customApp)
+      .get("/stats")
+      .set("Origin", "https://evil.site");
+    expect(res.status).toBe(200);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("enforces rate limits and returns 429 + Retry-After when exceeded", async () => {
+    const customConfig = {
+      ...makeConfig(tmpFile),
+      rateLimitMax: 3,
+      rateLimitWindowMs: 60000,
+      rateLimitEnabled: true,
+    };
+    const customApp = buildApp(db, makeIngester(), customConfig);
+
+    // 3 allowed requests
+    for (let i = 1; i <= 3; i++) {
+      const res = await request(customApp)
+        .get("/stats")
+        .set("X-Forwarded-For", "203.0.113.50");
+      expect(res.status).toBe(200);
+      expect(res.headers["ratelimit-limit"]).toBe("3");
+      expect(res.headers["ratelimit-remaining"]).toBe(String(3 - i));
+    }
+
+    // 4th request -> 429
+    const throttled = await request(customApp)
+      .get("/stats")
+      .set("X-Forwarded-For", "203.0.113.50");
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers["retry-after"]).toBeDefined();
+    expect(throttled.body).toMatchObject({
+      error: "too many requests",
+      retryAfter: expect.any(Number),
+    });
+
+    // Another IP is not throttled
+    const otherIpRes = await request(customApp)
+      .get("/stats")
+      .set("X-Forwarded-For", "203.0.113.99");
+    expect(otherIpRes.status).toBe(200);
   });
 });

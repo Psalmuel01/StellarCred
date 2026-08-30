@@ -48,6 +48,18 @@ export interface Db {
   /** Persist the last fully ingested ledger sequence. */
   setLastLedger(seq: number): void | Promise<void>;
 
+  /**
+   * Delete all claims whose ledger_sequence is strictly greater than `fromLedger`.
+   * Used during reorg reconciliation to roll back un-final data.
+   */
+  deleteClaimsAfter(fromLedger: number): void | Promise<void>;
+
+  /**
+   * Return the max ledger_sequence stored in the claims table.
+   * Returns 0 if no claims exist.
+   */
+  getMaxClaimLedger(): number | Promise<number>;
+
   /** Upsert a verified claim event. */
   upsertClaim(row: ClaimRow): void | Promise<void>;
 
@@ -204,6 +216,17 @@ export function createSqliteDb(config: Config): Db {
         .all(limit, offset) as ClaimRow[];
     },
 
+    deleteClaimsAfter(fromLedger: number) {
+      raw.prepare("DELETE FROM claims WHERE ledger_sequence > ?").run(fromLedger);
+    },
+
+    getMaxClaimLedger() {
+      const row = raw
+        .prepare("SELECT MAX(ledger_sequence) AS max_ledger FROM claims")
+        .get() as { max_ledger: number | null } | undefined;
+      return row?.max_ledger ?? 0;
+    },
+
     close() {
       raw.close();
     },
@@ -335,6 +358,20 @@ export function createPostgresDb(config: Config): Db {
         [limit, offset]
       );
       return res.rows;
+    },
+
+    async deleteClaimsAfter(fromLedger: number) {
+      await pool.query(
+        "DELETE FROM claims WHERE ledger_sequence > $1",
+        [fromLedger]
+      );
+    },
+
+    async getMaxClaimLedger() {
+      const res = await pool.query<{ max_ledger: string | null }>(
+        "SELECT MAX(ledger_sequence) AS max_ledger FROM claims"
+      );
+      return Number(res.rows[0]?.max_ledger ?? 0);
     },
 
     async close() {

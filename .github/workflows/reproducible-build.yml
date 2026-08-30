@@ -31,13 +31,19 @@ on:
       - 'docker/Dockerfile.reproducible'
       - '.github/workflows/reproducible-build.yml'
 
+# ── Security: least-privilege permissions ──────────────────────────────────
+# contents:read – checkout source for Docker build. No secrets are used;
+# this workflow only compiles and compares WASM hashes.
+permissions:
+  contents: read
+
 jobs:
   reproducible-build:
     name: Build twice, compare hashes
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ── Build the reproducible Docker image ──────────────────────────────
       # The image installs the compiler and pre-fetches all Cargo deps but

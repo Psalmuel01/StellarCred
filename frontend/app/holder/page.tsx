@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   IconArrowLeft,
@@ -12,11 +13,10 @@ import {
   IconTrash,
   IconCertificate,
   IconLoader2,
-  IconServer,
   IconCpu,
   IconCloudUpload,
   IconStack2,
-  IconInfoCircle,
+  IconDownload,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
@@ -24,9 +24,10 @@ import { Badge } from "@/components/Badge";
 import { Check } from "@/components/Check";
 import { ConfigBanner } from "@/components/ConfigBanner";
 import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
+import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
-import { computeWitness, proveWithBackend } from "@/lib/proof";
+import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "@/lib/proof";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
@@ -44,21 +45,53 @@ import {
   markProved,
   markAllProved,
   parseCredential,
+  exportCredentials,
 } from "@/lib/credential";
+import { isStorageAvailable } from "@/lib/safe-storage";
 import { PREVIEW_CREDENTIALS } from "@/lib/preview-fixtures";
 import { usePreviewMode } from "@/lib/wallet-context";
 import CopyButton from "@/components/CopyButton";
+import dynamic from "next/dynamic";
 import CredentialDetailModal from "@/components/CredentialDetailModal";
 import { useToast } from "@/components/Toast";
-import { QrScanner } from "@/components/QrScanner";
-import { TransferExportModal } from "@/components/TransferExportModal";
-import { TransferImportModal } from "@/components/TransferImportModal";
+
 import { IMPORT_PARAM } from "@/lib/transfer";
+
+// The encrypted-transfer modals are heavy (crypto.ts PBKDF2/AES-GCM, QR
+// rendering) and only needed when the user actually starts a transfer — load
+// them lazily so the holder route's 15 kB bundle budget stays intact.
+const TransferExportModal = dynamic(
+  () => import("@/components/TransferExportModal").then((m) => m.TransferExportModal),
+  { ssr: false },
+);
+const TransferImportModal = dynamic(
+  () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
+  { ssr: false },
+);
 
 // Parse "90 days", "30 days" etc from the credential's expiry string.
 function credTtlSecs(cred: Credential): number {
   const match = cred.expiry?.match(/(\d+)/);
   return (match ? parseInt(match[1]) : 30) * 86_400;
+}
+
+// Downloads every locally stored credential as a JSON backup file. Pairs with
+// the "Import credential JSON" panel: the file's contents can be pasted back
+// here (or into another browser/device) to restore. Credentials live only in
+// this browser's localStorage, so this is the only backup path — see the
+// "Where your credentials live" docs section.
+function downloadBackup(): void {
+  const json = exportCredentials();
+  if (!json || json === "[]") return;
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `stellarcred-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function proofStatus(cred: Credential): "unproved" | "proved" | "expired" {
@@ -109,9 +142,9 @@ function CredCard({
   address,
   onProve,
   onRemove,
-  onInspect,
+  onInspect: _onInspect,
   isPreview,
-  selection,
+  selection: _selection,
 }: {
   c: Credential;
   address: string;
@@ -187,8 +220,16 @@ function CredCard({
           {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
-            disabled={!address || credIsExpired(c)}
-            title={!address ? "Connect a wallet first" : credIsExpired(c) ? "This credential has expired" : undefined}
+            disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
+            title={
+              !address
+                ? "Connect a wallet first"
+                : credIsExpired(c)
+                  ? "This credential has expired"
+                  : !proofSubmissionConfigured()
+                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    : undefined
+            }
             onClick={onProve}
           >
             {status === "proved"  ? "Re-prove" :
@@ -267,8 +308,39 @@ function HolderInner() {
   const [view, setView] = useState<PageView>({ kind: "list" });
   const [importing, setImporting] = useState(false);
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
+  const [transferCred, setTransferCred] = useState<Credential | null>(null);
+  const [importPayload, setImportPayload] = useState<string | null>(null);
 
   useEffect(() => setCreds(loadCredentials()), []);
+
+  // Cross-tab sync: listen for storage events from other tabs
+  useEffect(() => {
+    if (!isStorageAvailable()) return;
+
+    const CREDENTIALS_KEY = "stellarcred:credentials";
+
+    // Debounced reload to avoid thrash on rapid writes
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const debouncedReload = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setCreds(loadCredentials());
+      }, 100); // 100ms debounce
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      // Only reload if the credentials key changed
+      if (e.key === CREDENTIALS_KEY) {
+        debouncedReload();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
 
   // A transfer QR opened directly (native camera app -> /holder?import=...)
   // lands here with the payload already in the URL — prompt for the
@@ -277,6 +349,7 @@ function HolderInner() {
   useEffect(() => {
     const payload = searchParams.get(IMPORT_PARAM);
     if (!payload) return;
+    setImportPayload(payload);
     router.replace("/holder");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -431,6 +504,19 @@ function HolderInner() {
                 Get a credential
                 <IconArrowRight size={14} />
               </a>
+              <p
+                className="faint"
+                style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}
+              >
+                Credentials are stored only in this browser&apos;s local storage — clearing
+                site data, switching browsers/devices, or private mode erases them.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
+                  Where your credentials live
+                </Link>
+              </p>
             </div>
           )}
 
@@ -476,11 +562,13 @@ function HolderInner() {
                       id="prove-all-btn"
                       className="btn btn-primary"
                       style={{ gap: "0.45rem", display: "inline-flex", alignItems: "center" }}
-                      disabled={!canSubmitBatch}
+                      disabled={!canSubmitBatch || !proofSubmissionConfigured()}
                       title={
-                        canSubmitBatch
-                          ? undefined
-                          : "Select at least 2 credentials to prove them together"
+                        !proofSubmissionConfigured()
+                          ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                          : canSubmitBatch
+                            ? undefined
+                            : "Select at least 2 credentials to prove them together"
                       }
                       onClick={() => setView({ kind: "batch", creds: selectedCreds })}
                     >
@@ -544,14 +632,36 @@ function HolderInner() {
               onCancel={() => setImporting(false)}
             />
           ) : (
-            <div className="row" style={{ gap: "0.5rem" }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setImporting(true)}
-              >
-                <IconPlus size={14} />
-                Import credential JSON
-              </button>
+            <div className="stack" style={{ gap: "0.55rem" }}>
+              <div className="row" style={{ gap: "0.6rem", flexWrap: "wrap" }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setImporting(true)}
+                >
+                  <IconPlus size={14} />
+                  Import credential JSON
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={downloadBackup}
+                  disabled={creds.length === 0}
+                  title={creds.length === 0 ? "No credentials to back up yet" : "Download a JSON backup of all credentials"}
+                >
+                  <IconDownload size={14} />
+                  Export backup
+                </button>
+              </div>
+              <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
+                Credentials live only in this browser (localStorage) — export a backup
+                before clearing site data or switching devices, and restore it here with{" "}
+                “Import credential JSON”.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
+                  Where your credentials live
+                </Link>
+              </p>
             </div>
           )}
         </div>
@@ -561,6 +671,29 @@ function HolderInner() {
         <CredentialDetailModal
           credential={detailCred as any}
           onClose={() => setDetailCred(null)}
+          onTransfer={(c) => {
+            setDetailCred(null);
+            setTransferCred(c as Credential);
+          }}
+        />
+      )}
+
+      {transferCred && (
+        <TransferExportModal
+          cred={transferCred}
+          onClose={() => setTransferCred(null)}
+        />
+      )}
+
+      {importPayload && (
+        <TransferImportModal
+          payload={importPayload}
+          onImported={(c) => {
+            setCreds(saveCredential(c));
+            setImportPayload(null);
+            toast.success(`Imported ${c.title}`);
+          }}
+          onClose={() => setImportPayload(null)}
         />
       )}
     </>
@@ -725,10 +858,13 @@ function ProofFlow({
   const [proof, setProof] = useState<{ proof: Uint8Array; publicInputs: Uint8Array } | null>(null);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
-  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | null>(null);
+  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | "timeout" | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const { addEvent } = useProofTimeline(cred);
 
@@ -744,12 +880,17 @@ function ProofFlow({
           () => setElapsed(Math.floor((Date.now() - start) / 1000)),
           1000,
         );
-        // Stage 1: witness (server)
+        // Stage 1: witness (server) — wrapped with a deadline so a stalled
+        // prover fails visibly instead of spinning forever.
         setStage("witness");
-        const witness = await computeWitness(
-          cred.type,
-          cred as unknown as Record<string, unknown>,
-          signal,
+        const witness = await withTimeout(
+          (sig) =>
+            computeWitness(
+              cred.type,
+              cred as unknown as Record<string, unknown>,
+              sig,
+            ),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
         if (signal.aborted) return;
 
@@ -761,15 +902,13 @@ function ProofFlow({
           1000,
         );
 
-        const result = await proveWithBackend(
-          cred.type,
-          witness,
-          signal,
-          (step) => {
-            if (!signal.aborted) setStage(step);
-          }
+        const result = await withTimeout(
+          (sig) =>
+            proveWithBackend(cred.type, witness, sig, (step) => {
+              if (!sig.aborted) setStage(step);
+            }),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
 
         setProof(result);
@@ -777,13 +916,31 @@ function ProofFlow({
         addEvent("generated");
         toast.success(`Proof generated for ${cred.title}`);
       } catch (e) {
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
+        // ProofTimeoutError gets a distinct user-visible message — half the
+        // point is that stalled provers fail visibly, not as a generic error.
+        if (e instanceof ProofTimeoutError) {
+          setError({
+            code: null,
+            friendly:
+              "Proof generation timed out. The prover took too long — this can happen on slow devices or with large circuits. Please try again.",
+            raw: e.message,
+          });
+          setErrorPhase("timeout");
+          setStage("error");
+          toast.error("Proof timed out — please try again.");
+          return;
+        }
         const parsed = parseContractError((e as Error).message);
         setError(parsed);
         setErrorPhase("proving");
         setStage("error");
         toast.error(`Proof generation failed: ${parsed.friendly}`);
+      } finally {
+        // Always clean up: timer + abort controller. The finally-style
+        // pattern guarantees no early-return can leak a pending timeout
+        // or interval.
+        clearInterval(timerRef.current!);
       }
     })();
     return () => {
@@ -792,7 +949,21 @@ function ProofFlow({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cred]);
+  useEffect(() => {
+    switch (stage) {
+      case "generated":
+        submitButtonRef.current?.focus();
+        break;
 
+      case "confirmed":
+        successRef.current?.focus();
+        break;
+
+      case "error":
+        errorRef.current?.focus();
+        break;
+    }
+  }, [stage]);
   async function onSubmit() {
     if (!proof || networkMismatch) return;
     setStage("submitting");
@@ -950,6 +1121,7 @@ function ProofFlow({
             )}
             <button
               className="btn btn-primary"
+              ref={submitButtonRef}
               style={{
                 marginTop: networkMismatch ? 0 : "1.5rem",
                 width: "100%",
@@ -957,8 +1129,14 @@ function ProofFlow({
                 cursor: networkMismatch ? "not-allowed" : "pointer",
               }}
               onClick={onSubmit}
-              disabled={networkMismatch}
-              title={networkMismatch ? "Switch your wallet to the correct network to submit" : undefined}
+              disabled={networkMismatch || !proofSubmissionConfigured()}
+              title={
+                networkMismatch
+                  ? "Switch your wallet to the correct network to submit"
+                  : !proofSubmissionConfigured()
+                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    : undefined
+              }
             >
               Submit to Stellar
               <IconArrowRight size={15} />
@@ -968,6 +1146,9 @@ function ProofFlow({
 
         {error && (
           <div
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
             style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
@@ -978,11 +1159,13 @@ function ProofFlow({
           >
             <div className="row" style={{ gap: "0.5rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.875rem" }}>
               <IconAlertTriangle size={15} />
-              {errorPhase === "proving"
-                ? "Proof generation failed"
-                : errorPhase === "submitting"
-                  ? "Submission failed — proof is ready to retry"
-                  : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
+              {errorPhase === "timeout"
+                ? "Proof timed out"
+                : errorPhase === "proving"
+                  ? "Proof generation failed"
+                  : errorPhase === "submitting"
+                    ? "Submission failed — proof is ready to retry"
+                    : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>
@@ -1031,6 +1214,10 @@ function ProofFlow({
 
         {stage === "confirmed" && (
           <div
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
             className="reveal"
             style={{
               marginTop: "1.5rem",
@@ -1096,6 +1283,9 @@ function BatchProofFlow({
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
   const holderRef = useRef(holder);
+   const networkMismatchRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { credsRef.current = creds; }, [creds]);
   useEffect(() => { holderRef.current = holder; }, [holder]);
 
@@ -1200,6 +1390,9 @@ function BatchProofFlow({
 
   useEffect(() => {
     if (!allReady || networkMismatch) return;
+    // Defensive: entry buttons are already gated, but never auto-fire an
+    // on-chain submission on a misconfigured deploy either.
+    if (!proofSubmissionConfigured()) return;
     toast.success(`Generated ${creds.length} proofs`);
     setBatchStage("submitting");
 
@@ -1243,6 +1436,22 @@ function BatchProofFlow({
   const isConfirmed = batchStage === "confirmed";
   const isError = batchStage === "error";
 
+  useEffect(() => {
+  if (blockedByNetwork) {
+    networkMismatchRef.current?.focus();
+    return;
+  }
+
+  switch (batchStage) {
+    case "confirmed":
+      successRef.current?.focus();
+      break;
+
+    case "error":
+      errorRef.current?.focus();
+      break;
+  }
+  }, [blockedByNetwork, batchStage]);
   return (
     <div className="reveal" style={{ maxWidth: 560, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
@@ -1314,7 +1523,7 @@ function BatchProofFlow({
 
         {/* Network mismatch — proofs are ready but submission is blocked */}
         {blockedByNetwork && (
-          <div style={{ marginTop: "1.5rem" }}>
+          <div  ref={networkMismatchRef} tabIndex={-1} role="status" style={{ marginTop: "1.5rem" }}>
             <NetworkMismatchBanner />
           </div>
         )}
@@ -1322,7 +1531,10 @@ function BatchProofFlow({
         {/* Error banner */}
         {isError && batchError && (
           <div
-            style={{
+          ref={errorRef}
+          tabIndex={-1}
+          role="alert"  
+          style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
               borderRadius: "var(--radius)",
@@ -1375,6 +1587,9 @@ function BatchProofFlow({
         {isConfirmed && (
           <div
             className="reveal"
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
             style={{
               marginTop: "1.5rem",
               padding: "1.25rem",

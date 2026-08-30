@@ -16,6 +16,13 @@ import {
 import { env } from "../../../lib/env";
 import { fetchPlaidBalance } from "../../../lib/plaid";
 import {
+  checkLimit,
+  extractIp,
+  hashForLog,
+  tooManyRequestsResponse,
+  LIMITS,
+} from "../../../lib/rate-limit";
+import {
   idempotencyGet,
   idempotencySet,
   idempotencyInFlightBegin,
@@ -246,6 +253,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Rate limiting ────────────────────────────────────────────────────────
+  // Applied after idempotency: a request that hits the idempotency cache is
+  // already free — it's a replay, not a new issuance. New requests (including
+  // the first leg of a Persona KYC redirect flow) count against both the IP
+  // and, when the wallet address is available in the URL params, the wallet
+  // limit. The wallet address from the body is checked separately inside
+  // executeRequest once the body is parsed; the pre-body IP check is cheap and
+  // blocks floods before any body is read.
+  const ip = extractIp(req);
+  const windowMs = LIMITS.windowMs();
+  const ipResult = checkLimit(`issue:ip:${ip}`, LIMITS.issuePerIp(), windowMs);
+  if (ipResult.throttled) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "rate_limited",
+        route: "issue",
+        dimension: "ip",
+        ipToken: hashForLog(ip),
+        requestId,
+      }),
+    );
+    return tooManyRequestsResponse(ipResult.retryAfterMs);
+  }
+
   try {
     return await executeRequest(req, requestId, idempotencyKey);
   } catch (e) {
@@ -348,6 +379,29 @@ async function executeRequest(
   } = body;
   issuerId = reqIssuerId;
   walletAddress = holder;
+
+  // ── Per-wallet rate limit ────────────────────────────────────────────────
+  // Checked here (after body parse) because the wallet address lives in the
+  // body. Returns 429 before any provider call or signing work is started.
+  if (holder) {
+    const walletResult = checkLimit(
+      `issue:wallet:${holder}`,
+      LIMITS.issuePerWallet(),
+      LIMITS.windowMs(),
+    );
+    if (walletResult.throttled) {
+      logger.warn(
+        stripSensitiveFields({
+          event: "rate_limited",
+          route: "issue",
+          dimension: "wallet",
+          walletToken: hashForLog(holder),
+          requestId,
+        }),
+      );
+      return sendResponse(tooManyRequestsResponse(walletResult.retryAfterMs));
+    }
+  }
 
   // Normalize to the multi-claim shape. Legacy callers send { type, attribute };
   // map that single attribute onto the right key in `attributes`.
