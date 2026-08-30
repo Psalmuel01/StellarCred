@@ -35,7 +35,7 @@ export function Footer() {
         } else {
           setVersionInfo({ loading: false });
         }
-      } catch (e) {
+      } catch {
         setVersionInfo({ loading: false });
       }
     };
