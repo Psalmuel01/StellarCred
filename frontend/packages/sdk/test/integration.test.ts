@@ -222,4 +222,38 @@ describe("StellarCred SDK integration (testnet)", () => {
       expect(url).toContain("return_url=%2Fdeposit");
     });
   });
+
+  // ── buildBadgeUrl & buildBadgeEmbedCode ───────────────────────────────────
+
+  describe("buildBadgeUrl & buildBadgeEmbedCode", () => {
+    it("constructs a valid embeddable badge URL", () => {
+      const url = buildBadgeUrl({
+        wallet: BARREN_WALLET,
+        claim: "kyc",
+        theme: "dark",
+        baseUrl: "https://stellarcred.xyz",
+      });
+
+      expect(url).toContain("https://stellarcred.xyz/badge");
+      expect(url).toContain(`wallet=${BARREN_WALLET}`);
+      expect(url).toContain("claim=kyc");
+      expect(url).toContain("theme=dark");
+    });
+
+    it("generates correct iframe embed HTML", () => {
+      const embed = buildBadgeEmbedCode({
+        wallet: BARREN_WALLET,
+        claim: "funds",
+        compact: true,
+        baseUrl: "https://stellarcred.xyz",
+      });
+
+      expect(embed).toContain("<iframe");
+      expect(embed).toContain("src=\"https://stellarcred.xyz/badge?wallet=");
+      expect(embed).toContain("compact=1");
+      expect(embed).toContain("width=\"180\"");
+      expect(embed).toContain("height=\"36\"");
+    });
+  });
 });
+
