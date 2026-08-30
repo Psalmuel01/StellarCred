@@ -32,3 +32,15 @@ export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 export const EXPLORER_TX = (hash: string) =>
   `https://stellar.expert/explorer/${NETWORK}/tx/${hash}`;
+
+// ── Sponsored / gasless submission ─────────────────────────────────────────
+// When set, the holder page offers "Submit without XLM" — the server-side
+// relay wraps the holder's signed transaction in a fee-bump paid by this
+// account. The holder still authorises the proof; the sponsor only covers
+// the network fee.
+export const SPONSOR_ACCOUNT_ID =
+  process.env.NEXT_PUBLIC_SPONSOR_ACCOUNT_ID ?? "";
+
+// Server-only: the sponsor's secret key.  Never prefixed NEXT_PUBLIC_.
+// Read at runtime by app/api/sponsor/route.ts.
+// export const SPONSOR_SECRET = process.env.SPONSOR_SECRET ?? "";

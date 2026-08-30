@@ -1,0 +1,199 @@
+"use client";
+
+/**
+ * useBatchProofFlow — manages the state machine for batch proof generation
+ * and submission of multiple credentials in a single on-chain transaction.
+ *
+ * Proofs are generated sequentially (one credential at a time), then all are
+ * submitted atomically via ProofRegistry.submit_proofs.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Credential } from "../credential";
+import { proofSubmissionConfigured } from "../config";
+import { computeWitness, proveWithBackend, DEFAULT_PROOF_TIMEOUT_MS } from "../proof";
+import { submitProofs, parseContractError, type ContractError, type ProofSubmissionParams } from "../contracts";
+import { credTtlSecs } from "../proof-helpers";
+import { addTimelineEvent } from "../useProofTimeline";
+import { useToast } from "@/components/Toast";
+
+export type CredProofState =
+  | { status: "pending" }
+  | { status: "witness" }
+  | { status: "proving"; elapsed: number }
+  | { status: "ready"; proof: { proof: Uint8Array; publicInputs: Uint8Array } }
+  | { status: "error"; message: string };
+
+export type BatchStage = "generating" | "submitting" | "confirmed" | "error";
+
+export function useBatchProofFlow(
+  creds: Credential[],
+  holder: string,
+  networkMismatch: boolean,
+  onProved: (txHash: string, commitments: string[]) => void,
+) {
+  const [credStates, setCredStates] = useState<CredProofState[]>(
+    () => creds.map(() => ({ status: "pending" as const })),
+  );
+  const [batchStage, setBatchStage] = useState<BatchStage>("generating");
+  const [txHash, setTxHash] = useState("");
+  const [batchError, setBatchError] = useState<ContractError | null>(null);
+  const toast = useToast();
+  const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
+    creds.map(() => null),
+  );
+  const credsRef = useRef(creds);
+  const holderRef = useRef(holder);
+  const onProvedRef = useRef(onProved);
+  useEffect(() => { credsRef.current = creds; }, [creds]);
+  useEffect(() => { holderRef.current = holder; }, [holder]);
+  useEffect(() => { onProvedRef.current = onProved; }, [onProved]);
+
+  // ── Sequential proof generation ────────────────────────────────────────────
+  // Runs once on mount. Each credential is proved in sequence to avoid
+  // overloading the WASM worker pool.
+  useEffect(() => {
+    let cancelled = false;
+    toast.info(`Generating ${creds.length} proofs...`);
+
+    (async () => {
+      for (let i = 0; i < creds.length; i++) {
+        if (cancelled) return;
+        const cred = creds[i];
+
+        // Witness
+        setCredStates((prev) => {
+          const next = [...prev];
+          next[i] = { status: "witness" };
+          return next;
+        });
+
+        let witness: Uint8Array;
+        try {
+          witness = await computeWitness(cred.type, cred as unknown as Record<string, unknown>);
+        } catch (e) {
+          if (cancelled) return;
+          setCredStates((prev) => {
+            const next = [...prev];
+            next[i] = { status: "error", message: (e as Error).message };
+            return next;
+          });
+          setBatchStage("error");
+          const parsed = parseContractError((e as Error).message);
+          setBatchError(parsed);
+          toast.error(`Proof generation failed for ${cred.title}: ${parsed.friendly}`);
+          return;
+        }
+
+        if (cancelled) return;
+
+        // Proving
+        const start = Date.now();
+        const timer = setInterval(() => {
+          setCredStates((prev) => {
+            const next = [...prev];
+            if (next[i].status === "proving") {
+              next[i] = { status: "proving", elapsed: Math.floor((Date.now() - start) / 1000) };
+            }
+            return next;
+          });
+        }, 1000);
+        setCredStates((prev) => {
+          const next = [...prev];
+          next[i] = { status: "proving", elapsed: 0 };
+          return next;
+        });
+
+        let result: { proof: Uint8Array; publicInputs: Uint8Array };
+        try {
+          result = await proveWithBackend(cred.type, witness);
+        } catch (e) {
+          clearInterval(timer);
+          if (cancelled) return;
+          setCredStates((prev) => {
+            const next = [...prev];
+            next[i] = { status: "error", message: (e as Error).message };
+            return next;
+          });
+          setBatchStage("error");
+          const parsed = parseContractError((e as Error).message);
+          setBatchError(parsed);
+          toast.error(`Proof generation failed for ${cred.title}: ${parsed.friendly}`);
+          return;
+        }
+
+        clearInterval(timer);
+        if (cancelled) return;
+
+        generatedProofs.current[i] = result;
+        setCredStates((prev) => {
+          const next = [...prev];
+          next[i] = { status: "ready", proof: result };
+          return next;
+        });
+        addTimelineEvent(cred.commitment, "generated");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []); // mount-only: generates proofs for the initial batch
+
+  // ── Auto-submit when all proofs are ready ──────────────────────────────────
+  // Fires once when every credential has status "ready" and the wallet is on
+  // the correct network. Re-fires if networkMismatch clears (no separate retry
+  // button needed).
+  const allReady =
+    batchStage === "generating" &&
+    credStates.length > 0 &&
+    credStates.every((s) => s.status === "ready");
+  const blockedByNetwork = allReady && networkMismatch;
+
+  useEffect(() => {
+    if (!allReady || networkMismatch) return;
+    if (!proofSubmissionConfigured()) return;
+
+    const currentCreds = credsRef.current;
+    const currentHolder = holderRef.current;
+
+    toast.success(`Generated ${currentCreds.length} proofs`);
+    setBatchStage("submitting");
+
+    const submissions: ProofSubmissionParams[] = currentCreds.map((cred, i) => {
+      const p = generatedProofs.current[i]!;
+      return {
+        issuerId: cred.issuerId,
+        credentialType: cred.type,
+        proof: p.proof,
+        publicInputs: p.publicInputs,
+        ttlSecs: credTtlSecs(cred),
+      };
+    });
+
+    currentCreds.forEach((cred) => addTimelineEvent(cred.commitment, "submitted"));
+    toast.info(`Submitting ${currentCreds.length} proofs to Stellar...`);
+
+    submitProofs({ holder: currentHolder, submissions })
+      .then((hash: string) => {
+        setTxHash(hash);
+        const commitments = currentCreds.map((c) => c.commitment);
+        onProvedRef.current(hash, commitments);
+        setBatchStage("confirmed");
+        currentCreds.forEach((cred) => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));
+        toast.success(`Confirmed ${currentCreds.length} proofs on-chain`, { txHash: hash });
+      })
+      .catch((e: unknown) => {
+        const parsed = parseContractError((e as Error).message);
+        setBatchError(parsed);
+        setBatchStage("error");
+        toast.error(`Batch submission failed: ${parsed.friendly}`);
+      });
+  }, [allReady, networkMismatch, toast]); // eslint-disable-line react-hooks/exhaustive-deps -- allReady is the trigger; refs avoid stale closures
+
+  return {
+    credStates,
+    batchStage,
+    txHash,
+    batchError,
+    blockedByNetwork,
+  };
+}
