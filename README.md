@@ -99,6 +99,8 @@ frontend/               Next.js 14 app (App Router)
   app/api/issue/          server-side credential issuance, via @stellarcred/issuer
   packages/sdk/           @stellarcred/sdk — hasClaim / getClaims / buildVerifyUrl
   packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
+  packages/middleware/    @stellarcred/middleware — Express + Next.js claim-gating middleware
+  packages/cli/           stellarcred — CLI: check, issuers, verify-url, issuer register/status
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
 services/
   indexer/                off-chain event indexing service (SQLite/Postgres, [README](services/indexer/README.md))
@@ -165,7 +167,15 @@ Two entry points, one backend:
 
 Prefer Soroban directly? Read `ProofRegistry.is_verified` from your own contract;
 no SDK required. See [`/developers`](frontend/app/developers/page.tsx) for the
-full reference.
+full reference, or the generated [API reference](https://doosewayo.github.io/StellarCred/)
+for every SDK export.
+
+Already have Express or Next.js? Skip the boilerplate with
+[`@stellarcred/middleware`](frontend/packages/middleware) — one call gates a
+route on a set of claims, with a 403 or a redirect to the verify flow on
+failure. Prefer the command line? [`stellarcred`](frontend/packages/cli)
+(`npx stellarcred`) checks claims, lists issuers, and builds verify links from
+a shell or CI job.
 
 ---
 
