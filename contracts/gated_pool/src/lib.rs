@@ -222,4 +222,5 @@ impl GatedPool {
     }
 }
 
+#[cfg(test)]
 mod test;

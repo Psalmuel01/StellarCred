@@ -361,4 +361,5 @@ impl IssuerRegistry {
     }
 }
 
+#[cfg(test)]
 mod test;
