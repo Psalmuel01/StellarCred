@@ -36,6 +36,7 @@ function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
   };
   return {
     tick: async () => 0,
+    reconcile: async () => 0,
     start: () => {},
     stop: () => {},
     getHealth: () => ({ ...health }),

@@ -33,8 +33,12 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     startLedger: 0,
     port: 3001,
     finalityLag: 6,
+    corsOrigins: ["http://localhost:3000"],
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 120,
+    rateLimitEnabled: true,
     ...overrides,
-  };
+  } as Config;
 }
 
 /** Build a fake Horizon contract event record. */
@@ -316,19 +320,26 @@ describe("Ingester reconcile", () => {
     // Reconcile from ledger 15
     const processed = await ingester.reconcile(15);
 
-    // GA1 (ledger 10) should still exist
+    // GA1 (ledger 10) should still exist (≤ reorg point)
     const a1 = db.claimsByWallet("GA1");
     expect(a1).toHaveLength(1);
 
-    // GA2 (ledger 20) and GA3 (ledger 30) should be deleted (both > 15)
-    const a2 = db.claimsByWallet("GA2");
-    expect(a2).toHaveLength(0);
+    // GA3 (ledger 30) should be deleted (> 15) and not re-emitted by Horizon,
+    // so it stays gone after the re-scan.
     const a3 = db.claimsByWallet("GA3");
     expect(a3).toHaveLength(0);
 
-    // Cursor should be at 15 (the reorg point)
+    // GA2 (old ledger 20) is rolled back by the reorg, then re-indexed from
+    // the valid verified event at ledger 25 that Horizon returns in the
+    // reorged range — reconcile() deletes AND re-ingests.
+    const a2 = await db.claimsByWallet("GA2");
+    expect(a2).toHaveLength(1);
+    expect(a2[0].ledger_sequence).toBe(25);
+
+    // The cursor should have advanced to the highest re-indexed ledger (25),
+    // not be stuck at the reorg point.
     const cursor = db.getLastLedger();
-    expect(cursor).toBe(15);
+    expect(cursor).toBe(25);
   });
 });
 
