@@ -277,7 +277,7 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
-import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+import { Client as ProofRegistryClient } from "../../proof-registry/src/index";
 import { configure as configureSharedClaims } from "./claims";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
