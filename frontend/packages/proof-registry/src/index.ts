@@ -65,6 +65,20 @@ export const Errors = {
 
 export type DataKey = {tag: "Admin", values: void} | {tag: "Verifier", values: void} | {tag: "IssuerRegistry", values: void} | {tag: "Proof", values: readonly [string, string]};
 
+/**
+ * Revocation reason codes emitted by `ProofRegistry.revoke`. `50` (`other`)
+ * is the default when no reason is supplied. Mirrors the contract's
+ * `RevocationReason` enum so consumers can surface why a credential was
+ * revoked.
+ */
+export const REVOCATION_REASONS: Record<number, string> = {
+  10: "expired",
+  20: "superseded",
+  30: "fraud",
+  40: "user_request",
+  50: "other",
+};
+
 
 export interface ProofRecord {
   expiry: u64;
@@ -90,6 +104,12 @@ issuer: Option<string>;
  * Set by the registered issuer via `revoke`. Expiry data is kept for audit.
  */
 revoked: boolean;
+  /**
+ * Revocation reason code when `revoked` is true (see `REVOCATION_REASONS`);
+ * `None`/undefined when not revoked. Gives consumers actionable context on
+ * why a credential was revoked rather than an opaque boolean flag.
+ */
+revoked_reason: Option<u32>;
   /**
  * For parameterised credential types (age, income, funds), the threshold
  * value that was committed to in the proof's public inputs. None for types
@@ -132,8 +152,14 @@ export interface Client {
    * Construct and simulate a revoke transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Invalidate a holder's cached proof. Only the registered issuer for
    * `credential_type` may call this (e.g. when KYC status changes).
+   * 
+   * `reason` is an optional revocation reason code (see `REVOCATION_REASONS`):
+   * 10 = expired, 20 = superseded, 30 = fraud, 40 = user_request, 50 = other.
+   * Omit (or pass null/50) to default to `other`. Stored on the record and
+   * emitted in the revoke event so the indexer and off-chain consumers can
+   * surface why a credential was revoked.
    */
-  revoke: ({issuer, holder, credential_type}: {issuer: string, holder: string, credential_type: string}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+  revoke: ({issuer, holder, credential_type, reason}: {issuer: string, holder: string, credential_type: string, reason?: Option<u32>}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
    * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.

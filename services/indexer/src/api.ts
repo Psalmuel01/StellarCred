@@ -47,6 +47,14 @@ import { RateLimiter } from "./rate-limit";
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 
+export const REVOCATION_REASONS: Record<number, string> = {
+  10: "expired",
+  20: "superseded",
+  30: "fraud",
+  40: "user_request",
+  50: "other",
+};
+
 // Helper: wrap an async handler and forward errors to next()
 function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
@@ -145,7 +153,15 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
       }
 
       const claims = await db.claimsByWallet(wallet.trim());
-      res.json({ wallet: wallet.trim(), claims });
+      res.json({
+        wallet: wallet.trim(),
+        claims: claims.map((c) => ({
+          ...c,
+          // Surface why a claim was revoked (see ProofRegistry `RevocationReason`).
+          revocation_reason_label:
+            c.revoked_reason != null ? REVOCATION_REASONS[c.revoked_reason] ?? "other" : null,
+        })),
+      });
     })
   );
 

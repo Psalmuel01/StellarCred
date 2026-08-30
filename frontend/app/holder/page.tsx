@@ -48,6 +48,10 @@ import {
   exportCredentials,
 } from "@/lib/credential";
 import { isStorageAvailable } from "@/lib/safe-storage";
+import {
+  downloadProofHistoryCsv,
+  downloadProofHistoryJson,
+} from "@/lib/exportProofHistory";
 import { PREVIEW_CREDENTIALS } from "@/lib/preview-fixtures";
 import { usePreviewMode } from "@/lib/wallet-context";
 import CopyButton from "@/components/CopyButton";
@@ -739,11 +743,39 @@ function HolderInner() {
                   <IconDownload size={14} />
                   Export backup
                 </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => downloadProofHistoryCsv(creds)}
+                  disabled={creds.filter((c) => c.provedAt).length === 0}
+                  title={
+                    creds.filter((c) => c.provedAt).length === 0
+                      ? "No on-chain proof history yet — prove a credential first"
+                      : "Export proof history as CSV (non-sensitive, for spreadsheet import)"
+                  }
+                >
+                  <IconDownload size={14} />
+                  Export history (CSV)
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => downloadProofHistoryJson(creds)}
+                  disabled={creds.filter((c) => c.provedAt).length === 0}
+                  title={
+                    creds.filter((c) => c.provedAt).length === 0
+                      ? "No on-chain proof history yet — prove a credential first"
+                      : "Export proof history as JSON (non-sensitive)"
+                  }
+                >
+                  <IconDownload size={14} />
+                  Export history (JSON)
+                </button>
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
                 Credentials live only in this browser (localStorage) — export a backup
                 before clearing site data or switching devices, and restore it here with{" "}
-                “Import credential JSON”.{" "}
+                “Import credential JSON”. For an audit trail of what you proved on-chain,
+                use “Export history” (CSV or JSON) — it contains only non-sensitive fields
+                (claim type, timestamps, tx hash, issuer) and works offline.{" "}
                 <Link
                   href="/docs#storage"
                   style={{ color: "var(--accent)", textDecoration: "underline" }}

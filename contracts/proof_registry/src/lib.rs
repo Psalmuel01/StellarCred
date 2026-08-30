@@ -49,6 +49,43 @@ pub struct EventProofSubmitted {
     pub expiry: u64,
 }
 
+/// Optional reason code for a credential revocation, giving consumers
+/// actionable context instead of an opaque boolean flag.
+///
+/// The value `50` (`other`) is the default when no reason is supplied, so the
+/// enum stays backward compatible: existing `revoke` callers that omit the
+/// reason get `RevocationReason::Other`.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum RevocationReason {
+    /// The credential's underlying policy or terms elapsed.
+    Expired = 10,
+    /// A newer credential superseded this one.
+    Superseded = 20,
+    /// The credential was revoked for suspected fraud or misuse.
+    Fraud = 30,
+    /// The holder requested the revocation.
+    UserRequest = 40,
+    /// Any other / unspecified reason (the default).
+    Other = 50,
+}
+
+impl RevocationReason {
+    /// Map a user-supplied reason code to the enum, defaulting to `Other`.
+    /// Values outside the defined set are coerced to `Other` for safety, so a
+    /// malformed on-chain caller can never produce an invalid stored code.
+    pub fn from_code(code: u32) -> Self {
+        match code {
+            10 => Self::Expired,
+            20 => Self::Superseded,
+            30 => Self::Fraud,
+            40 => Self::UserRequest,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Payload emitted when an issuer revokes a holder's proof.
 #[contracttype]
 #[derive(Clone)]
@@ -56,6 +93,11 @@ pub struct EventProofRevoked {
     pub holder: Address,
     pub issuer: Address,
     pub revoked_at: u64,
+    /// Optional {@link RevocationReason} code for the revocation (0 = none
+    /// supplied). The stored record always carries a concrete code (default
+    /// `Other`); the event also includes it so off-chain consumers (indexer,
+    /// SDK) can surface it.
+    pub reason: u32,
 }
 
 /// Payload emitted when submissions are paused by admin.
@@ -138,6 +180,10 @@ pub struct ProofRecord {
     pub revoked: bool,
     pub issuer: Option<Address>,
     pub vk_version: u32,
+    /// Optional revocation reason code (see {@link RevocationReason}). `None`
+    /// means the record has not been revoked; when revoked it is always `Some`
+    /// (defaulting to `Other` for legacy/no-reason revocations).
+    pub revoked_reason: Option<u32>,
 }
 
 #[contracttype]
@@ -312,6 +358,7 @@ impl ProofRegistry {
             revoked: false,
             issuer: Some(issuer_id),
             vk_version: vk_version.unwrap_or(0),
+            revoked_reason: None,
         };
         env.storage().persistent().set(&key, &record);
         Self::bump_ttl(&env, &key, expiry);
@@ -401,6 +448,7 @@ impl ProofRegistry {
                 revoked: false,
                 issuer: Some(sub.issuer_id.clone()),
                 vk_version: effective_version,
+                revoked_reason: None,
             };
             env.storage().persistent().set(&key, &record);
             Self::bump_ttl(&env, &key, sub.expiry);
@@ -627,8 +675,24 @@ impl ProofRegistry {
         }
     }
 
+    /// Revoke a cached proof on behalf of an issuer.
+    ///
+    /// `reason` is an optional {@link RevocationReason} code (see
+    /// `revocation_reasons`):
+    ///   - `None` (default) → `RevocationReason::Other`
+    ///   - `Some(code)` → the given code, coerced to `Other` if unrecognised.
+    ///
+    /// The reason is stored on the record and emitted in the revoke event so
+    /// the indexer and off-chain consumers can surface *why* a credential was
+    /// revoked rather than just that it was.
     #[allow(deprecated)]
-    pub fn revoke(env: Env, issuer: Address, holder: Address, credential_type: Symbol) {
+    pub fn revoke(
+        env: Env,
+        issuer: Address,
+        holder: Address,
+        credential_type: Symbol,
+        reason: Option<u32>,
+    ) {
         issuer.require_auth();
 
         let registry = IssuerClient::new(&env, &Self::issuer_registry(&env));
@@ -643,13 +707,14 @@ impl ProofRegistry {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
         record.revoked = true;
+        record.revoked_reason = Some(RevocationReason::from_code(reason.unwrap_or(50)) as u32);
         env.storage().persistent().set(&key, &record);
         env.storage()
             .persistent()
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
 
         // Emit: topics = ("proof_reg", "revoked", credential_type)
-        //       data   = EventProofRevoked { holder, issuer, revoked_at }
+        //       data   = EventProofRevoked { holder, issuer, revoked_at, reason }
         env.events().publish(
             (
                 symbol_short!("proof_reg"),
@@ -660,6 +725,7 @@ impl ProofRegistry {
                 holder,
                 issuer,
                 revoked_at: env.ledger().timestamp(),
+                reason: record.revoked_reason.unwrap_or(50),
             },
         );
     }
@@ -690,6 +756,7 @@ impl ProofRegistry {
                 revoked: legacy.revoked,
                 issuer: None,
                 vk_version: 0,
+                revoked_reason: None,
             };
             env.storage().persistent().set(&key, &record);
             Self::bump_ttl(&env, &key, record.expiry);
@@ -780,6 +847,7 @@ impl ProofRegistry {
             revoked: false,
             issuer: Some(issuer),
             vk_version: 0,
+            revoked_reason: None,
         };
         env.storage().persistent().set(&key, &record);
         Self::bump_ttl(env, &key, expiry);

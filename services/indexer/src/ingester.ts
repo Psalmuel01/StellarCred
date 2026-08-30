@@ -4,8 +4,8 @@
  *
  * ProofRegistry emits two kinds of events:
  *
- *   Verified  topics: ["proof", "verified"]  value: expiry (u64)
- *   Revoked   topics: ["revoked"]            value: (holder, cred_type, issuer, ts)
+ *   Verified  topics: ["proof", "verified"]             value: expiry (u64)
+ *   Revoked   topics: ["proof_reg", "revoked", cred_type]  value: { holder, issuer, revoked_at, reason }
  *
  * Horizon's /effects and /transactions endpoints don't surface Soroban contract
  * events natively, so we use the dedicated
@@ -298,6 +298,8 @@ type ParsedEvent =
       kind: "revoked";
       holder: string;
       credentialType: string;
+      /** Revocation reason code (see ProofRegistry `RevocationReason`), when present. */
+      reason?: number;
     }
   | { kind: "unknown" };
 
@@ -316,8 +318,11 @@ type ParsedEvent =
  *   source_account which is the holder (they must sign submit_proof).
  *
  * Revoked (issuer-initiated, from revoke()):
- *   topics[0] = ScvSymbol "revoked"
- *   value     = ScvVec [holder, credential_type, issuer, timestamp]
+ *   topics[0] = ScvSymbol "proof_reg"
+ *   topics[1] = ScvSymbol "revoked"
+ *   topics[2] = credential_type
+ *   value     = EventProofRevoked { holder, issuer, revoked_at, reason }
+ *     (serialized as [holder, issuer, revoked_at, reason]; reason ∈ 10/20/30/40/50)
  *
  * Revoked (holder self-revoke, revoke_proof()):
  *   No event is emitted by the contract for self-revoke — holder just removes
@@ -360,12 +365,39 @@ function parseEvent(
     };
   }
 
-  // revoked event
-  if (topics[0] === "revoked") {
+  // revoked event — emitted by `revoke()`:
+  //   topics[0] = ScvSymbol "proof_reg"
+  //   topics[1] = ScvSymbol "revoked"
+  //   topics[2] = credential_type
+  //   value     = EventProofRevoked { holder, issuer, revoked_at, reason }
+  //     → array [holder, issuer, revoked_at, reason]; `reason` is the
+  //       RevocationReason code (defaults to 50 = Other).
+  // Older contract layout (backward-compat): topics[0] = "revoked",
+  //   value = [holder, credential_type, issuer, timestamp] (no reason).
+  const isCurrentRevoked = topics[0] === "proof_reg" && topics[1] === "revoked";
+  if (isCurrentRevoked || topics[0] === "revoked") {
     if (Array.isArray(value) && value.length >= 2) {
       const holder = String(value[0]);
-      const credentialType = String(value[1]);
-      return { kind: "revoked", holder, credentialType };
+      if (isCurrentRevoked) {
+        const credentialType =
+          typeof topics[2] === "string" ? topics[2] : "unknown";
+        return {
+          kind: "revoked",
+          holder,
+          credentialType,
+          reason:
+            value.length > 3 && typeof value[3] === "number"
+              ? Number(value[3])
+              : 50,
+        };
+      }
+      // legacy layout: [holder, credential_type, issuer, timestamp]
+      return {
+        kind: "revoked",
+        holder,
+        credentialType: String(value[1]),
+        reason: 50,
+      };
     }
   }
 
@@ -533,7 +565,7 @@ export function createIngester(config: Config, db: Db): Ingester {
         });
         processed++;
       } else if (parsed.kind === "revoked") {
-        await db.revokeClaim(parsed.holder, parsed.credentialType);
+        await db.revokeClaim(parsed.holder, parsed.credentialType, parsed.reason ?? 50);
         processed++;
       }
     }

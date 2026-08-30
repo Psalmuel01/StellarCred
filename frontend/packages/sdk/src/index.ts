@@ -43,6 +43,9 @@ let _config = {
     env("STELLARCRED_NETWORK_PASSPHRASE", "NEXT_PUBLIC_NETWORK_PASSPHRASE") ||
     "Test SDF Network ; September 2015",
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
+  indexerUrl:
+    env("STELLARCRED_INDEXER_URL", "NEXT_PUBLIC_STELLARCRED_INDEXER_URL") ||
+    "https://api.stellarcred.xyz",
   requestTimeoutMs: 10_000,
   retries: 3,
   baseDelayMs: 500,
@@ -60,6 +63,7 @@ export function configure(opts: {
   rpcUrl?: string;
   networkPassphrase?: string;
   baseUrl?: string;
+  indexerUrl?: string;
   requestTimeoutMs?: number;
   retries?: number;
   baseDelayMs?: number;
@@ -67,6 +71,12 @@ export function configure(opts: {
   jitter?: boolean;
 }): void {
   _config = { ..._config, ...opts };
+  if (opts.indexerUrl !== undefined) {
+    // Expose to `subscribeClaims` (indexer-backed subscriptions).
+    if (typeof globalThis !== "undefined") {
+      (globalThis as any).__STELLARCRED_INDEXER_URL__ = opts.indexerUrl;
+    }
+  }
   const sharedOpts: Parameters<typeof configureSharedClaims>[0] = {};
   if (opts.registryId !== undefined) sharedOpts.registryId = opts.registryId;
   if (opts.rpcUrl !== undefined) sharedOpts.rpcUrl = opts.rpcUrl;
@@ -186,12 +196,8 @@ export class ConfigError extends Error {
  * or `[]` for an invalid address. Pass `{ throwOnError: true }` to `hasClaim`
  * / `getClaims` to surface this error to the caller.
  */
-export class InvalidAddressError extends Error {
-  constructor(message = "Invalid Stellar address") {
-    super(message);
-    this.name = "InvalidAddressError";
-  }
-}
+import { InvalidAddressError } from "./wallet";
+export { InvalidAddressError } from "./wallet";
 
 /**
  * Error thrown when an RPC / contract-simulation call fails (network,
@@ -277,8 +283,15 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
-import { Client as ProofRegistryClient } from "../../proof-registry/src/index";
+import { Client as ProofRegistryClient, REVOCATION_REASONS } from "../../proof-registry/src/index";
 import { configure as configureSharedClaims } from "./claims";
+import {
+  resolveJurisdictionPreset,
+  JurisdictionPresetError,
+  JURISDICTION_PRESETS,
+  JURISDICTION_PRESET_NAMES,
+} from "./presets";
+import type { JurisdictionPresetName } from "./presets";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
 let _sdk: Promise<StellarSDK> | null = null;
@@ -293,21 +306,18 @@ function getSdk(): Promise<StellarSDK> {
  * This is intentionally performed before `getClient()` so malformed input
  * cannot result in an RPC/client construction attempt.
  */
-async function normalizeAndValidateWallet(wallet: string): Promise<string> {
-  const normalized = wallet.trim();
-
-  if (!normalized) {
-    throw new InvalidAddressError("Invalid Stellar address: address is empty");
-  }
-
-  const { StrKey } = await getSdk();
-
-  if (!StrKey.isValidEd25519PublicKey(normalized)) {
-    throw new InvalidAddressError("Invalid Stellar address");
-  }
-
-  return normalized;
-}
+import { normalizeAndValidateWallet } from "./wallet";
+export { normalizeAndValidateWallet };
+import { subscribeClaims } from "./subscribe";
+export type {
+  ClaimSubscription,
+  ClaimEvent,
+  ClaimEventContext,
+  ClaimEventKind,
+  IndexedClaim,
+  SubscribeClaimsOptions,
+} from "./subscribe";
+export { subscribeClaims };
 
 // The client is stateless per config, so one instance is shared across every
 // read. Cached as a promise so a fan-out of concurrent reads (see `fanOut`)
@@ -792,6 +802,14 @@ export async function getClaims(
  * @example
  * // Restrict specific countries
  * buildVerifyUrl({ returnUrl: "/app", claim: "jurisdiction", claimParams: { restricted: ["840","364"] } })
+ *
+ * @example
+ * // Gate by a named region preset — allow EU countries (expands to ISO codes)
+ * buildVerifyUrl({ returnUrl: "/app", claim: "jurisdiction", claimParams: { preset: "eu" } })
+ *
+ * @example
+ * // Use a preset but override/remove one country (preset + raw codes)
+ * buildVerifyUrl({ returnUrl: "/app", claim: "jurisdiction", claimParams: { preset: "us" } })
  */
 export function buildVerifyUrl(options: {
   returnUrl: string;
@@ -803,6 +821,14 @@ export function buildVerifyUrl(options: {
     threshold_years?: string;
     /** For "income" / "funds" claims: minimum value in whole units (default varies). */
     threshold?: string;
+    /**
+     * For "jurisdiction" claims: a named region preset (see
+     * {@link JURISDICTION_PRESETS}) that expands to the ISO 3166-1 numeric
+     * code set — e.g. "eu", "eea", "us", "non-sanctioned". Omitting
+     * `restricted` uses the preset's exact membership. Providing both lets
+     * you override: the explicit `restricted` list wins.
+     */
+    preset?: string;
     /** For "jurisdiction" claims: ISO 3166-1 numeric codes (default []). */
     restricted?: string | string[];
     /** For "jurisdiction" claims: "block" = denylist (default), "allow" = allowlist. */
@@ -837,12 +863,24 @@ export function buildVerifyUrl(options: {
   url.searchParams.set("return_url", returnUrl);
   url.searchParams.set("claim", options.claim);
   if (options.claimParams) {
-    const { threshold_years, threshold, restricted, mode } = options.claimParams;
+    const { threshold_years, threshold, restricted, mode, preset } = options.claimParams;
     if (threshold_years) url.searchParams.set("threshold_years", threshold_years);
     if (threshold) url.searchParams.set("threshold", threshold);
-    if (restricted) {
-      url.searchParams.set("restricted", Array.isArray(restricted) ? restricted.join(",") : restricted);
+
+    // Resolve the named jurisdiction preset to its ISO code set. An explicit
+    // `restricted` list overrides the preset (documented override path); the
+    // presets themselves are immutable and expanded to raw codes.
+    let restrictedCodes: string[] | null = null;
+    if (preset) {
+      restrictedCodes = [...resolveJurisdictionPreset(preset as JurisdictionPresetName)];
     }
+    if (restricted !== undefined) {
+      restrictedCodes = Array.isArray(restricted) ? restricted.slice() : [restricted];
+    }
+    if (restrictedCodes && restrictedCodes.length > 0) {
+      url.searchParams.set("restricted", restrictedCodes.join(","));
+    }
+
     if (mode) {
       url.searchParams.set("mode", mode === "allow" ? "1" : "0");
     }
@@ -1079,6 +1117,55 @@ export function watchClaim(
   }
 }
 
+/**
+ * Reads the stored revocation reason for a wallet/claim, or `null` when the
+ * claim has not been revoked (or there is no stored record). The reason code
+ * comes from the on-chain `ProofRecord` (see {@link REVOCATION_REASONS}) and
+ * surfaces *why* a credential was revoked — expired policy, superseded,
+ * fraud, user request, or other — rather than an opaque boolean flag.
+ *
+ * @returns `{ code, label }` when revoked, `null` otherwise or when the
+ *   RPC read fails.
+ *
+ * @example
+ * const reason = await getRevocationReason("G1ABC…", "kyc");
+ * if (reason) console.log(`Revoked because: ${reason.label}`);
+ */
+export async function getRevocationReason(
+  wallet: string,
+  claimType: string,
+  opts?: Pick<ClaimOptions, "requestTimeoutMs">,
+): Promise<{ code: number; label: string } | null> {
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch {
+    return null;
+  }
+
+  const client = await getClient(false);
+  if (!client) return null;
+
+  try {
+    const { result } = await withRequestTimeout(
+      () =>
+        withRetry(() =>
+          client.get_record({
+            holder: normalizedWallet,
+            credential_type: claimType,
+          }),
+        ),
+      opts?.requestTimeoutMs ?? _config.requestTimeoutMs,
+    );
+    const record = result;
+    if (!record || !record.revoked || record.revoked_reason == null) return null;
+    const code = Number(record.revoked_reason);
+    return { code, label: REVOCATION_REASONS[code] ?? "other" };
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Namespace export (StellarCred.hasClaim / StellarCred.getClaims / etc.)
 // ---------------------------------------------------------------------------
@@ -1096,6 +1183,13 @@ export const StellarCred = {
   buildBadgeEmbedCode,
   parseReturnParams,
   watchClaim,
+  getRevocationReason,
+  REVOCATION_REASONS,
+  subscribeClaims,
+  resolveJurisdictionPreset,
+  JurisdictionPresetError,
+  JURISDICTION_PRESETS,
+  JURISDICTION_PRESET_NAMES,
   CLAIM_TYPES,
   TimeoutError,
   ConfigError,
@@ -1103,6 +1197,18 @@ export const StellarCred = {
   RpcError,
 };
 export default StellarCred;
+
+// Jurisdiction presets — named regional code sets for jurisdiction gating.
+export {
+  resolveJurisdictionPreset,
+  JurisdictionPresetError,
+  JURISDICTION_PRESETS,
+  JURISDICTION_PRESET_NAMES,
+} from "./presets";
+export type {
+  JurisdictionPreset,
+  JurisdictionPresetName,
+} from "./presets";
 
 // Framework-agnostic core — for use outside React (Vue, Svelte, vanilla).
 export { createClaimGate } from "./core";

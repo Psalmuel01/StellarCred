@@ -217,7 +217,7 @@ fn withdraw_remains_available_after_kyc_is_revoked() {
 
     prove_kyc(&env, &h, &user);
     h.pool.deposit(&user, &100);
-    h.registry.revoke(&h.issuer, &user, &symbol_short!("kyc"));
+    h.registry.revoke(&h.issuer, &user, &symbol_short!("kyc"), &None);
     assert!(
         !h.registry
             .is_verified(&user, &symbol_short!("kyc"), &None)

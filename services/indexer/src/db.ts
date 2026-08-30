@@ -34,6 +34,8 @@ export interface ClaimRow {
   threshold: number | null;
   /** 1 if the issuer has revoked this proof, 0 otherwise */
   revoked: number;
+  /** Revocation reason code (see ProofRegistry `RevocationReason`); undefined when not revoked */
+  revoked_reason?: number | null;
 }
 
 // ── Adapter interface ──────────────────────────────────────────────────────
@@ -66,7 +68,8 @@ export interface Db {
   /** Mark a claim as revoked. */
   revokeClaim(
     wallet: string,
-    credentialType: string
+    credentialType: string,
+    reason?: number
   ): void | Promise<void>;
 
   /** Return all claims for a wallet (active and revoked). */
@@ -116,6 +119,7 @@ export function createSqliteDb(config: Config): Db {
           ledger_sequence  INTEGER NOT NULL DEFAULT 0,
           threshold        INTEGER,
           revoked          INTEGER NOT NULL DEFAULT 0,
+          revoked_reason   INTEGER,
           PRIMARY KEY (wallet, credential_type)
         );
 
@@ -153,15 +157,16 @@ export function createSqliteDb(config: Config): Db {
         .prepare(
           `INSERT INTO claims
              (wallet, credential_type, issuer, verified_at, expiry,
-              ledger_sequence, threshold, revoked)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ledger_sequence, threshold, revoked, revoked_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
            ON CONFLICT(wallet, credential_type) DO UPDATE SET
              issuer          = excluded.issuer,
              verified_at     = excluded.verified_at,
              expiry          = excluded.expiry,
              ledger_sequence = excluded.ledger_sequence,
              threshold       = excluded.threshold,
-             revoked         = 0`
+             revoked         = 0,
+             revoked_reason  = NULL`
         )
         .run(
           row.wallet,
@@ -175,13 +180,13 @@ export function createSqliteDb(config: Config): Db {
         );
     },
 
-    revokeClaim(wallet: string, credentialType: string) {
+    revokeClaim(wallet: string, credentialType: string, reason?: number) {
       raw
         .prepare(
-          `UPDATE claims SET revoked = 1
+          `UPDATE claims SET revoked = 1, revoked_reason = ?
            WHERE wallet = ? AND credential_type = ?`
         )
-        .run(wallet, credentialType);
+        .run(reason ?? 50, wallet, credentialType);
     },
 
     claimsByWallet(wallet: string) {
@@ -258,6 +263,7 @@ export function createPostgresDb(config: Config): Db {
           ledger_sequence  BIGINT  NOT NULL DEFAULT 0,
           threshold        BIGINT,
           revoked          INTEGER NOT NULL DEFAULT 0,
+          revoked_reason   INTEGER,
           PRIMARY KEY (wallet, credential_type)
         );
 
@@ -297,15 +303,16 @@ export function createPostgresDb(config: Config): Db {
       await pool.query(
         `INSERT INTO claims
            (wallet, credential_type, issuer, verified_at, expiry,
-            ledger_sequence, threshold, revoked)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            ledger_sequence, threshold, revoked, revoked_reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL)
          ON CONFLICT (wallet, credential_type) DO UPDATE SET
            issuer          = EXCLUDED.issuer,
            verified_at     = EXCLUDED.verified_at,
            expiry          = EXCLUDED.expiry,
            ledger_sequence = EXCLUDED.ledger_sequence,
            threshold       = EXCLUDED.threshold,
-           revoked         = 0`,
+           revoked         = 0,
+           revoked_reason  = NULL`,
         [
           row.wallet,
           row.credential_type,
@@ -319,11 +326,11 @@ export function createPostgresDb(config: Config): Db {
       );
     },
 
-    async revokeClaim(wallet: string, credentialType: string) {
+    async revokeClaim(wallet: string, credentialType: string, reason?: number) {
       await pool.query(
-        `UPDATE claims SET revoked = 1
+        `UPDATE claims SET revoked = 1, revoked_reason = $3
          WHERE wallet = $1 AND credential_type = $2`,
-        [wallet, credentialType]
+        [wallet, credentialType, reason ?? 50]
       );
     },
 
