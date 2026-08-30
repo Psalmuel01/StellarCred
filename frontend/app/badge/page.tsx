@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { IconCheck, IconX, IconShieldCheck, IconLoader2 } from "@tabler/icons-react";
+import { IconCheck, IconX, IconLoader2 } from "@tabler/icons-react";
 import { truncateHash } from "@/lib/format";
 
 function BadgeContent() {
