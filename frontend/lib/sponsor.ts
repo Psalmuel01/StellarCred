@@ -22,21 +22,13 @@ import { signTx } from "./wallet";
 type SDK = typeof import("@stellar/stellar-sdk");
 
 let sdkPromise: Promise<SDK> | null = null;
-let sdkModule: SDK | null = null;
 async function sdk(): Promise<SDK> {
   if (!sdkPromise) {
-    sdkPromise = import("@stellar/stellar-sdk").then((m) => {
-      sdkModule = m;
-      return m;
-    });
+    sdkPromise = import("@stellar/stellar-sdk") as Promise<SDK>;
   }
   return sdkPromise;
 }
 
-function sdkSync(): SDK {
-  if (!sdkModule) throw new Error("SDK not loaded — call await sdk() first");
-  return sdkModule;
-}
 
 let server: InstanceType<SDK["rpc"]["Server"]> | null = null;
 async function getServer() {

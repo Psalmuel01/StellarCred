@@ -8,10 +8,10 @@
  * submitted atomically via ProofRegistry.submit_proofs.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Credential } from "../credential";
 import { proofSubmissionConfigured } from "../config";
-import { computeWitness, proveWithBackend, DEFAULT_PROOF_TIMEOUT_MS } from "../proof";
+import { computeWitness, proveWithBackend } from "../proof";
 import { submitProofs, parseContractError, type ContractError, type ProofSubmissionParams } from "../contracts";
 import { credTtlSecs } from "../proof-helpers";
 import { addTimelineEvent } from "../useProofTimeline";
@@ -136,7 +136,7 @@ export function useBatchProofFlow(
     })();
 
     return () => { cancelled = true; };
-  }, []); // mount-only: generates proofs for the initial batch
+  }, [creds, toast]); // eslint-disable-line react-hooks/exhaustive-deps -- mounts once for the batch; creds/toast are stable refs
 
   // ── Auto-submit when all proofs are ready ──────────────────────────────────
   // Fires once when every credential has status "ready" and the wallet is on

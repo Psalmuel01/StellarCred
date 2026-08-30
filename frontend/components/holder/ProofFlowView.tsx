@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   IconArrowLeft,
   IconArrowRight,
-  IconCheck,
   IconExternalLink,
   IconCpu,
   IconCloudUpload,
@@ -17,7 +16,7 @@ import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet-context";
-import { useProofFlow, type Stage, type ErrorPhase, type SubmitFn } from "@/lib/hooks/useProofFlow";
+import { useProofFlow, type SubmitFn } from "@/lib/hooks/useProofFlow";
 import { credTtlSecs } from "@/lib/proof-helpers";
 import type { Credential } from "@/lib/credential";
 import { ProofStep } from "./ProofStep";

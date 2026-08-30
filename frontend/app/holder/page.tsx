@@ -88,13 +88,10 @@ function HolderInner() {
     : creds.filter((c) => proofStatus(c) !== "proved");
 
   const {
-    selectedCommitments,
     selectedCreds,
     atBatchLimit,
     canBatch,
     canSubmitBatch,
-    blockedReason,
-    toggleSelected,
     selectEligible,
     clearSelection,
   } = useBatchSelection(unprovedAll, address, handleError);
@@ -242,17 +239,7 @@ function HolderInner() {
                   address={address}
                   onProve={() => handleProveSingle(c)}
                   onRemove={() => removeCred(c.commitment)}
-                  onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
-                  selection={
-                    canBatch
-                      ? {
-                          checked: selectedCommitments.includes(c.commitment),
-                          blockedReason: blockedReason(c),
-                          onToggle: () => toggleSelected(c),
-                        }
-                      : undefined
-                  }
                 />
               ))}
               {canBatch && (
@@ -279,7 +266,6 @@ function HolderInner() {
                   address={address}
                   onProve={() => handleProveSingle(c)}
                   onRemove={() => removeCred(c.commitment)}
-                  onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
                 />
               ))}

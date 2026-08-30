@@ -27,21 +27,13 @@ export function CredCard({
   address,
   onProve,
   onRemove,
-  onInspect,
   isPreview,
-  selection,
 }: {
   c: Credential;
   address: string;
   onProve: () => void;
   onRemove: () => void;
-  onInspect: () => void;
   isPreview?: boolean;
-  selection?: {
-    checked: boolean;
-    blockedReason: string | null;
-    onToggle: () => void;
-  };
 }) {
   const status = proofStatus(c);
   const { events } = useProofTimeline(c);

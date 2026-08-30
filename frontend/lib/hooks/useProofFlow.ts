@@ -11,11 +11,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Credential } from "../credential";
-import { proofSubmissionConfigured } from "../config";
+
 import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "../proof";
 import { submitProof as defaultSubmitProof, parseContractError, type ContractError } from "../contracts";
 import { credTtlSecs } from "../proof-helpers";
-import { useProofTimeline, addTimelineEvent } from "../useProofTimeline";
+import { useProofTimeline } from "../useProofTimeline";
 import { useToast } from "@/components/Toast";
 
 export type Stage =
@@ -189,7 +189,7 @@ export function useProofFlow(
         return null;
       }
     },
-    [proof, cred, addEvent, toast],
+    [proof, cred, submitFn, addEvent, toast],
   );
 
   const onRetrySubmit = useCallback(

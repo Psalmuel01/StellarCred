@@ -17,7 +17,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   checkLimit,
   extractIp,
-  hashForLog,
   LIMITS,
   tooManyRequestsResponse,
 } from "@/lib/rate-limit";
@@ -114,7 +113,6 @@ export async function POST(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const server: any = new sdk.rpc.Server(rpcUrl, { allowHttp });
     const sponsorKeypair = Keypair.fromSecret(SPONSOR_SECRET);
-    const sponsorAccount = await server.getAccount(sponsorKeypair.publicKey());
 
     // Wrap in a fee-bump: the outer transaction pays the fee, the inner
     // transaction carries the holder's authorisation.

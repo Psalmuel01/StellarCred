@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   IconArrowLeft,
-  IconArrowRight,
   IconExternalLink,
   IconCloudUpload,
   IconAlertTriangle,
