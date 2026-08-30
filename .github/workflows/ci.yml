@@ -310,6 +310,49 @@ jobs:
           STELLARCRED_REGISTRY_ID: ${{ vars.STELLARCRED_REGISTRY_ID }}
           STELLARCRED_RPC_URL: ${{ vars.STELLARCRED_RPC_URL || 'https://soroban-testnet.stellar.org' }}
 
+  middleware:
+    name: Middleware typecheck & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/packages/sdk/pnpm-lock.yaml
+            frontend/packages/middleware/pnpm-lock.yaml
+
+      # @stellarcred/middleware is a standalone package outside the frontend
+      # pnpm workspace, depending on @stellarcred/sdk via a local `link:`
+      # path — so unlike the frontend/sdk-integration jobs above, it can't
+      # rely on hoisting from a `frontend` workspace install and needs its
+      # own install (and the SDK it links to needs to be built first).
+      - name: Install and build SDK
+        working-directory: frontend/packages/sdk
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+
+      - name: Install middleware
+        working-directory: frontend/packages/middleware
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: frontend/packages/middleware
+        run: pnpm typecheck
+
+      - name: Test
+        working-directory: frontend/packages/middleware
+        run: pnpm test
+
   sdk-docs:
     name: SDK API docs (TypeDoc)
     runs-on: ubuntu-latest
