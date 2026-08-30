@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { IconCheck, IconX, IconLoader2 } from "@tabler/icons-react";
 import { truncateHash } from "@/lib/format";
+import { isVerified } from "@/lib/contracts";
 
 function BadgeContent() {
   const searchParams = useSearchParams();
@@ -26,11 +27,9 @@ function BadgeContent() {
     async function checkStatus() {
       try {
         setLoading(true);
-        // Dynamic import of SDK client to keep badge lightweight
-        const { hasClaim } = await import("@stellarcred/sdk");
-        const ok = await hasClaim(wallet, claim);
+        const result = await isVerified(wallet, claim);
         if (isMounted) {
-          setVerified(ok);
+          setVerified(result.valid);
           setLoading(false);
         }
       } catch (err) {
