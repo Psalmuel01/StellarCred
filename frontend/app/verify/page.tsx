@@ -948,7 +948,7 @@ function VerifyInner() {
                   marginBottom: "1.5rem",
                   padding: "0.75rem 1rem",
                   borderRadius: "var(--radius)",
-                  background: "rgba(255,255,255,0.03)",
+                  background: "var(--bg-soft)",
                   border: "1px solid var(--border)",
                 }}
               >
