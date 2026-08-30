@@ -226,6 +226,8 @@ export default function CredentialDetailModal({ credential: c, onClose, onTransf
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => setShowRaw((v) => !v)}
+            aria-expanded={showRaw}
+            aria-controls="credential-raw-json-viewer"
             style={{
               fontSize: "0.72rem",
               padding: "0.2rem 0.5rem",
@@ -235,11 +237,11 @@ export default function CredentialDetailModal({ credential: c, onClose, onTransf
               gap: "0.3rem",
             }}
           >
-            {showRaw ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+            {showRaw ? <IconChevronDown size={12} aria-hidden="true" /> : <IconChevronRight size={12} aria-hidden="true" />}
             {showRaw ? "Hide" : "Show"} raw JSON
           </button>
           {showRaw && (
-            <div style={{ position: "relative", marginTop: "0.5rem" }}>
+            <div id="credential-raw-json-viewer" style={{ position: "relative", marginTop: "0.5rem" }}>
               <pre
                 className="mono"
                 style={{

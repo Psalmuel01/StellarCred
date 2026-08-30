@@ -17,11 +17,12 @@ export function WalletButton() {
             onClick={disconnect}
             disabled={connecting}
             title="Click to disconnect"
+            aria-label={`Connected wallet ${truncateAddress(address)}. Click to disconnect.`}
             style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.8rem" }}
           >
-            <IconWallet size={14} />
+            <IconWallet size={14} aria-hidden="true" />
             {truncateAddress(address)}
-            <IconChevronDown size={13} style={{ opacity: 0.5 }} />
+            <IconChevronDown size={13} style={{ opacity: 0.5 }} aria-hidden="true" />
           </button>
 
           <CopyButton value={address} />
@@ -31,15 +32,20 @@ export function WalletButton() {
           className="btn btn-primary"
           onClick={connect}
           disabled={connecting}
+          aria-label={connecting ? "Connecting wallet" : "Connect wallet"}
         >
-          <IconWallet size={14} />
+          <IconWallet size={14} aria-hidden="true" />
           {connecting ? "Connecting…" : "Connect wallet"}
         </button>
       )}
 
       {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", maxWidth: 280 }}>
-          <IconAlertTriangle size={13} style={{ color: "var(--danger)", flexShrink: 0 }} />
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{ display: "flex", alignItems: "center", gap: "0.4rem", maxWidth: 280 }}
+        >
+          <IconAlertTriangle size={13} style={{ color: "var(--danger)", flexShrink: 0 }} aria-hidden="true" />
           <span
             className="mono"
             style={{ color: "var(--danger)", fontSize: "0.7rem", textAlign: "right", lineHeight: 1.4 }}
@@ -52,6 +58,7 @@ export function WalletButton() {
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost btn-sm"
+              aria-label={`Install ${error.walletName ?? "wallet"}`}
               style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", flexShrink: 0 }}
             >
               Install {error.walletName ?? "wallet"}
@@ -60,9 +67,10 @@ export function WalletButton() {
             <button
               onClick={connect}
               className="btn btn-ghost btn-sm"
+              aria-label="Retry wallet connection"
               style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", flexShrink: 0 }}
             >
-              <IconRefresh size={12} />
+              <IconRefresh size={12} aria-hidden="true" />
               Retry
             </button>
           )}
