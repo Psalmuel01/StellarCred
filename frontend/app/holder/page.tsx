@@ -101,6 +101,13 @@ function proofStatus(cred: Credential): "unproved" | "proved" | "expired" {
     : "expired";
 }
 
+function isExpiringSoon(cred: Credential, windowDays = 7): boolean {
+  if (!cred.provedAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = cred.provedAt + credTtlSecs(cred);
+  return expiry > now && expiry <= now + windowDays * 86_400;
+}
+
 function daysRemaining(cred: Credential): number {
   if (!cred.provedAt) return 0;
   const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
@@ -217,7 +224,15 @@ function CredCard({
         <div className="card-actions">
           {isPreview && <Badge variant="pending">Preview</Badge>}
           <Badge variant="verified" dot={false}>Held</Badge>
-          {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
+          {status === "proved" && !isExpiringSoon(c) && (
+            <Badge variant="verified" dot={false}>On-chain</Badge>
+          )}
+          {status === "proved" && isExpiringSoon(c) && (
+            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+          )}
+          {status === "expired" && (
+            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
@@ -355,8 +370,12 @@ function HolderInner() {
   }, [searchParams]);
 
   const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
-  const unproved = displayCreds.filter((c) => proofStatus(c) !== "proved");
-  const proved   = displayCreds.filter((c) => proofStatus(c) === "proved");
+  const unproved = displayCreds.filter((c) => proofStatus(c) === "unproved");
+  const expiringSoon = displayCreds
+    .filter((c) => proofStatus(c) === "proved" && isExpiringSoon(c, 7))
+    .sort((a, b) => daysRemaining(a) - daysRemaining(b));
+  const activeProved = displayCreds.filter((c) => proofStatus(c) === "proved" && !isExpiringSoon(c, 7));
+  const expired = displayCreds.filter((c) => proofStatus(c) === "expired");
 
   // Warm the UltraHonk backend for whatever credential types the user still
   // needs to prove, in the background, once the wallet is actually connected
@@ -488,6 +507,40 @@ function HolderInner() {
       ) : (
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
 
+          {/* ── Expiry Warning Banner ── */}
+          {(expiringSoon.length > 0 || expired.length > 0) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="card"
+              style={{
+                padding: "0.85rem 1.15rem",
+                backgroundColor: expired.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(234, 179, 8, 0.08)",
+                borderColor: expired.length > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(234, 179, 8, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
+                <IconAlertTriangle
+                  size={18}
+                  style={{ color: expired.length > 0 ? "var(--danger)" : "var(--warn)", flexShrink: 0 }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {expired.length > 0
+                    ? `${expired.length} proof${expired.length > 1 ? "s have" : " has"} expired and ${expired.length > 1 ? "need" : "needs"} re-proving.`
+                    : `${expiringSoon.length} proof${expiringSoon.length > 1 ? "s are" : " is"} expiring within 7 days.`}
+                </span>
+              </div>
+              <span className="mono faint" style={{ fontSize: "0.75rem" }}>
+                One-click re-prove available below
+              </span>
+            </div>
+          )}
+
           {/* ── Empty state ── */}
           {creds.length === 0 && !importing && (
             <div
@@ -517,6 +570,42 @@ function HolderInner() {
                   Where your credentials live
                 </Link>
               </p>
+            </div>
+          )}
+
+          {/* ── Expiring Soon (Action Recommended) ── */}
+          {expiringSoon.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expiring soon · Re-prove recommended</SectionLabel>
+              {expiringSoon.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Expired (Action Required) ── */}
+          {expired.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expired proofs · Re-prove required</SectionLabel>
+              {expired.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
             </div>
           )}
 
@@ -602,11 +691,11 @@ function HolderInner() {
             </div>
           )}
 
-          {/* ── Already proved ── */}
-          {proved.length > 0 && (
+          {/* ── Active proved ── */}
+          {activeProved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>On-chain · active proofs</SectionLabel>
-              {proved.map((c) => (
+              {activeProved.map((c) => (
                 <CredCard
                   key={c.commitment}
                   c={c}
