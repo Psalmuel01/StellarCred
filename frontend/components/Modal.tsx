@@ -11,10 +11,12 @@ export function Modal({
   title,
   onClose,
   children,
+  id,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  id?: string;
 }) {
   // Portal to document.body only once mounted client-side, same as Toast.tsx —
   // avoids an SSR/hydration mismatch on document.body.
@@ -23,6 +25,8 @@ export function Modal({
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  const titleId = id ? `${id}-title` : `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 
   // Keep the latest onClose in a ref so the keydown listener below can stay
   // registered once instead of tearing down/re-adding on every render (most
@@ -80,16 +84,18 @@ export function Modal({
         className="modal card"
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="between" style={{ marginBottom: "1rem" }}>
-          <span className="eyebrow">{title}</span>
+          <h2 id={titleId} className="eyebrow" style={{ margin: 0, fontSize: "inherit", fontWeight: "inherit" }}>
+            {title}
+          </h2>
           <button
             className="btn btn-ghost btn-sm"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="Close modal"
             style={{ padding: "0.3rem" }}
           >
             <IconX size={15} />
