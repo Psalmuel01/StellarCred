@@ -413,4 +413,5 @@ impl CredentialVerifier {
     }
 }
 
+#[cfg(test)]
 mod test;

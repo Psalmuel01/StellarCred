@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Bytes, BytesN, Env};

@@ -970,4 +970,5 @@ impl ProofRegistry {
     }
 }
 
+#[cfg(test)]
 mod test;
