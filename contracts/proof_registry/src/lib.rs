@@ -267,7 +267,7 @@ impl ProofRegistry {
             (symbol_short!("proof_reg"), symbol_short!("upgraded")),
             EventContractUpgraded {
                 admin: admin.clone(),
-                new_wasm_hash,
+                new_wasm_hash: new_wasm_hash.clone(),
                 upgraded_at: env.ledger().timestamp(),
                 from_version,
                 to_version: from_version, // Will be different after WASM replacement
@@ -800,7 +800,7 @@ impl ProofRegistry {
         admin.require_auth();
 
         // Ensure schema version is recorded
-        let current_version = Self::proof_record_schema_version(&env);
+        let current_version = Self::proof_record_schema_version(env.clone());
         if current_version != PROOF_RECORD_SCHEMA_VERSION {
             env.storage()
                 .instance()
