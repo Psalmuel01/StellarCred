@@ -24,8 +24,14 @@
  *   GET /stats
  *     → { stats: StatsRow[] }
  *
- *   GET /recent?limit=20&page=1
- *     → { claims: ClaimRow[], limit: number, page: number }
+ *   GET /recent?limit=20&cursor=<opaque>
+ *     → { claims: ClaimRow[], limit: number, nextCursor: string | null }
+ *
+ * /recent uses keyset (cursor) pagination ordered by (ledger_sequence, id) —
+ * the `nextCursor` returned with each page is an opaque token that must be
+ * passed back as `?cursor=` to fetch the next page. Unlike OFFSET pagination
+ * this stays stable (no duplicate/skipped rows) while new claims are ingested
+ * between requests, and the indexed range scan never pays OFFSET's skip cost.
  *
  * All responses are JSON. No write endpoints exist.
  * No identity fields are stored, so all data here is public chain data.
@@ -43,9 +49,37 @@ import type { Config } from "./config";
 import { parseCorsOrigins } from "./config";
 import { createCorsMiddleware } from "./cors";
 import { RateLimiter } from "./rate-limit";
+import type { RecentCursor } from "./db";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+
+// ── Opaque cursor encoding ───────────────────────────────────────────────────
+// The nextCursor token is the base64url form of "<ledgerSequence>:<id>" — the
+// keyset boundary of the last row on the page. It is opaque to clients: they
+// must echo it back verbatim, never construct or interpret it.
+
+function encodeCursor(cursor: RecentCursor): string {
+  return Buffer.from(`${cursor.ledgerSequence}:${cursor.id}`, "utf8").toString(
+    "base64url"
+  );
+}
+
+function decodeCursor(raw: string): RecentCursor {
+  const decoded = Buffer.from(raw, "base64url").toString("utf8");
+  const [ledgerRaw, idRaw] = decoded.split(":");
+  const ledgerSequence = Number(ledgerRaw);
+  const id = Number(idRaw);
+  if (
+    !Number.isInteger(ledgerSequence) ||
+    !Number.isInteger(id) ||
+    ledgerSequence < 0 ||
+    id < 1
+  ) {
+    throw new Error("invalid cursor");
+  }
+  return { ledgerSequence, id };
+}
 
 // Helper: wrap an async handler and forward errors to next()
 function asyncHandler(
@@ -158,21 +192,34 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
     })
   );
 
-  // ── GET /recent?limit=20&page=1 ──────────────────────────────────────────
+  // ── GET /recent?limit=20&cursor=<opaque> ──────────────────────────────────
   app.get(
     "/recent",
     asyncHandler(async (req, res) => {
       const rawLimit = parseInt(String(req.query["limit"] ?? DEFAULT_LIMIT), 10);
-      const rawPage = parseInt(String(req.query["page"] ?? 1), 10);
-
       const limit = isNaN(rawLimit) || rawLimit < 1
         ? DEFAULT_LIMIT
         : Math.min(rawLimit, MAX_LIMIT);
-      const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
-      const offset = (page - 1) * limit;
 
-      const claims = await db.recent(limit, offset);
-      res.json({ claims, limit, page });
+      // Cursor is optional — omit it (or pass cursor=) to start at the newest
+      // claims. A malformed cursor is a client error, not silently page 1.
+      const rawCursor = req.query["cursor"];
+      let cursor: RecentCursor | null = null;
+      if (rawCursor != null && String(rawCursor).trim() !== "") {
+        try {
+          cursor = decodeCursor(String(rawCursor));
+        } catch {
+          res.status(400).json({ error: "invalid cursor" });
+          return;
+        }
+      }
+
+      const { claims, nextCursor } = await db.recent(limit, cursor);
+      res.json({
+        claims,
+        limit,
+        nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
+      });
     })
   );
 
