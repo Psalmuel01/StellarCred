@@ -220,6 +220,11 @@ no StellarCred account and no server-side credential database. This means:
   backup** to download a JSON file of every credential (treat it like a
   password — it contains the raw values). Restore on any device with **Import
   credential JSON**.
+- **Guardian recovery (Shamir Secret Sharing).** On the **Holder** page, click
+  **Guardian recovery** to split your 256-bit credential-encryption key among
+  $N$ chosen guardians or devices with a threshold $K$ (e.g. 2-of-3). Guardians
+  receive only key shares (never credential data). Entering any threshold of
+  shares reconstructs the key client-side and restores credentials.
 - **Move one credential at a time.** A credential's detail view offers
   **Transfer to another device**: you pick a passphrase and the app shows a QR
   code whose payload is encrypted (AES-256-GCM, PBKDF2 key derivation) before

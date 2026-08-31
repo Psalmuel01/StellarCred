@@ -9,6 +9,7 @@ import {
   IconPlus,
   IconDownload,
   IconChartBar,
+  IconShieldLock,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet, usePreviewMode } from "@/lib/wallet-context";
@@ -30,6 +31,10 @@ const TransferImportModal = dynamic(
 );
 const ProofPerfPanel = dynamic(
   () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
+  { ssr: false },
+);
+const GuardianRecoveryModal = dynamic(
+  () => import("@/components/GuardianRecoveryModal").then((m) => m.GuardianRecoveryModal),
   { ssr: false },
 );
 
@@ -111,6 +116,7 @@ function HolderInner() {
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
   const [showPerf, setShowPerf] = useState(false);
+  const [guardianModalTab, setGuardianModalTab] = useState<"setup" | "recover" | null>(null);
 
   // ── QR transfer import ─────────────────────────────────────────────────────
 
@@ -408,10 +414,23 @@ function HolderInner() {
                 >
                   <IconDownload size={14} /> Export backup
                 </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setGuardianModalTab(creds.length > 0 ? "setup" : "recover")}
+                  title="Split encryption key among guardians with Shamir secret sharing, or recover credentials"
+                >
+                  <IconShieldLock size={14} />
+                  Guardian recovery
+                </button>
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
-                Credentials live only in this browser (localStorage). Export a backup before clearing site data.{" "}
-                <Link href="/docs#storage" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                Credentials live only in this browser (localStorage) — export a backup
+                or set up <strong>Guardian recovery</strong> (Shamir Secret Sharing) before
+                clearing site data or switching devices.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
                   Where your credentials live
                 </Link>
               </p>
@@ -437,6 +456,20 @@ function HolderInner() {
           payload={importPayload}
           onImported={(c) => { saveCred(c); setImportPayload(null); toast.success(`Imported ${c.title}`); }}
           onClose={() => setImportPayload(null)}
+        />
+      )}
+
+      {guardianModalTab && (
+        <GuardianRecoveryModal
+          initialTab={guardianModalTab}
+          onClose={() => setGuardianModalTab(null)}
+          onRestored={(recovered: Credential[]) => {
+            setCreds(loadCredentials());
+            setGuardianModalTab(null);
+            toast.success(
+              `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
+            );
+          }}
         />
       )}
     </>
