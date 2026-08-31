@@ -221,6 +221,14 @@ export async function destroyBackend(type: CredentialType): Promise<void> {
   }
 }
 
+// Reports whether a backend for `type` is already cached (or warming in
+// flight). Used by proof telemetry (lib/proof-perf.ts) to distinguish cold
+// vs. warm prove timings so the debug view can separate first-run costs from
+// expected reuse.
+export function isProverWarm(type: CredentialType): boolean {
+  return backendCache.has(type);
+}
+
 // Destroys every cached backend. Intended for page unmount / navigating away
 // from the holder page (see use-warm-prover.ts), so wasm memory isn't held
 // for the rest of the tab's lifetime once the user is done proving.

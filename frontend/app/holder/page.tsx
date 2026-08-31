@@ -17,6 +17,7 @@ import {
   IconCloudUpload,
   IconStack2,
   IconDownload,
+  IconChartBar,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
@@ -27,7 +28,8 @@ import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
 import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
-import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "@/lib/proof";
+import { computeWitness, proveWithBackend, withTimeout, isProverWarm, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "@/lib/proof";
+import { createProofRun, type ProofRunTracker } from "@/lib/proof-perf";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
@@ -66,6 +68,15 @@ const TransferExportModal = dynamic(
 );
 const TransferImportModal = dynamic(
   () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
+  { ssr: false },
+);
+
+// The proving-performance debug panel (GitHub #432) is heavy (icons, charts,
+// and the anonymized reporter in lib/proof-telemetry). It's only needed when
+// the user actually opens it, so it's loaded lazily to keep the holder route's
+// initial bundle within its size budget.
+const ProofPerfPanel = dynamic(
+  () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
   { ssr: false },
 );
 
@@ -325,6 +336,7 @@ function HolderInner() {
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [showPerf, setShowPerf] = useState(false);
 
   useEffect(() => setCreds(loadCredentials()), []);
 
@@ -469,11 +481,25 @@ function HolderInner() {
           <a href="/presets" className="btn btn-secondary">
             Presets
           </a>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPerf((v) => !v)}
+            title="Proving performance &amp; telemetry debug view"
+            aria-expanded={showPerf}
+          >
+            <IconChartBar size={14} />
+            {showPerf ? "Hide perf" : "Perf"}
+          </button>
           <WalletButton />
         </div>
       </div>
 
       <ConfigBanner />
+
+      {/* Proving performance & telemetry debug view (GitHub #432). Lazily
+          loaded so it stays out of the holder route's initial bundle. Rendered
+          above the credential list when opened. */}
+      {showPerf && <ProofPerfPanel />}
 
       {isPreview && (
         <div
@@ -965,13 +991,23 @@ function ProofFlow({
   const errorRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const { addEvent } = useProofTimeline(cred);
+  // Perf tracker for this proof run (GitHub #432). Lives in a ref so onSubmit
+  // (a separate handler) can attach the submission stage to the same run.
+  const perfRef = useRef<ProofRunTracker | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
 
+    // Measure witness + prove and time-to-first-proof for this run.
+    const perf = createProofRun(cred.type);
+    perfRef.current = perf;
+
     toast.info(`Generating proof for ${cred.title}…`);
     (async () => {
+      // Which local stage we're in, for reporting which one errored. Not read
+      // from the `stage` state, which isn't reliable inside this closure.
+      let proofPhase: "witness" | "prove" = "witness";
       try {
         const start = Date.now();
         timerRef.current = setInterval(
@@ -979,20 +1015,24 @@ function ProofFlow({
           1000,
         );
         // Stage 1: witness (server) — wrapped with a deadline so a stalled
-        // prover fails visibly instead of spinning forever.
+        // prover fails visibly instead of spinning forever. perf.measure
+        // records the stage duration in a finally block.
         setStage("witness");
-        const witness = await withTimeout(
-          (sig) =>
-            computeWitness(
-              cred.type,
-              cred as unknown as Record<string, unknown>,
-              sig,
-            ),
-          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
+        const witness = await perf.measure("witness", () =>
+          withTimeout(
+            (sig) =>
+              computeWitness(
+                cred.type,
+                cred as unknown as Record<string, unknown>,
+                sig,
+              ),
+            { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
+          ),
         );
         if (signal.aborted) return;
 
         // Stage 2: prove (browser WASM)
+        proofPhase = "prove";
         setStage("proving");
         const proveStart = Date.now();
         timerRef.current = setInterval(
@@ -1000,24 +1040,32 @@ function ProofFlow({
           1000,
         );
 
-        const result = await withTimeout(
-          (sig) =>
-            proveWithBackend(cred.type, witness, sig, (step) => {
-              if (!sig.aborted) setStage(step);
-            }),
-          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
+        const result = await perf.measure(
+          "prove",
+          () =>
+            withTimeout(
+              (sig) =>
+                proveWithBackend(cred.type, witness, sig, (step) => {
+                  if (!sig.aborted) setStage(step);
+                }),
+              { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
+            ),
+          isProverWarm(cred.type),
         );
         if (signal.aborted) return;
 
         setProof(result);
         setStage("generated");
         addEvent("generated");
+        perf.finishProof({ status: "ok" });
         toast.success(`Proof generated for ${cred.title}`);
       } catch (e) {
         if (signal.aborted) return;
+        const errStage: "witness" | "prove" = proofPhase;
         // ProofTimeoutError gets a distinct user-visible message — half the
         // point is that stalled provers fail visibly, not as a generic error.
         if (e instanceof ProofTimeoutError) {
+          perf.finishProof({ status: "errored", errorStage: errStage });
           setError({
             code: null,
             friendly:
@@ -1029,6 +1077,7 @@ function ProofFlow({
           toast.error("Proof timed out — please try again.");
           return;
         }
+        perf.finishProof({ status: "errored", errorStage: errStage });
         const parsed = parseContractError((e as Error).message);
         setError(parsed);
         setErrorPhase("proving");
@@ -1064,6 +1113,7 @@ function ProofFlow({
   }, [stage]);
   async function onSubmit() {
     if (!proof || networkMismatch) return;
+    const submitStart = Date.now();
     setStage("submitting");
     addEvent("submitted");
     toast.info(`Submitting proof for ${cred.title} to Stellar…`);
@@ -1080,6 +1130,7 @@ function ProofFlow({
       onProved(hash);
       setStage("confirmed");
       addEvent("verified", { txHash: hash });
+      perfRef.current?.recordSubmit(Date.now() - submitStart);
       toast.success(`Proof confirmed on-chain for ${cred.title}`, { txHash: hash });
     } catch (e) {
       const parsed = parseContractError((e as Error).message);
@@ -1377,6 +1428,9 @@ function BatchProofFlow({
   const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
     creds.map(() => null),
   );
+  // Per-credential perf trackers (GitHub #432), indexed like creds, so the
+  // auto-submit handler can attach the shared submission stage to each run.
+  const trackersRef = useRef<Array<ProofRunTracker | null>>(creds.map(() => null));
   // Stable refs so the submission effect always reads the latest values
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
@@ -1404,11 +1458,17 @@ function BatchProofFlow({
           return next;
         });
 
+        const perf = createProofRun(cred.type);
+        trackersRef.current[i] = perf;
+
         let witness: Uint8Array;
         try {
-          witness = await computeWitness(cred.type, cred as unknown as Record<string, unknown>);
+          witness = await perf.measure("witness", () =>
+            computeWitness(cred.type, cred as unknown as Record<string, unknown>),
+          );
         } catch (e) {
           if (cancelled) return;
+          perf.finishProof({ status: "errored", errorStage: "witness" });
           setCredStates((prev) => {
             const next = [...prev];
             next[i] = { status: "error", message: (e as Error).message };
@@ -1442,10 +1502,11 @@ function BatchProofFlow({
 
         let result: { proof: Uint8Array; publicInputs: Uint8Array };
         try {
-          result = await proveWithBackend(cred.type, witness);
+          result = await perf.measure("prove", () => proveWithBackend(cred.type, witness), isProverWarm(cred.type));
         } catch (e) {
           clearInterval(timer);
           if (cancelled) return;
+          perf.finishProof({ status: "errored", errorStage: "prove" });
           setCredStates((prev) => {
             const next = [...prev];
             next[i] = { status: "error", message: (e as Error).message };
@@ -1462,6 +1523,7 @@ function BatchProofFlow({
         if (cancelled) return;
 
         generatedProofs.current[i] = result;
+        perf.finishProof({ status: "ok" });
         setCredStates((prev) => {
           const next = [...prev];
           next[i] = { status: "ready", proof: result };
@@ -1491,6 +1553,7 @@ function BatchProofFlow({
     // Defensive: entry buttons are already gated, but never auto-fire an
     // on-chain submission on a misconfigured deploy either.
     if (!proofSubmissionConfigured()) return;
+    const submitStart = Date.now();
     toast.success(`Generated ${creds.length} proofs`);
     setBatchStage("submitting");
 
@@ -1512,6 +1575,11 @@ function BatchProofFlow({
     toast.info(`Submitting ${currentCreds.length} proofs to Stellar…`);
     submitProofs({ holder: currentHolder, submissions })
       .then((hash: string) => {
+        const submitMs = Date.now() - submitStart;
+        // Attach the shared on-chain submission stage to every run in the
+        // batch. Only reached when all proofs generated cleanly (an errored
+        // run aborts the batch before submission), so every tracker is valid.
+        trackersRef.current.forEach((t) => t?.recordSubmit(submitMs));
         setTxHash(hash);
         const commitments = currentCreds.map((c) => c.commitment);
         onProved(hash, commitments);
