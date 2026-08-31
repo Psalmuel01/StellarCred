@@ -82,6 +82,21 @@ const envSchema = z
       z.string().regex(HEX_64, "must be a 64-character hex secp256k1 private key").optional(),
     ),
 
+    // Signing backend selector: "env" (local private key) or "kms" (AWS KMS).
+    // Default is "env" for local dev; production deployments should set "kms"
+    // and provide KMS_KEY_ID.
+    ISSUER_SIGNER: z
+      .preprocess(emptyToUndefined, z.enum(["env", "kms"]))
+      .default("env"),
+
+    // AWS KMS key ID — required when ISSUER_SIGNER=kms.  Accepts a key ID,
+    // key ARN, or alias ARN.
+    KMS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+
+    // AWS region for KMS — optional; falls back to the standard AWS_REGION /
+    // AWS_DEFAULT_REGION env vars via the AWS SDK credential chain.
+    KMS_REGION: z.preprocess(emptyToUndefined, z.string().optional()),
+
     // --- Deployed contract IDs (scripts/deploy.sh output) ---------------------
     NEXT_PUBLIC_ISSUER_REGISTRY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     NEXT_PUBLIC_CREDENTIAL_VERIFIER_ID: z.preprocess(emptyToUndefined, z.string().optional()),

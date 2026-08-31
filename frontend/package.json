@@ -17,6 +17,7 @@
     "size": "size-limit"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1121.0",
     "@aztec/bb.js": "0.87.0",
     "@creit.tech/stellar-wallets-kit": "^1.7.0",
     "@noble/curves": "^2.2.0",
