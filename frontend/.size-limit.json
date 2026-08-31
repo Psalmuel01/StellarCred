@@ -1,0 +1,63 @@
+[
+  {
+    "name": "Home Route JS",
+    "path": [
+      ".next/static/chunks/app/page-*.js",
+      ".next/static/chunks/app/layout-*.js"
+    ],
+    "limit": "10 kB"
+  },
+  {
+    "name": "Apps Route JS",
+    "path": ".next/static/chunks/app/apps/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Holder Route JS",
+    "path": ".next/static/chunks/app/holder/**/*.js",
+    "limit": "16 kB"
+  },
+  {
+    "name": "Issuer Route JS",
+    "path": ".next/static/chunks/app/issuer/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Verifier Route JS",
+    "path": ".next/static/chunks/app/verifier/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Verify Route JS",
+    "path": ".next/static/chunks/app/verify/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Badge Route JS",
+    "path": ".next/static/chunks/app/badge/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Developers & Docs Routes JS",
+    "path": [
+      ".next/static/chunks/app/developers/**/*.js",
+      ".next/static/chunks/app/docs/**/*.js"
+    ],
+    "limit": "15 kB"
+  },
+  {
+    "name": "Shared JS Chunks",
+    "path": ".next/static/chunks/*.js",
+    "limit": "650 kB"
+  },
+  {
+    "name": "WASM Proving Assets (bb.js)",
+    "path": "public/bb/*.js",
+    "limit": "5.5 MB"
+  },
+  {
+    "name": "Circuit Assets",
+    "path": "public/circuits/*.json",
+    "limit": "150 kB"
+  }
+]

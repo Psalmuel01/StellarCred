@@ -17,3 +17,6 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 # Kept out of [dependencies] to avoid linking their exported wasm symbols.
 credential_verifier = { path = "../credential_verifier" }
 issuer_registry = { path = "../issuer_registry" }
+proptest = "1.4"
+# Property-based testing: generates arbitrary u64 values, boundary cases,
+# and random mid-range values to verify check_claim threshold logic exhaustively.

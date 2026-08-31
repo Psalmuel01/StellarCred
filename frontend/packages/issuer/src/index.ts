@@ -20,8 +20,9 @@ if (typeof window !== "undefined") {
 
 import { randomBytes } from "node:crypto";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-// Copied from public/circuits/commit.json by scripts/sync-circuit.mjs (prebuild).
+// Copied from public/circuits/{commit,commit3}.json by scripts/sync-circuit.mjs (prebuild).
 import commitCircuit from "./commit-circuit.json";
+import commit3Circuit from "./commit3-circuit.json";
 
 export const CREDENTIAL_TYPES = [
   "kyc",
@@ -30,6 +31,7 @@ export const CREDENTIAL_TYPES = [
   "income",
   "funds",
   "accreditation",
+  "employment",
 ] as const;
 
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
@@ -38,6 +40,8 @@ export interface ClaimParams {
   threshold_years?: string;
   threshold?: string;
   restricted?: string[];
+  /** "0" = denylist/block (default), "1" = allowlist/allow */
+  mode?: string;
 }
 
 export interface Credential {
@@ -55,6 +59,12 @@ export interface Credential {
   issuerPubY: number[];
   issuedAt: number;
   expiry: string;
+  /**
+   * Issuer-attested tenure (years), present on `employment` credentials so the
+   * holder can prove `seniority >= min_seniority` against the issuer's signed
+   * commitment. Absent for other credential types.
+   */
+  seniority?: string;
   claimParams?: ClaimParams;
 }
 
@@ -124,6 +134,13 @@ function attributeToValue(type: CredentialType, attribute: Record<string, string
       if (!Number.isFinite(netWorth)) throw new Error("accreditation credential requires attribute.net_worth");
       return String(netWorth);
     }
+    case "employment": {
+      // Binary "is employed" claim — the circuit constrains status != 0 so
+      // the issuer only ever signs non-zero tags. Seniority is read separately
+      // from attribute.seniority because it is a second preimage value for the
+      // 3-arity Poseidon2 commitment.
+      return "1";
+    }
     default:
       throw new Error(`Unknown credential type: ${type as string}`);
   }
@@ -134,6 +151,22 @@ async function poseidonCommit(value: string, salt: string): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const noir = new Noir(commitCircuit as any);
   const { returnValue } = await noir.execute({ value, salt });
+  return String(returnValue);
+}
+
+// 3-arity Poseidon2 commitment for employment: hash([status, seniority, salt]).
+// Including seniority in the preimage is what binds the issuer's signature to
+// the holder's specific tenure — otherwise a holder could self-select any
+// seniority >= min_seniority and still satisfy the circuit constraint.
+async function poseidonCommit3(
+  status: string,
+  seniority: string,
+  salt: string,
+): Promise<string> {
+  const { Noir } = await import("@noir-lang/noir_js");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const noir = new Noir(commit3Circuit as any);
+  const { returnValue } = await noir.execute({ status, seniority, salt });
   return String(returnValue);
 }
 
@@ -158,6 +191,7 @@ const TYPE_TITLE: Record<CredentialType, string> = {
   jurisdiction: "Jurisdiction Eligible",
   funds: "Proof of Funds",
   accreditation: "Accredited Investor (Net Worth)",
+  employment: "Employed",
 };
 
 function buildClaimLabel(type: CredentialType, claimParams?: ClaimParams): string {
@@ -176,8 +210,12 @@ function buildClaimLabel(type: CredentialType, claimParams?: ClaimParams): strin
       const t = Number(claimParams?.threshold ?? "1000000");
       return `net worth ≥ $${t.toLocaleString("en-US")}`;
     }
+    case "employment": {
+      const t = claimParams?.threshold ?? "3";
+      return `employed, seniority ≥ ${t} yrs`;
+    }
     case "jurisdiction":
-      return "country not restricted";
+      return claimParams?.mode === "1" ? "country in allowed list" : "country not restricted";
     case "kyc":
     default:
       return "identity verified";
@@ -227,8 +265,19 @@ export class IssuerClient {
     const issuedAt = Math.floor(Date.now() / 1000);
     const value = attributeToValue(type, attribute);
     const salt = randomField();
-    const commitment = await poseidonCommit(value, salt);
+    // Employment uses a 3-arity commitment that also binds the holder's
+    // specific seniority. The seniority comes from attribute.seniority (set by
+    // the issuer page) and is stored on the credential so the witness route can
+    // rebuild the preimage when generating a proof.
+    const commitment =
+      type === "employment"
+        ? await poseidonCommit3(value, attribute.seniority ?? "0", salt)
+        : await poseidonCommit(value, salt);
     const { sig, issuerX, issuerY } = signCommitment(commitment, this.privateKey);
+    const employmentExtra =
+      type === "employment" && attribute.seniority
+        ? { seniority: attribute.seniority }
+        : {};
     return {
       type,
       title: TYPE_TITLE[type],
@@ -244,6 +293,7 @@ export class IssuerClient {
       issuerPubY: issuerY,
       issuedAt,
       expiry: normalizeExpiry(expiry, issuedAt),
+      ...employmentExtra,
       ...(claimParams && Object.values(claimParams).some((v) => v !== undefined) ? { claimParams } : {}),
     };
   }

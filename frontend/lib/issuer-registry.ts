@@ -20,12 +20,19 @@ async function getServer() {
   return server;
 }
 
+export interface IssuerMetadata {
+  name?: string;
+  url?: string;
+  logo?: string;
+}
+
 export interface RegisteredIssuer {
   id: string;
   name: string;
   pubkeyHex: string;
   credentialTypes: CredentialType[];
   revoked: boolean;
+  metadata?: IssuerMetadata;
 }
 
 function issuerNameMap(): Record<string, string> {
@@ -100,14 +107,28 @@ export async function fetchRegisteredIssuers(
     );
     if (!record || record.revoked) continue;
 
+    // Fetch optional on-chain metadata (name, url, logo).
+    const rawMeta = await simulate<Record<string, string | null> | null>(
+      simulationAccount,
+      contract.call("get_issuer_metadata", Address.fromString(address).toScVal()),
+    );
+    const meta: IssuerMetadata | undefined = rawMeta
+      ? {
+          name: rawMeta.name ?? undefined,
+          url: rawMeta.url ?? undefined,
+          logo: rawMeta.logo ?? undefined,
+        }
+      : undefined;
+
     issuers.push({
       id: address,
-      name: names[address] ?? truncateAddress(address),
+      name: meta?.name ?? names[address] ?? truncateAddress(address),
       pubkeyHex: bytesToHex(record.pubkey),
       credentialTypes: record.credential_types.filter((t): t is CredentialType =>
         ["kyc", "age", "jurisdiction", "income", "funds"].includes(t),
       ),
       revoked: record.revoked,
+      metadata: meta,
     });
   }
 

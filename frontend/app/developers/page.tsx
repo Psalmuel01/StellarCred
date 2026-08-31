@@ -113,6 +113,25 @@ const ageOk = await StellarCred.hasClaim(wallet, "age", { minThreshold: 21 });
 const fundsOk = await StellarCred.hasClaim(wallet, "funds", { minThreshold: 50000 });`}</Code>
       </Section>
 
+      <Section title="Fetching all claims">
+        <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
+          Protocols that gate on multiple claims simultaneously benefit from fetching everything at once rather than making N separate <span className="mono">hasClaim</span> calls.
+        </p>
+        <Code>{`import { StellarCred } from "@stellarcred/sdk";
+
+const claims = await StellarCred.getClaims(wallet);
+// {
+//   kyc:          { verified: true,  expiry: 1780000000 },
+//   age:          { verified: true,  threshold: 21, expiry: 1780000000 },
+//   income:       { verified: false },
+//   jurisdiction: { verified: true,  expiry: 1780000000 },
+//   funds:        { verified: false },
+// }
+
+// Gate on multiple claims at once
+const canAccess = claims.kyc.verified && claims.age.verified;`}</Code>
+      </Section>
+
       <Section title="Configuration">
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
           Call <span className="mono">configure()</span> once at startup, or set env vars.
@@ -131,6 +150,21 @@ StellarCred.configure({
 // STELLARCRED_REGISTRY_ID=C...
 // STELLARCRED_RPC_URL=https://soroban-testnet.stellar.org
 // (also reads NEXT_PUBLIC_PROOF_REGISTRY_ID / NEXT_PUBLIC_RPC_URL)`}</Code>
+        <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7, marginTop: "1rem" }}>
+          A missing <span className="mono">registryId</span> doesn&rsquo;t throw &mdash;
+          it makes every <span className="mono">hasClaim</span>/
+          <span className="mono">getClaims</span> call silently return{" "}
+          <span className="mono">false</span>/<span className="mono">[]</span>, which can
+          look like &ldquo;nobody is verified&rdquo; instead of &ldquo;misconfigured.&rdquo;
+          Use <span className="mono">healthCheck()</span> to diagnose it directly (a dev-only
+          console warning also fires automatically the first time this happens).
+        </p>
+        <Code>{`const health = StellarCred.healthCheck();
+// { configured: false, registryId: false, rpcUrl: true, networkPassphrase: true,
+//   missing: ["registryId"] }
+if (!health.configured) console.error("StellarCred misconfigured:", health.missing);
+
+// Or just: StellarCred.isConfigured() // boolean`}</Code>
       </Section>
 
       <Section title="Redirecting users to verify">
@@ -164,6 +198,37 @@ const fundsUrl = StellarCred.buildVerifyUrl({
 // The return URL includes sc_verified=true, sc_wallet=<address>, and sc_claims=<types>
 // sc_claims contains only the claim types issued in the current session.
 const verified = await StellarCred.hasClaim(wallet, "kyc");`}</Code>
+        <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7, marginTop: "1rem" }}>
+          <strong>The return URL params are untrusted hints, not a proof.</strong>{" "}
+          Nothing binds this redirect to your session &mdash; anyone can craft a
+          URL shaped exactly like a real one and open it. Use{" "}
+          <span className="mono">parseReturnParams</span> to read them, but
+          always re-verify with <span className="mono">hasClaim</span> against
+          the on-chain ProofRegistry (ideally server-side) before granting
+          access.
+        </p>
+        <Code>{`import { StellarCred } from "@stellarcred/sdk";
+
+// On your return page:
+const hint = StellarCred.parseReturnParams(window.location.href);
+// hint: { verified, wallet, claims, state } — all untrusted
+
+if (hint.verified && hint.wallet) {
+  // Optimistic UI only. The real gate is this on-chain check:
+  const reallyVerified = await StellarCred.hasClaim(hint.wallet, "kyc");
+}
+
+// Optional: pass a per-session token to correlate the redirect back to a
+// session you started (still not a substitute for hasClaim):
+const url = StellarCred.buildVerifyUrl({
+  returnUrl: "https://yourapp.xyz/deposit",
+  claim: "kyc",
+  state: sessionNonce,
+});
+// ...later, on the return page:
+if (hint.state !== expectedSessionNonce) {
+  // redirect doesn't correlate to a session you started — treat as untrusted
+}`}</Code>
       </Section>
 
       <Section title="Available claim types">

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { fetchRegisteredIssuers } from "@/lib/issuer-registry";
+import { env } from "@/lib/env";
 
 // Any existing account works for read-only Soroban simulation.
 const SIM_ACCOUNT =
-  process.env.NEXT_PUBLIC_ISSUER_ADDRESS ??
-  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  env.NEXT_PUBLIC_ISSUER_ADDRESS ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 export async function GET() {
   try {

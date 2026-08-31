@@ -5,6 +5,7 @@ import { SiteNav } from "@/components/SiteNav";
 import { NetworkBanner } from "@/components/NetworkBanner";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
+import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 
 const body = Inter({
   subsets: ["latin"],
@@ -35,42 +36,31 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const themeDetectionScript = `
-    (function () {
-      const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      let savedTheme = null;
-      let theme = 'dark'; 
-      
-       try {
-      savedTheme = localStorage.getItem('theme');
-    } catch (e) {
-    }
-      if (savedTheme === 'light' || (!savedTheme && !systemPrefersDark)) {
-        theme = 'light';
-      }
-      
-      document.documentElement.setAttribute('data-theme', theme);
-    })();
-  `;
   return (
     <html
       lang="en"
       className={`${body.variable} ${display.variable} ${mono.variable}`}
-      data-theme="light"
+      // Omit `data-theme` so the blocking boot script owns first paint
+      // (avoids flashing the wrong palette before hydration).
       suppressHydrationWarning
     >
       <head>
         <script
           id="theme-detection"
-          dangerouslySetInnerHTML={{ __html: themeDetectionScript }}
+          dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
       <body>
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
         <ToastProvider>
           <WalletProvider>
             <SiteNav />
             <NetworkBanner />
-            <main className="container">{children}</main>
+            <main id="main-content" tabIndex={-1} className="container">
+              {children}
+            </main>
             <footer className="site-footer">
               <div className="site-footer-inner">
                 <span className="faint" style={{ fontSize: "0.8125rem" }}>

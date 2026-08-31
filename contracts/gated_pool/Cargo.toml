@@ -18,3 +18,4 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 proof_registry = { path = "../proof_registry" }
 credential_verifier = { path = "../credential_verifier" }
 issuer_registry = { path = "../issuer_registry" }
+proptest = "1.4"

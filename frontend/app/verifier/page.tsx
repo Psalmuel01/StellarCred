@@ -40,7 +40,16 @@ function VerifierInner() {
   const [reqs, setReqs] = useState<Requirement[]>(
     REQUIREMENTS.map((r) => ({ ...r, proved: false })),
   );
-  const [amount, setAmount] = useState("5,000");
+  const [amount, setAmount] = useState(5000);
+  const [amountError, setAmountError] = useState(false);
+
+  /** Strip non-digits and parse to a clean integer. */
+  const handleAmountChange = (raw: string) => {
+    const stripped = raw.replace(/[^0-9]/g, "");
+    const parsed = stripped === "" ? 0 : parseInt(stripped, 10);
+    setAmount(parsed);
+    setAmountError(parsed <= 0);
+  };
   const [checked, setChecked] = useState(false);
   const eligible = reqs.every((r) => r.proved);
 
@@ -194,8 +203,21 @@ function VerifierInner() {
             )}
           </div>
 
-          <label className="field-label">Amount (USDC)</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <label className="field-label" htmlFor="deposit-amount">Amount (USDC)</label>
+          <input
+            id="deposit-amount"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={amount > 0 ? amount.toLocaleString("en-US") : ""}
+            onChange={(e) => handleAmountChange(e.target.value)}
+            placeholder="0"
+            aria-invalid={amountError || undefined}
+          />
+          {amountError && (
+            <p style={{ marginTop: "0.35rem", fontSize: "0.75rem", color: "var(--error, #ef4444)" }}>
+              Enter a valid amount
+            </p>
+          )}
 
           <button
             className="btn btn-primary"

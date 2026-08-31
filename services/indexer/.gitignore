@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+
+data/
+.env
+*.db
+*.db-wal
+*.db-shm
+
+# Prevent compiled JS from being committed alongside TS sources
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map

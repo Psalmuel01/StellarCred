@@ -8,6 +8,7 @@ Thanks for your interest in contributing. StellarCred is a ZK credential layer f
 contracts/    Soroban workspace (Rust, soroban-sdk 26)
 circuits/     Noir circuits (UltraHonk · Noir 1.0.0-beta.9 / bb 0.87.0)
 frontend/     Next.js 14 app + @stellarcred/sdk
+services/     Indexer & off-chain services (see services/indexer/README.md)
 scripts/      deploy.sh — wires all contracts on testnet
 fixtures/     real vk / proof / public_inputs used by contract tests
 ```
@@ -60,6 +61,12 @@ cd frontend
 cp .env.example .env.local        # fill in contract IDs + ISSUER_PRIVATE_KEY
 pnpm install
 pnpm dev
+
+# indexer (optional — off-chain Soroban event indexing)
+cd services/indexer
+cp .env.example .env
+npm install
+npm run dev
 ```
 
 ## Development workflow
@@ -67,9 +74,17 @@ pnpm dev
 1. **Fork** the repo and create a branch from `main`.
 2. Make your changes. Keep commits focused — one logical change per commit.
 3. For contract changes: run `cargo test` and confirm all tests pass.
-4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts.
+4. For circuit changes: run `./circuits/scripts/build.sh` and update the relevant `fixtures/<type>/` artifacts, then regenerate the regression test vectors with `node circuits/scripts/testvectors.js update` (see `circuits/README.md` — "Test Vectors") and commit the result. CI runs `node circuits/scripts/testvectors.js check` and fails if a circuit or toolchain change silently altered proof output without the vectors being updated.
 5. For frontend changes: run `pnpm tsc --noEmit` (zero errors required) and `pnpm build`.
 6. Open a pull request against `main` with a clear description of what changed and why.
+
+## Preview Deployments
+
+Every Pull Request automatically triggers a live preview deployment via GitHub Actions.
+
+- **URL Generation:** Once CI runs, the deployment URL will be automatically posted as a comment on your PR.
+- **Environment Configuration:** Preview builds automatically ingest safe **testnet/dummy contract IDs**. No production secrets are exposed or required for PR previews.
+- **Lifecycle:** The preview environment updates automatically with every new commit pushed to the PR and is torn down when the PR is closed or merged.
 
 ## Areas open for contribution
 
@@ -93,7 +108,57 @@ Please do **not** open a public issue for security vulnerabilities. See [SECURIT
 
 ## Commit messages
 
-Use the imperative mood and be specific: `add income_proof circuit`, `fix check_claim threshold comparison`, `remove SmileID dependency`.
+StellarCred uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit message must have a structured prefix so the changelog and release notes are generated automatically.
+
+| Prefix | When to use |
+|--------|-------------|
+| `feat:` | A new feature visible to users or integrators |
+| `fix:` | A bug fix |
+| `docs:` | Documentation only |
+| `chore:` | Build process, tooling, dependency updates |
+| `refactor:` | Code change that isn't a fix or feature |
+| `test:` | Adding or updating tests |
+| `ci:` | CI/CD pipeline changes |
+
+Examples:
+
+```
+feat: add income_proof circuit
+fix: correct check_claim threshold comparison off-by-one
+docs: document NPM_TOKEN secret setup
+chore: bump soroban-sdk to 26.0.1
+```
+
+Breaking changes: add `BREAKING CHANGE:` in the commit footer, or append `!` after the type (`feat!:`).
+
+Commit messages are linted automatically on pull requests via `commitlint`.
+
+## Releasing
+
+Releases are tag-driven. The GitHub Actions release workflow fires on any tag matching `v*` and:
+
+1. Regenerates `CHANGELOG.md` from the full conventional commit history.
+2. Commits the updated changelog back to `main`.
+3. Creates a GitHub Release with the changelog section for that version as the body.
+4. Builds and publishes `@stellarcred/sdk` to npm.
+
+### Cutting a release
+
+```bash
+# Bump the version in frontend/packages/sdk/package.json, then:
+git add frontend/packages/sdk/package.json
+git commit -m "chore: release v<version>"
+git tag v<version>
+git push origin main --tags
+```
+
+The workflow handles everything else.
+
+### Required secret
+
+The repository must have an `NPM_TOKEN` secret set under **Settings → Secrets and variables → Actions**.
+Generate the token at [npmjs.com](https://www.npmjs.com) with **Automation** type and **Read and write** scope for the `@stellarcred` scope (or the package name).
+Never commit the token value.
 
 ## License
 
