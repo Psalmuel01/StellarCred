@@ -5,6 +5,7 @@ import {
   IconExternalLink,
   IconTrash,
   IconHistory,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import { Badge } from "@/components/Badge";
 import { Timeline } from "@/components/Timeline";
@@ -43,14 +44,7 @@ export function CredCard({
   const [showHistory, setShowHistory] = useState(false);
 
   return (
-    <div
-      className="card"
-      style={{ padding: "1rem 1.25rem", cursor: onInspect ? "pointer" : undefined }}
-      onClick={onInspect}
-      role={onInspect ? "button" : undefined}
-      tabIndex={onInspect ? 0 : undefined}
-      onKeyDown={onInspect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onInspect(); } } : undefined}
-    >
+    <div className="card" style={{ padding: "1rem 1.25rem" }}>
       <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
         {/* left: credential info */}
         <div style={{ minWidth: 0 }}>
@@ -98,8 +92,8 @@ export function CredCard({
           </div>
         </div>
 
-        {/* right: badges + button + trash */}
-        <div className="card-actions" onClick={(e) => e.stopPropagation()}>
+        {/* right: badges + buttons */}
+        <div className="card-actions">
           {isPreview && <Badge variant="pending">Preview</Badge>}
           <Badge variant="verified" dot={false}>Held</Badge>
           {status === "proved" && !isExpiringSoon(c) && (
@@ -110,6 +104,16 @@ export function CredCard({
           )}
           {status === "expired" && (
             <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
+          {onInspect && (
+            <button
+              className="btn btn-ghost btn-sm"
+              title="View details"
+              onClick={onInspect}
+              style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
+            >
+              <IconInfoCircle size={13} />
+            </button>
           )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
@@ -123,7 +127,7 @@ export function CredCard({
                     ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
                     : undefined
             }
-            onClick={(e) => { e.stopPropagation(); onProve(); }}
+            onClick={onProve}
           >
             {status === "proved" ? "Re-prove" :
              status === "expired" ? "Re-prove" :
@@ -132,7 +136,7 @@ export function CredCard({
           <button
             className="btn btn-ghost btn-sm"
             title="History"
-            onClick={(e) => { e.stopPropagation(); setShowHistory(!showHistory); }}
+            onClick={() => setShowHistory(!showHistory)}
             style={{ padding: "0.3rem 0.4rem", color: showHistory ? "var(--accent)" : "var(--faint)" }}
           >
             <IconHistory size={13} />
@@ -140,7 +144,7 @@ export function CredCard({
           <button
             className="btn btn-ghost btn-sm"
             title="Remove"
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            onClick={onRemove}
             style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
           >
             <IconTrash size={13} />
