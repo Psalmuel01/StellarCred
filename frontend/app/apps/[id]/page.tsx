@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, notFound } from "next/navigation";
 import {
   IconLock,
   IconCheck,
@@ -58,7 +58,7 @@ function ProtocolDetailInner() {
         );
         if (!cancelled) setStatuses(results);
       } catch {
-        // contracts not deployed — requirements stay unmet
+        // contracts not deployed â€” requirements stay unmet
       } finally {
         if (!cancelled) setChecked(true);
       }
@@ -128,7 +128,7 @@ function ProtocolDetailInner() {
       <ConfigBanner />
 
       <div className="grid grid-2" style={{ alignItems: "start", gap: "1.5rem" }}>
-        {/* Left — info + eligibility */}
+        {/* Left â€” info + eligibility */}
         <div className="card">
           <p className="muted" style={{ fontSize: "0.875rem", lineHeight: 1.7, marginBottom: "1.5rem" }}>
             {protocol.description}
@@ -195,7 +195,7 @@ function ProtocolDetailInner() {
           )}
         </div>
 
-        {/* Right — action */}
+        {/* Right â€” action */}
         <div
           className="card"
           style={{
@@ -238,7 +238,7 @@ function ProtocolDetailInner() {
           <p className="faint" style={{ marginTop: "1.25rem", fontSize: "0.8125rem", lineHeight: 1.6 }}>
             {eligible
               ? `${protocol.name} read ProofRegistry.check_claim and found valid proofs for your address. No personal data was shared.`
-              : `${protocol.name} only reads ProofRegistry.check_claim for your address — it never sees the credential data behind your proofs.`}
+              : `${protocol.name} only reads ProofRegistry.check_claim for your address â€” it never sees the credential data behind your proofs.`}
           </p>
         </div>
       </div>
