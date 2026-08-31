@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { IconAlertTriangle, IconArrowLeft, IconRefresh } from "@tabler/icons-react";
 
 export default function ErrorPage({
@@ -11,6 +12,9 @@ export default function ErrorPage({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const t = useTranslations("errorPage");
+  const tc = useTranslations("common");
+
   useEffect(() => {
     const digest = error.digest ? ` [digest: ${error.digest}]` : "";
     if (process.env.NODE_ENV === "production") {
@@ -48,20 +52,20 @@ export default function ErrorPage({
         <IconAlertTriangle size={24} color="var(--danger)" stroke={1.5} />
       </div>
 
-      <h1 style={{ fontSize: "1.75rem", margin: "0 0 0.5rem" }}>Something went wrong</h1>
+      <h1 style={{ fontSize: "1.75rem", margin: "0 0 0.5rem" }}>{t("title")}</h1>
 
       <p className="muted" style={{ fontSize: "0.9375rem", maxWidth: 400, lineHeight: 1.7, marginBottom: "2rem" }}>
-        An unexpected error occurred. You can try again or head back to the home page.
+        {t("description")}
       </p>
 
       <div className="row" style={{ gap: "0.75rem" }}>
         <button className="btn btn-primary" onClick={reset}>
           <IconRefresh size={15} />
-          Try again
+          {tc("tryAgain")}
         </button>
         <Link href="/" className="btn btn-secondary">
           <IconArrowLeft size={15} />
-          Home
+          {tc("home")}
         </Link>
       </div>
     </div>

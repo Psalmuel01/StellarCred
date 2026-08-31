@@ -1,64 +1,74 @@
+import createMiddleware from "next-intl/middleware";
+import { routing } from "./i18n/routing";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getCorsHeaders, isOriginAllowed } from "@/lib/cors";
 import { logger, stripSensitiveFields, resolveRequestId } from "@/lib/logger";
 import { reportError } from "@/lib/error-reporting";
 
+const handleI18nRouting = createMiddleware(routing);
+
 export function middleware(request: NextRequest) {
   const requestId = resolveRequestId(request.headers.get("x-request-id"));
   const startTime = Date.now();
 
-  // Detect demo/mock mode signals
-  const isDemoIssuer = !process.env.ISSUER_PRIVATE_KEY;
-  const isPlaidMock = !process.env.PLAID_ACCESS_TOKEN;
-  const isPersonaDemo = !process.env.PERSONA_API_KEY;
+  // ── API routes: existing CORS / logging logic ──────────────────────────
+  if (request.nextUrl.pathname.startsWith("/api")) {
+    // Detect demo/mock mode signals
+    const isDemoIssuer = !process.env.ISSUER_PRIVATE_KEY;
+    const isPlaidMock = !process.env.PLAID_ACCESS_TOKEN;
+    const isPersonaDemo = !process.env.PERSONA_API_KEY;
 
-  if (request.method === "OPTIONS") {
-    const origin = request.headers.get("origin");
-    if (!isOriginAllowed(origin)) {
+    if (request.method === "OPTIONS") {
+      const origin = request.headers.get("origin");
+      if (!isOriginAllowed(origin)) {
+        logRequest(request, 204, startTime, requestId, isDemoIssuer, isPlaidMock, isPersonaDemo);
+        return new NextResponse(null, { status: 204 });
+      }
+      const response = new NextResponse(null, {
+        status: 204,
+        headers: getCorsHeaders(),
+      });
       logRequest(request, 204, startTime, requestId, isDemoIssuer, isPlaidMock, isPersonaDemo);
-      return new NextResponse(null, { status: 204 });
+      return response;
     }
-    const response = new NextResponse(null, {
-      status: 204,
-      headers: getCorsHeaders(),
-    });
-    logRequest(request, 204, startTime, requestId, isDemoIssuer, isPlaidMock, isPersonaDemo);
+
+    const response = NextResponse.next();
+    const origin = request.headers.get("origin");
+    if (isOriginAllowed(origin)) {
+      const corsHeaders = getCorsHeaders();
+      for (const [key, value] of Object.entries(corsHeaders)) {
+        response.headers.set(key, value);
+      }
+    }
+
+    // Log the request after response is generated
+    response.headers.set("x-request-id", requestId);
+    logRequest(request, response.status, startTime, requestId, isDemoIssuer, isPlaidMock, isPersonaDemo);
+
+    // Report unexpected 500 errors to error sink if configured
+    if (response.status === 500) {
+      reportError({
+        method: request.method,
+        path: request.nextUrl.pathname,
+        requestId,
+        status: response.status,
+      }).catch((err) => {
+        logger.error(
+          stripSensitiveFields({
+            event: "error_reporting_failed",
+            requestId,
+            error: (err as Error).message,
+          }),
+        );
+      });
+    }
+
     return response;
   }
 
-  const response = NextResponse.next();
-  const origin = request.headers.get("origin");
-  if (isOriginAllowed(origin)) {
-    const corsHeaders = getCorsHeaders();
-    for (const [key, value] of Object.entries(corsHeaders)) {
-      response.headers.set(key, value);
-    }
-  }
-
-  // Log the request after response is generated
-  response.headers.set("x-request-id", requestId);
-  logRequest(request, response.status, startTime, requestId, isDemoIssuer, isPlaidMock, isPersonaDemo);
-
-  // Report unexpected 500 errors to error sink if configured
-  if (response.status === 500) {
-    reportError({
-      method: request.method,
-      path: request.nextUrl.pathname,
-      requestId,
-      status: response.status,
-    }).catch((err) => {
-      logger.error(
-        stripSensitiveFields({
-          event: "error_reporting_failed",
-          requestId,
-          error: (err as Error).message,
-        }),
-      );
-    });
-  }
-
-  return response;
+  // ── Page routes: next-intl locale detection ────────────────────────────
+  return handleI18nRouting(request);
 }
 
 function logRequest(
@@ -87,5 +97,11 @@ function logRequest(
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: [
+    // API routes — existing CORS/logging
+    "/api/:path*",
+    // i18n locale routing (all non-API pages)
+    "/",
+    "/(en|es)/:path*",
+  ],
 };

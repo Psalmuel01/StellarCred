@@ -58,7 +58,7 @@ vi.mock("@/lib/credential", async (importOriginal: any) => {
   return { ...actual, saveCredential: vi.fn() };
 });
 
-import VerifyPage from "@/app/verify/page";
+import VerifyPage from "@/app/[locale]/verify/page";
 
 function mockJsonResponse(body: unknown, init?: { status?: number; headers?: Record<string, string> }) {
   return {
