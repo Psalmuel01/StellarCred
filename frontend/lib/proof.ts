@@ -13,6 +13,11 @@
 
 import type { CredentialType } from "./stellar";
 
+/** The compiled-circuit JSON shipped to /public/circuits/{type}.json. */
+export interface CircuitArtifact {
+  bytecode: string;
+}
+
 export interface GeneratedProof {
   /** Raw proof bytes (456 fields × 32 = 14592 bytes), as the contract expects. */
   proof: Uint8Array;

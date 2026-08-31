@@ -28,9 +28,19 @@ import {
   submitProof,
   submitProofsBatch,
   parseContractError,
+  isVerified,
   type ContractError,
   type ProofSubmissionParams,
 } from "@/lib/contracts";
+import {
+  buildProofKey,
+  getCachedProof,
+  saveProof,
+  markProofProved,
+  entryToGeneratedProof,
+  resolveVkVersion,
+  removeCredentialProofs,
+} from "@/lib/proof-cache";
 import {
   type Credential,
   loadCredentials,
@@ -193,6 +203,12 @@ export default function HolderPage() {
 
   useEffect(() => setCreds(loadCredentials()), []);
 
+  const handleRemove = (commitment: string) => {
+    setCreds(removeCredential(commitment));
+    // Drop any cached proofs for the removed credential.
+    removeCredentialProofs(commitment);
+  };
+
   const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
   const unproved = displayCreds.filter((c) => proofStatus(c) !== "proved");
   const proved   = displayCreds.filter((c) => proofStatus(c) === "proved");
@@ -287,7 +303,7 @@ export default function HolderPage() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => handleRemove(c.commitment)}
                   isPreview={isPreview}
                 />
               ))}
@@ -323,7 +339,7 @@ export default function HolderPage() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => handleRemove(c.commitment)}
                   isPreview={isPreview}
                 />
               ))}
@@ -409,14 +425,56 @@ function ProofFlow({
   const [showRaw, setShowRaw] = useState(false);
   // elapsed time for the proving stage
   const [elapsed, setElapsed] = useState(0);
+  // True when the on-screen proof was recovered from the local cache rather
+  // than recomputed (issue #426 — reuse an unchanged, still-valid proof).
+  const [reused, setReused] = useState(false);
+  const [proofKey, setProofKey] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
-    toast.info(`Generating proof for ${cred.title}…`);
     (async () => {
       try {
+        // Reuse path: if a valid, matching proof is already cached for this
+        // credential and the on-chain record is still valid, skip the expensive
+        // witness + proving stages entirely.
+        const vkVersion = await resolveVkVersion(cred.type);
+        const key = buildProofKey({
+          type: cred.type,
+          commitment: cred.commitment,
+          claimParams: cred.claimParams,
+          vkVersion,
+        });
+
+        // On-chain record still valid? Local proofStatus catches expiry; a live
+        // is_verified read additionally catches revocation the wallet doesn't
+        // know about (falls back to true when contracts are unreachable).
+        let onChainStillValid = proofStatus(cred) === "proved";
+        if (onChainStillValid && holder) {
+          try {
+            const st = await isVerified(holder, cred.type);
+            onChainStillValid = st.valid;
+          } catch {
+            // contracts not configured — trust the local record
+          }
+        }
+
+        const cached = getCachedProof(key, { onChainStillValid });
+        if (cancelled) return;
+        if (cached) {
+          setProofKey(key);
+          setReused(true);
+          setProof(entryToGeneratedProof(cached));
+          setStage("generated");
+          toast.success(
+            `Using existing proof for ${cred.title} — params unchanged`, {}
+          );
+          return;
+        }
+
+        toast.info(`Generating proof for ${cred.title}…`);
+
         // Stage 1: witness (server)
         const witness = await computeWitness(
           cred.type,
@@ -439,9 +497,21 @@ function ProofFlow({
         clearInterval(timerRef.current!);
         if (cancelled) return;
 
+        setProofKey(key);
+        setReused(false);
         setProof(result);
         setStage("generated");
         toast.success(`Proof generated for ${cred.title}`);
+
+        // Remember it so repeat submissions skip recomputation.
+        saveProof(key, {
+          type: cred.type,
+          commitment: cred.commitment,
+          claimParams: cred.claimParams,
+          vkVersion,
+          proof: result.proof,
+          publicInputs: result.publicInputs,
+        });
       } catch (e) {
         clearInterval(timerRef.current!);
         if (!cancelled) {
@@ -457,7 +527,7 @@ function ProofFlow({
       clearInterval(timerRef.current!);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cred]);
+  }, [cred, holder]);
 
   async function onSubmit() {
     if (!proof) return;
@@ -475,6 +545,9 @@ function ProofFlow({
       setTxHash(hash);
       onProved(hash);
       setStage("confirmed");
+      // Remember that this cached proof now has a live on-chain record, so it
+      // stays reusable until it expires (and is invalidated once it does).
+      if (proofKey) markProofProved(proofKey, { ttlSecs: credTtlSecs(cred) });
       toast.success(`Proof confirmed on-chain for ${cred.title}`, { txHash: hash });
     } catch (e) {
       const parsed = parseContractError((e as Error).message);
@@ -492,9 +565,7 @@ function ProofFlow({
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         <IconArrowLeft size={14} />
         All credentials
-      </button>
-
-      <div className="card" style={{ padding: "1.75rem" }}>
+      </button>        <div className="card" style={{ padding: "1.75rem" }}>
         {/* credential header */}
         <div style={{ marginBottom: "1.5rem" }}>
           <span className="eyebrow" style={{ marginBottom: "0.5rem", display: "block" }}>
@@ -502,6 +573,26 @@ function ProofFlow({
           </span>
           <h2 style={{ marginBottom: "0.25rem" }}>{cred.title}</h2>
           <span className="mono faint" style={{ fontSize: "0.8rem" }}>{cred.claim}</span>
+
+          {reused && (
+            <div
+              style={{
+                marginTop: "0.9rem",
+                padding: "0.65rem 0.9rem",
+                borderRadius: "var(--radius-xs)",
+                background: "rgba(62,207,142,0.08)",
+                border: "1px solid rgba(62,207,142,0.25)",
+                fontSize: "0.8125rem",
+                color: "var(--text)",
+              }}
+            >
+              <span style={{ color: "var(--accent)", fontWeight: 600 }}>Using existing proof</span>
+              <span className="muted">
+                {" "}— a valid proof for this credential and its parameters was found, so it
+                was reused instead of recomputed. Submit it below if you need to refresh it on-chain.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* step list */}
@@ -688,7 +779,7 @@ type CredProofState =
   | { status: "pending" }
   | { status: "witness" }
   | { status: "proving"; elapsed: number }
-  | { status: "ready"; proof: { proof: Uint8Array; publicInputs: Uint8Array } }
+  | { status: "ready"; proof: { proof: Uint8Array; publicInputs: Uint8Array }; reused?: boolean }
   | { status: "error"; message: string };
 
 type BatchStage = "generating" | "submitting" | "confirmed" | "error";
@@ -715,6 +806,10 @@ function BatchProofFlow({
   const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
     creds.map(() => null),
   );
+  // Cache keys for each credential, set when each proof is resolved, so the
+  // submission handler can record them as proved on-chain.
+  const proofKeys = useRef<string[]>(creds.map(() => ""));
+  const reusedFlags = useRef<boolean[]>(creds.map(() => false));
   // Stable refs so the submission effect always reads the latest values
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
@@ -722,15 +817,49 @@ function BatchProofFlow({
   useEffect(() => { credsRef.current = creds; }, [creds]);
   useEffect(() => { holderRef.current = holder; }, [holder]);
 
-  // Generate proofs for all credentials in sequence.
+  // Generate proofs for all credentials in sequence (reusing cached proofs
+  // where one exists, matches, and is still valid on-chain).
   useEffect(() => {
     let cancelled = false;
-    toast.info(`Generating ${creds.length} proofs…`);
+    toast.info(`Preparing ${creds.length} proofs…`);
 
     (async () => {
       for (let i = 0; i < creds.length; i++) {
         if (cancelled) return;
         const cred = creds[i];
+
+        // Reuse path — resolve the cache key and check for a usable, matching
+        // proof before doing any expensive work for this credential.
+        const vkVersion = await resolveVkVersion(cred.type);
+        const key = buildProofKey({
+          type: cred.type,
+          commitment: cred.commitment,
+          claimParams: cred.claimParams,
+          vkVersion,
+        });
+        let onChainStillValid = proofStatus(cred) === "proved";
+        if (onChainStillValid && holderRef.current) {
+          try {
+            const st = await isVerified(holderRef.current, cred.type);
+            onChainStillValid = st.valid;
+          } catch {
+            // contracts not configured — trust the local record
+          }
+        }
+        const cached = getCachedProof(key, { onChainStillValid });
+        if (cancelled) return;
+        if (cached) {
+          const entry = entryToGeneratedProof(cached);
+          generatedProofs.current[i] = entry;
+          proofKeys.current[i] = key;
+          reusedFlags.current[i] = true;
+          setCredStates((prev) => {
+            const next = [...prev];
+            next[i] = { status: "ready", proof: entry, reused: true };
+            return next;
+          });
+          continue;
+        }
 
         // Witness
         setCredStates((prev) => {
@@ -797,6 +926,16 @@ function BatchProofFlow({
         if (cancelled) return;
 
         generatedProofs.current[i] = result;
+        proofKeys.current[i] = key;
+        // Remember it so repeat submissions skip recomputation.
+        saveProof(key, {
+          type: cred.type,
+          commitment: cred.commitment,
+          claimParams: cred.claimParams,
+          vkVersion,
+          proof: result.proof,
+          publicInputs: result.publicInputs,
+        });
         setCredStates((prev) => {
           const next = [...prev];
           next[i] = { status: "ready", proof: result };
@@ -839,6 +978,12 @@ function BatchProofFlow({
         setTxHash(hash);
         setBatchStage("confirmed");
         onProved(hash, currentCreds.map((c) => c.commitment));
+        // Record all cached proofs as live on-chain so they stay reusable
+        // (and are correctly invalidated once their on-chain record expires).
+        currentCreds.forEach((cred, i) => {
+          const k = proofKeys.current[i];
+          if (k) markProofProved(k, { ttlSecs: credTtlSecs(cred) });
+        });
         toast.success(`All ${currentCreds.length} proofs confirmed on-chain`, { txHash: hash });
       })
       .catch((e) => {
@@ -1049,6 +1194,23 @@ function BatchCredRow({
       <span className="mono faint" style={{ fontSize: "0.7rem", marginLeft: "0.4rem" }}>
         {(state as { status: "ready"; proof: { proof: Uint8Array; publicInputs: Uint8Array } }).proof.proof.length.toLocaleString()} bytes
       </span>
+      {(state as { status: "ready"; proof: { proof: Uint8Array; publicInputs: Uint8Array }; reused?: boolean }).reused && (
+        <span
+          style={{
+            display: "inline-flex",
+            marginTop: "0.25rem",
+            fontSize: "0.68rem",
+            color: "var(--accent)",
+            background: "rgba(62,207,142,0.1)",
+            border: "1px solid rgba(62,207,142,0.2)",
+            borderRadius: "999px",
+            padding: "0.1rem 0.45rem",
+            fontWeight: 500,
+          }}
+        >
+          using existing proof
+        </span>
+      )}
     </div>
   ) : isErr ? (
     <span style={{ fontSize: "0.72rem", color: "var(--danger)", marginTop: "0.2rem", display: "block" }}>
