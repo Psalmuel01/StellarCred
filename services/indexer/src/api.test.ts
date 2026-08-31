@@ -329,6 +329,101 @@ describe("GET /recent", () => {
   });
 });
 
+// ── /issuers/:issuer/stats ───────────────────────────────────────────────────
+// Reputation stats for one issuer, derived entirely from indexed events (#398).
+
+describe("GET /issuers/:issuer/stats", () => {
+  it("returns a zeroed row for an issuer with no indexed claims", async () => {
+    const res = await request(app).get("/issuers/GUNKNOWN/stats");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      issuer: "GUNKNOWN",
+      total: 0,
+      active: 0,
+      revoked: 0,
+      credential_types: [],
+      first_seen: null,
+    });
+  });
+
+  it("aggregates total/active/revoked, credential types, and first_seen across an issuer's claims", async () => {
+    const dbc = db as ReturnType<typeof createSqliteDb>;
+    dbc.upsertClaim({
+      wallet: "GA1",
+      credential_type: "kyc",
+      issuer: "GISSUER",
+      verified_at: 2000,
+      expiry: 9999999,
+      ledger_sequence: 1,
+      threshold: null,
+      revoked: 0,
+    });
+    dbc.upsertClaim({
+      wallet: "GA2",
+      credential_type: "age",
+      issuer: "GISSUER",
+      verified_at: 1000, // earlier than GA1's claim — should win as first_seen
+      expiry: 9999999,
+      ledger_sequence: 2,
+      threshold: 21,
+      revoked: 0,
+    });
+    dbc.upsertClaim({
+      wallet: "GA3",
+      credential_type: "kyc",
+      issuer: "GISSUER",
+      verified_at: 3000,
+      expiry: 9999999,
+      ledger_sequence: 3,
+      threshold: null,
+      revoked: 0,
+    });
+    dbc.revokeClaim("GA3", "kyc");
+
+    const res = await request(app).get("/issuers/GISSUER/stats");
+    expect(res.status).toBe(200);
+    expect(res.body.issuer).toBe("GISSUER");
+    expect(res.body.total).toBe(3);
+    expect(res.body.active).toBe(2);
+    expect(res.body.revoked).toBe(1);
+    expect(res.body.credential_types.sort()).toEqual(["age", "kyc"]);
+    expect(res.body.first_seen).toBe(1000);
+  });
+
+  it("does not mix up claims from a different issuer", async () => {
+    const dbc = db as ReturnType<typeof createSqliteDb>;
+    dbc.upsertClaim({
+      wallet: "GA1",
+      credential_type: "kyc",
+      issuer: "GISSUER_A",
+      verified_at: 1000,
+      expiry: 9999999,
+      ledger_sequence: 1,
+      threshold: null,
+      revoked: 0,
+    });
+    dbc.upsertClaim({
+      wallet: "GA2",
+      credential_type: "kyc",
+      issuer: "GISSUER_B",
+      verified_at: 1000,
+      expiry: 9999999,
+      ledger_sequence: 2,
+      threshold: null,
+      revoked: 0,
+    });
+
+    const res = await request(app).get("/issuers/GISSUER_A/stats");
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+  });
+
+  it("returns 400 for an empty issuer path parameter", async () => {
+    const res = await request(app).get("/issuers/%20/stats");
+    expect(res.status).toBe(400);
+  });
+});
+
 // ── 404 ───────────────────────────────────────────────────────────────────────
 
 describe("unknown routes", () => {
