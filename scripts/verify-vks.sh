@@ -23,9 +23,11 @@ if ! command -v nargo >/dev/null 2>&1; then
 fi
 
 if ! command -v bb >/dev/null 2>&1; then
-  echo "bb not found — install the pinned Barretenberg toolchain first:" >&2
-  echo "  bbup -v 0.87.0" >&2
-  exit 1
+  echo "bb not found — installing the pinned Barretenberg toolchain..." >&2
+  curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/next/barretenberg/bbup/install | bash
+  export PATH="$HOME/.bb:$PATH"
+  source "$HOME/.bashrc" 2>/dev/null || true
+  bbup -v 0.87.0
 fi
 
 node circuits/scripts/testvectors.js "$@"
