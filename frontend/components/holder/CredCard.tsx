@@ -14,6 +14,7 @@ import { proofSubmissionConfigured } from "@/lib/config";
 import { useProofTimeline } from "@/lib/useProofTimeline";
 import {
   proofStatus,
+  isExpiringSoon,
   daysRemaining,
   credIsExpired,
   credExpiryTimestamp,
@@ -27,12 +28,14 @@ export function CredCard({
   address,
   onProve,
   onRemove,
+  onInspect,
   isPreview,
 }: {
   c: Credential;
   address: string;
   onProve: () => void;
   onRemove: () => void;
+  onInspect?: () => void;
   isPreview?: boolean;
 }) {
   const status = proofStatus(c);
@@ -40,7 +43,14 @@ export function CredCard({
   const [showHistory, setShowHistory] = useState(false);
 
   return (
-    <div className="card" style={{ padding: "1rem 1.25rem" }}>
+    <div
+      className="card"
+      style={{ padding: "1rem 1.25rem", cursor: onInspect ? "pointer" : undefined }}
+      onClick={onInspect}
+      role={onInspect ? "button" : undefined}
+      tabIndex={onInspect ? 0 : undefined}
+      onKeyDown={onInspect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onInspect(); } } : undefined}
+    >
       <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
         {/* left: credential info */}
         <div style={{ minWidth: 0 }}>
@@ -89,10 +99,18 @@ export function CredCard({
         </div>
 
         {/* right: badges + button + trash */}
-        <div className="card-actions">
+        <div className="card-actions" onClick={(e) => e.stopPropagation()}>
           {isPreview && <Badge variant="pending">Preview</Badge>}
           <Badge variant="verified" dot={false}>Held</Badge>
-          {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
+          {status === "proved" && !isExpiringSoon(c) && (
+            <Badge variant="verified" dot={false}>On-chain</Badge>
+          )}
+          {status === "proved" && isExpiringSoon(c) && (
+            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+          )}
+          {status === "expired" && (
+            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
@@ -105,7 +123,7 @@ export function CredCard({
                     ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
                     : undefined
             }
-            onClick={onProve}
+            onClick={(e) => { e.stopPropagation(); onProve(); }}
           >
             {status === "proved" ? "Re-prove" :
              status === "expired" ? "Re-prove" :
@@ -114,7 +132,7 @@ export function CredCard({
           <button
             className="btn btn-ghost btn-sm"
             title="History"
-            onClick={() => setShowHistory(!showHistory)}
+            onClick={(e) => { e.stopPropagation(); setShowHistory(!showHistory); }}
             style={{ padding: "0.3rem 0.4rem", color: showHistory ? "var(--accent)" : "var(--faint)" }}
           >
             <IconHistory size={13} />
@@ -122,7 +140,7 @@ export function CredCard({
           <button
             className="btn btn-ghost btn-sm"
             title="Remove"
-            onClick={onRemove}
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
             style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
           >
             <IconTrash size={13} />

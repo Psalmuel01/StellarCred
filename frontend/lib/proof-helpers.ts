@@ -15,6 +15,13 @@ export function proofStatus(cred: Credential): "unproved" | "proved" | "expired"
     : "expired";
 }
 
+export function isExpiringSoon(cred: Credential, windowDays = 7): boolean {
+  if (!cred.provedAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = cred.provedAt + credTtlSecs(cred);
+  return expiry > now && expiry <= now + windowDays * 86_400;
+}
+
 export function daysRemaining(cred: Credential): number {
   if (!cred.provedAt) return 0;
   const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
