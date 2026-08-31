@@ -18,6 +18,7 @@ import { issuanceConfigured } from "@/lib/config";
 import { truncateAddress, truncatePubkey } from "@/lib/format";
 import type { RegisteredIssuer } from "@/lib/issuer-registry";
 import type { IssuerStats } from "@/app/api/issuer-stats/route";
+import { UsageDashboard } from "@/components/UsageDashboard";
 
 const TYPES = Object.entries(TYPE_META) as [
   CredentialType,
@@ -496,6 +497,14 @@ export default function IssuerPage() {
           )}
         </div>
       </div>
+
+      {/* Self-serve usage & rate-limit dashboard — see GitHub #424. Shows the
+          issuer their recent issuance volume, current rate-limit status, and
+          remaining quota for the window, with a clear reset timestamp when
+          throttled. `holder` is passed so the per-wallet dimension reflects
+          the address being issued to; the IP dimension always reflects this
+          connection. */}
+      <UsageDashboard wallet={holder} />
     </>
   );
 }
