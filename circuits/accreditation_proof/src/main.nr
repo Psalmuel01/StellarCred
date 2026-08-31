@@ -18,7 +18,17 @@ fn main(
     issuer_y: pub [u8; 32],
     threshold: pub u64,
 ) {
-    credential_lib::assert_committed_and_signed(net_worth as Field, salt, sig, commitment, issuer_x, issuer_y);
+    assert(salt != 0);
+
+    credential_lib::assert_committed_and_signed(
+        net_worth as Field,
+        salt,
+        sig,
+        commitment,
+        issuer_x,
+        issuer_y
+    );
+
     assert(net_worth >= threshold);
 }
 

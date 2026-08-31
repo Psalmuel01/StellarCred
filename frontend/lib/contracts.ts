@@ -42,15 +42,34 @@ async function getServer() {
   return server;
 }
 
-const PROOF_REGISTRY_ERRORS: Record<number, string> = {
+// Mirrors the ProofRegistry Error enum in contracts/proof_registry/src/lib.rs.
+// Keep this map in sync with that enum: every variant must have an entry.
+//
+//   NotInitialized        = 1
+//   VerificationFailed    = 2
+//   NotAuthorized         = 3
+//   IssuerNotTrusted      = 4
+//   IssuerKeyMismatch     = 5
+//   ProofNotFound         = 6
+//   BatchTooLarge         = 7
+//   BatchEmpty            = 8
+//   DuplicateCredentialType = 9
+//   AggregateLayoutInvalid  = 10
+//   SubmissionsPaused       = 11
+//   InvalidExpiry           = 12
+export const PROOF_REGISTRY_ERRORS: Record<number, string> = {
   1: "Contracts not initialised — check that all contract IDs are set in the environment.",
   2: "Proof verification failed — the ZK proof is invalid or was generated against the wrong circuit VK.",
   3: "Not authorised — wallet signature missing or wrong account.",
   4: "Issuer not trusted — the issuer address isn't registered for this credential type.",
   5: "Issuer key mismatch — this credential was signed with a key that doesn't match what's registered on-chain. Re-issue the credential and try again.",
-  6: "Duplicate credential type — a proof for this claim type is already on-chain for this wallet. Revoke or wait for expiry before submitting again.",
-  7: "Credential revoked — the issuer has revoked this credential. Re-issue through the verify flow.",
-  8: "Credential expired — the on-chain proof has passed its validity window. Re-issue to get a fresh proof.",
+  6: "Proof not found — no on-chain proof exists for this holder and credential type.",
+  7: "Batch too large — reduce the number of proofs and try again.",
+  8: "Batch is empty — include at least one proof submission.",
+  9: "Duplicate credential type — the batch contains two proofs for the same claim type. Remove the duplicate and try again.",
+  10: "Aggregate proof layout invalid — the number of credentials or public inputs don't match the expected format. Re-generate the aggregate proof.",
+  11: "Submissions paused — the protocol admin has temporarily halted new proof submissions. Try again later.",
+  12: "Invalid expiry — the credential expiry is either in the past or too far in the future. Re-issue with a valid validity window.",
 };
 
 export interface ContractError {
@@ -140,7 +159,7 @@ async function sendAndConfirm(
     if (isBadUnionSwitch(e)) return sent.hash;
     throw e;
   }
-  while (result.status === "NOT_FOUND" && Date.now() - start < 30_000) {
+  while (result.status === "NOT_FOUND" && Date.now() - start < 65_000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       result = await srv.getTransaction(sent.hash);
@@ -314,7 +333,7 @@ export async function submitProofs(params: {
     if (isBadUnionSwitch(e)) return sent.hash;
     throw e;
   }
-  while (result.status === "NOT_FOUND" && Date.now() - start < 30_000) {
+  while (result.status === "NOT_FOUND" && Date.now() - start < 65_000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       result = await srv.getTransaction(sent.hash);
@@ -364,8 +383,11 @@ export async function submitProof(params: {
 
 /**
  * Submit an aggregate proof that bundles N credential proofs into a single
- * on-chain transaction. Accepts arrays of issuer IDs and credential types for
- * extensibility to N≤5.
+ * on-chain transaction. Accepts arrays of issuer IDs, credential types, and
+ * per-credential TTLs (in seconds) so heterogeneous credentials (e.g. a
+ * short-lived funds attestation and a long-lived KYC) can carry different
+ * expiries in one submission — mirrors the contract's `expiries: Vec<u64>`
+ * parameter on `submit_aggregate_proof`.
  */
 export async function submitAggregateProof(params: {
   holder: string;
@@ -373,19 +395,30 @@ export async function submitAggregateProof(params: {
   credentialTypes: string[];
   proof: Uint8Array;
   publicInputs: Uint8Array;
-  ttlSecs: number;
+  /** One TTL (seconds from now) per credential, same order as credentialTypes. */
+  ttlSecsPerCredential: number[];
 }): Promise<string> {
-  const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecs } = params;
-  const expiry = Math.floor(Date.now() / 1000) + ttlSecs;
+  const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecsPerCredential } = params;
+
+  if (ttlSecsPerCredential.length !== credentialTypes.length) {
+    throw new Error(
+      `Expected ${credentialTypes.length} TTL values (one per credential), received ${ttlSecsPerCredential.length}.`,
+    );
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiries = ttlSecsPerCredential.map((ttl) => now + ttl);
 
   return sendAndConfirm(holder, (contract) => {
     const { Address, nativeToScVal, xdr } = sdkSync();
-    // Build ScVec for issuer_ids and credential_types.
     const issuerScVec = xdr.ScVal.scvVec(
       issuerIds.map((id) => Address.fromString(id).toScVal()),
     );
     const typeScVec = xdr.ScVal.scvVec(
       credentialTypes.map((t) => nativeToScVal(t, { type: "symbol" })),
+    );
+    const expiryScVec = xdr.ScVal.scvVec(
+      expiries.map((e) => nativeToScVal(BigInt(e), { type: "u64" })),
     );
     return contract.call(
       "submit_aggregate_proof",
@@ -394,7 +427,7 @@ export async function submitAggregateProof(params: {
       typeScVec,
       xdr.ScVal.scvBytes(Buffer.from(proof)),
       xdr.ScVal.scvBytes(Buffer.from(publicInputs)),
-      nativeToScVal(BigInt(expiry), { type: "u64" }),
+      expiryScVec,
     );
   }, "Aggregate submission");
 }

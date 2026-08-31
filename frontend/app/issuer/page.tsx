@@ -13,6 +13,8 @@ import { Badge } from "@/components/Badge";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
 import CopyButton from "@/components/CopyButton";
+import { ConfigBanner } from "@/components/ConfigBanner";
+import { issuanceConfigured } from "@/lib/config";
 import { truncateAddress, truncatePubkey } from "@/lib/format";
 import type { RegisteredIssuer } from "@/lib/issuer-registry";
 
@@ -171,6 +173,10 @@ export default function IssuerPage() {
         <WalletButton />
       </div>
 
+      {/* Same shared check as /api/ready — issuance can't work without the
+          demo issuer address and IssuerRegistry, so say so up front. */}
+      <ConfigBanner requireIssuance />
+
       <div
         style={{
           marginBottom: "1.75rem",
@@ -184,7 +190,7 @@ export default function IssuerPage() {
         }}
       >
         <strong style={{ color: "var(--text)" }}>
-          Simulates the issuer's side.
+          Simulates the issuer&apos;s side.
         </strong>{" "}
         In production this would be a separate authenticated app run by the
         institution — KYC provider, bank, employer — after verifying the holder
@@ -331,7 +337,14 @@ export default function IssuerPage() {
               availableTypes.length === 0 ||
               (needsAttr && !attribute) ||
               busy ||
-              issuersLoading
+              issuersLoading ||
+              // Fail loudly up front instead of mid-request.
+              !issuanceConfigured()
+            }
+            title={
+              issuanceConfigured()
+                ? undefined
+                : "App not configured — NEXT_PUBLIC_ISSUER_ADDRESS / IssuerRegistry missing"
             }
             onClick={onIssue}
           >

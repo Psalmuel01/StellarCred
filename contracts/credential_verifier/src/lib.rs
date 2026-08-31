@@ -30,10 +30,21 @@ pub struct EventVkSet {
     pub admin: Address,
 }
 
+/// Payload emitted when an obsolete verification key is removed.
+/// Topics: ("cred_ver", "vk_pruned", credential_type)
+#[contracttype]
+#[derive(Clone)]
+pub struct EventVkPruned {
+    pub admin: Address,
+    pub version: u32,
+}
+
 // Persistent-entry lifetime management (~5s ledgers). VKs are long-lived.
 const DAY_IN_LEDGERS: u32 = 17280;
 const VK_BUMP_THRESHOLD: u32 = 30 * DAY_IN_LEDGERS;
 const VK_TTL: u32 = 180 * DAY_IN_LEDGERS;
+// ProofRegistry's bounded claim validity window, expressed in ledger seconds.
+const MAX_PROOF_VALIDITY_SECONDS: u64 = 90 * 86_400;
 
 #[contracttype]
 pub enum DataKey {
@@ -46,6 +57,8 @@ pub enum DataKey {
     /// accepted for new submissions. Old proofs using this version remain
     /// readable (the VK is not deleted).
     DeprecatedVersion(Symbol, u32),
+    /// Contract-controlled timestamp at which a version was deprecated.
+    DeprecatedAt(Symbol, u32),
 }
 
 #[contracterror]
@@ -61,6 +74,8 @@ pub enum Error {
     /// A VK is already registered at the requested (credential_type,
     /// version); VKs are immutable once set — register a new version instead.
     VkAlreadySet = 5,
+    /// The version may still be referenced by a valid cached proof.
+    VkStillReferenceable = 6,
 }
 
 #[contract]
@@ -95,6 +110,16 @@ impl CredentialVerifier {
         // to upgrade the circuit.
         if env.storage().persistent().has(&key) {
             panic_with_error!(&env, Error::VkAlreadySet);
+        }
+        // A deprecated (including previously pruned) version can never be
+        // resurrected. Register a new version instead.
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::DeprecatedVersion(credential_type.clone(), version))
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, Error::VersionDeprecated);
         }
         if UltraHonkVerifier::new(&env, &vk).is_err() {
             panic_with_error!(&env, Error::VkInvalid);
@@ -151,11 +176,63 @@ impl CredentialVerifier {
             .get::<_, Bytes>(&DataKey::Vk(credential_type.clone(), version))
             .unwrap_or_else(|| panic_with_error!(&env, Error::VkNotSet));
 
-        let dep_key = DataKey::DeprecatedVersion(credential_type, version);
+        let dep_key = DataKey::DeprecatedVersion(credential_type.clone(), version);
+        let already_deprecated = env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&dep_key)
+            .unwrap_or(false);
         env.storage().persistent().set(&dep_key, &true);
+        let at_key = DataKey::DeprecatedAt(credential_type, version);
+        if !already_deprecated {
+            env.storage()
+                .persistent()
+                .set(&at_key, &env.ledger().timestamp());
+        }
         env.storage()
             .persistent()
             .extend_ttl(&dep_key, VK_BUMP_THRESHOLD, VK_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&at_key, VK_BUMP_THRESHOLD, VK_TTL);
+    }
+
+    /// Admin-only. Permanently removes the VK bytes for a deprecated version.
+    /// The safety delay starts when deprecation occurred, not when pruning is
+    /// requested. The deprecation marker is retained, preventing reuse.
+    #[allow(deprecated)]
+    pub fn prune_version(env: Env, credential_type: Symbol, version: u32) {
+        let admin = Self::require_admin(&env);
+        let vk_key = DataKey::Vk(credential_type.clone(), version);
+        if !env.storage().persistent().has(&vk_key) {
+            panic_with_error!(&env, Error::VkNotSet);
+        }
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::DeprecatedVersion(credential_type.clone(), version))
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, Error::VersionDeprecated);
+        }
+        let deprecated_at = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::DeprecatedAt(credential_type.clone(), version))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::VkStillReferenceable));
+        if env.ledger().timestamp() < deprecated_at.saturating_add(MAX_PROOF_VALIDITY_SECONDS) {
+            panic_with_error!(&env, Error::VkStillReferenceable);
+        }
+
+        env.storage().persistent().remove(&vk_key);
+        env.events().publish(
+            (
+                symbol_short!("cred_ver"),
+                symbol_short!("vk_pruned"),
+                credential_type,
+            ),
+            EventVkPruned { admin, version },
+        );
     }
 
     /// Admin-only. Refreshes the TTL of the `LatestVersion` pointer AND the VK
@@ -234,7 +311,12 @@ impl CredentialVerifier {
 
         // Reject submissions against a deprecated VK version.
         let dep_key = DataKey::DeprecatedVersion(credential_type.clone(), version);
-        if env.storage().persistent().get::<_, bool>(&dep_key).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&dep_key)
+            .unwrap_or(false)
+        {
             panic_with_error!(&env, Error::VersionDeprecated);
         }
 

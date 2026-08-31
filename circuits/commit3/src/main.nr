@@ -14,5 +14,24 @@
 use dep::poseidon::poseidon2::Poseidon2;
 
 fn main(status: Field, seniority: Field, salt: Field) -> pub Field {
+    // Defense-in-depth: catch a degenerate zero salt at commitment-computation
+    // time (issuance), not just at proof time in employment_proof. See
+    // circuits/lib/src/lib.nr for the full rationale.
+    assert(salt != 0);
     Poseidon2::hash([status, seniority, salt], 3)
+}
+
+// --- Tests ---------------------------------------------------------------
+// Run: nargo test --package commit3
+
+#[test]
+fn test_commitment_is_deterministic() {
+    let c1 = main(1, 5, 7);
+    let c2 = main(1, 5, 7);
+    assert(c1 == c2);
+}
+
+#[test(should_fail)]
+fn test_zero_salt_rejected() {
+    let _ = main(1, 5, 0);
 }

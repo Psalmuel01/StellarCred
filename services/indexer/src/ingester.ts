@@ -12,15 +12,88 @@
  *   GET /contracts/{contract_id}/events
  * endpoint introduced alongside Protocol 20 / Soroban.
  *
+ * Consistency guarantee
+ * ──────────────────────
+ * The indexer provides **eventual consistency with a configurable finality lag**.
+ *
+ *   - Events are only persisted once their ledger is at least `FINALITY_LAG`
+ *     ledgers behind the network head (default: 6 ≈ 30 seconds at ~5 s/ledger).
+ *   - This means indexed data is delayed by ~30 seconds in the default config,
+ *     but is immune to Stellar ledger reorgs (which can replace the last 1–2
+ *     ledgers during network instability).
+ *   - If a reorg is detected (cursor > head), the indexer rolls back all claims
+ *     with ledger_sequence beyond the reorg point and re-scans.
+ *   - Idempotency: every cycle starts from (lastLedger + 1) and advances the
+ *     cursor only after all rows for that ledger have been written. Restarting
+ *     replays from the last saved cursor; duplicate events are absorbed by
+ *     upsertClaim's ON CONFLICT DO UPDATE clause.
+ *   - The `reconcile()` method can be called explicitly to re-scan a bounded
+ *     window after a detected inconsistency.
+ *
+ * Configuration:
+ *   FINALITY_LAG — number of ledgers to lag (default 6, set to 0 for no lag)
  * Idempotency: every cycle starts from (lastLedger + 1) and advances the cursor
  * only after all rows for that ledger have been written. Restarting replays from
  * the last saved cursor; duplicate events are absorbed by upsertClaim's
  * ON CONFLICT DO UPDATE clause.
+ *
+ * Retry / backoff: transient Horizon errors (5xx, network, 429) are retried
+ * with exponential backoff (up to MAX_RETRIES attempts) before giving up for
+ * the current tick. The cursor is NEVER advanced past unprocessed events.
+ *
+ * Health observability: every tick updates an IngesterHealth snapshot that the
+ * HTTP /health endpoint exposes. Operators can alert on `lag > N` or
+ * `consecutiveErrors > 0`.
  */
 
 import { Horizon } from "@stellar/stellar-sdk";
 import type { Config } from "./config";
 import type { Db } from "./db";
+
+// ── Retry configuration ───────────────────────────────────────────────────
+
+/** Maximum number of fetch attempts per tick (1 = no retry). */
+const MAX_RETRIES = 3;
+
+/** Base delay in ms before the first retry (doubled each subsequent attempt). */
+const BASE_RETRY_DELAY_MS = 500;
+
+/** Maximum single-retry delay (caps exponential growth). */
+const MAX_RETRY_DELAY_MS = 8_000;
+
+// ── Health / lag observability ─────────────────────────────────────────────
+
+export interface IngesterHealth {
+  /** Ledger sequence of the last successfully processed event. 0 if none. */
+  lastSuccessLedger: number;
+  /** Current Horizon head ledger (best-effort, fetched once per tick). */
+  headLedger: number;
+  /** `headLedger - lastSuccessLedger` or -1 if head is unknown. */
+  lag: number;
+  /** Human-readable message from the most recent failed fetch, if any. */
+  lastError: string | null;
+  /** Timestamp (ms) of the most recent failed fetch. */
+  lastErrorTime: number | null;
+  /** How many consecutive ticks have failed (0 = healthy). */
+  consecutiveErrors: number;
+  /** Total fetch attempts (including retries) since start. */
+  fetchAttempts: number;
+  /** Total failed fetch attempts (all retries exhausted) since start. */
+  fetchFailures: number;
+}
+
+function freshHealth(): IngesterHealth {
+  return {
+    lastSuccessLedger: 0,
+    headLedger: 0,
+    lag: -1,
+    lastError: null,
+    lastErrorTime: null,
+    consecutiveErrors: 0,
+    fetchAttempts: 0,
+    fetchFailures: 0,
+  };
+}
 
 // ── Horizon event shape (Soroban contract events) ──────────────────────────
 
@@ -62,6 +135,11 @@ interface HorizonEventsPage {
   _embedded: { records: HorizonContractEvent[] };
 }
 
+/** Horizon root response — used to read the current ledger. */
+interface HorizonRoot {
+  core_latest_ledger: number;
+}
+
 // ── XDR decode helpers (no external XDR lib required) ─────────────────────
 
 /**
@@ -99,6 +177,108 @@ function decodeScVal(b64: string): unknown {
     return native;
   } catch {
     return null;
+  }
+}
+
+// ── Retry helper ───────────────────────────────────────────────────────────
+
+/**
+ * Sleep for `ms` milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Determine whether `err` is a transient error worth retrying.
+ *
+ * Retries on: network errors (ECONNRESET, ENOTFOUND, etc.), HTTP 5xx,
+ * and HTTP 429 (rate limited).
+ * Does NOT retry on: HTTP 4xx (except 429) — those are permanent request
+ * errors (e.g. 404 = contract has no events, which we handle separately).
+ */
+function isTransientError(err: unknown): boolean {
+  const msg = (err as Error).message?.toLowerCase() ?? "";
+  // Node fetch network errors (fetch failed, terminated, ECONNRESET, etc.)
+  if (
+    msg.includes("fetch failed") ||
+    msg.includes("terminated") ||
+    msg.includes("econnreset") ||
+    msg.includes("enotfound") ||
+    msg.includes("socket hang up") ||
+    msg.includes("network") ||
+    msg.includes("timeout")
+  ) {
+    return true;
+  }
+  // Horizon HTTP-level transient errors are caught by the status code checks
+  // in fetchEventsWithRetry. Anything else is non-transient.
+  return false;
+}
+
+/**
+ * Fetch with bounded exponential backoff. Returns the parsed Horizon events
+ * page, or throws after all retries are exhausted.
+ *
+ * @param url       Full URL to fetch
+ * @param signal    AbortSignal for timeout
+ * @param retries   Remaining retries (internal, do not pass)
+ * @param attempt   Current attempt number (1-based, internal)
+ */
+async function fetchEventsWithRetry(
+  url: string,
+  signal: AbortSignal,
+  retries = MAX_RETRIES,
+  attempt = 1,
+): Promise<HorizonEventsPage> {
+  try {
+    const res = await fetch(url, { signal });
+    if (res.ok) {
+      return (await res.json()) as HorizonEventsPage;
+    }
+    // 404 = contract has no events yet — not an error, not transient.
+    if (res.status === 404) {
+      // Return an empty page rather than throwing so the caller sees
+      // records.length === 0 and returns 0 events cleanly.
+      return { _embedded: { records: [] } };
+    }
+    // 429 = rate limited — transient, worth retrying.
+    // 5xx = server error — transient.
+    if (res.status === 429 || res.status >= 500) {
+      if (retries <= 0) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `Horizon responded ${res.status} after ${attempt} attempts: ${text}`,
+        );
+      }
+      // For 429, honour Retry-After if present; otherwise use exponential backoff.
+      const retryAfter = res.headers.get("retry-after");
+      const delayMs = retryAfter
+        ? Math.min(Number(retryAfter) * 1000, MAX_RETRY_DELAY_MS)
+        : Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS);
+      console.warn(
+        `[indexer] Horizon ${res.status} on attempt ${attempt}/${attempt + retries}, retrying in ${delayMs}ms…`,
+      );
+      await sleep(delayMs);
+      return fetchEventsWithRetry(url, signal, retries - 1, attempt + 1);
+    }
+    // Other 4xx = permanent error, no retry.
+    const text = await res.text().catch(() => "");
+    throw new Error(`Horizon responded ${res.status}: ${text}`);
+  } catch (err) {
+    // If it's a non-transient error or we've exhausted retries, throw.
+    if (!isTransientError(err) || retries <= 0) {
+      throw err;
+    }
+    const delayMs = Math.min(
+      BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1),
+      MAX_RETRY_DELAY_MS,
+    );
+    console.warn(
+      `[indexer] transient fetch error on attempt ${attempt}/${attempt + retries}: ${(err as Error).message}; retrying in ${delayMs}ms…`,
+    );
+    await sleep(delayMs);
+    return fetchEventsWithRetry(url, signal, retries - 1, attempt + 1);
   }
 }
 
@@ -197,10 +377,17 @@ function parseEvent(
 export interface Ingester {
   /** Run one ingestion cycle (fetch + write). Returns number of events processed. */
   tick(): Promise<number>;
+  /**
+   * Re-scan a bounded window of ledgers to reconcile after a detected reorg.
+   * Deletes claims newer than `reorgPoint` and re-indexes up to the new head.
+   */
+  reconcile(reorgPoint: number): Promise<number>;
   /** Start a continuous polling loop. */
   start(): void;
   /** Stop the polling loop. */
   stop(): void;
+  /** Current health snapshot — safe to read at any time. */
+  getHealth(): IngesterHealth;
 }
 
 export function createIngester(config: Config, db: Db): Ingester {
@@ -210,30 +397,69 @@ export function createIngester(config: Config, db: Db): Ingester {
 
   let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const health = freshHealth();
 
-  async function tick(): Promise<number> {
-    const lastLedger = await db.getLastLedger();
+  // ── Fetch current Horizon head ledger (cached per tick) ────────────────
+  // We fetch this once at the start of each tick so lag is observable
+  // without adding a second network call on every cycle.
+  let cachedHeadLedger = 0;
+  let cachedHeadTime = 0;
+  const HEAD_CACHE_MS = 30_000;
 
-    // Build cursor: Horizon contract event cursor is paging_token of the last
-    // seen record. For a fresh start (lastLedger=0) pass "now" or omit it so
-    // we start from the beginning (START_LEDGER=0 means index from genesis;
-    // adjust in config if you only care about recent events).
-    //
-    // Horizon's GET /contracts/{id}/events accepts:
-    //   cursor   — paging token (opaque)
-    //   order    — asc (default)
-    //   limit    — max records per page (max 200)
-    //   ledger   — filter by ledger (not useful for polling)
-    //
-    // We use a simple numeric cursor derived from ledger*100_000 which is how
-    // Horizon builds paging_tokens for events in practice.
-    const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
-    const cursor = config.startLedger > 0 && lastLedger === 0
-      ? String(config.startLedger * 100_000)
-      : cursorNum > 0
-      ? String(cursorNum)
-      : undefined;
+  async function fetchHeadLedger(): Promise<number> {
+    const now = Date.now();
+    if (cachedHeadLedger > 0 && now - cachedHeadTime < HEAD_CACHE_MS) {
+      return cachedHeadLedger;
+    }
+    try {
+      const res = await fetch(config.horizonUrl, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.ok) {
+        const root = (await res.json()) as HorizonRoot;
+        const seq = root.core_latest_ledger ?? 0;
+        if (seq > 0) {
+          cachedHeadLedger = seq;
+          cachedHeadTime = now;
+        }
+      }
+    } catch {
+      // Best-effort — head is not critical for tick correctness.
+    }
+    return cachedHeadLedger;
+  }
 
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch the current ledger sequence from Horizon.
+   * Uses GET /ledgers?order=desc&limit=1 to get the latest closed ledger.
+   */
+  async function getLedgerHead(): Promise<number> {
+    const url = new URL("/ledgers", config.horizonUrl);
+    url.searchParams.set("order", "desc");
+    url.searchParams.set("limit", "1");
+
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      throw new Error(`Horizon /ledgers responded ${res.status}`);
+    }
+    const body = (await res.json()) as {
+      _embedded?: { records?: Array<{ sequence: number | string }> };
+    };
+    const seq = body._embedded?.records?.[0]?.sequence;
+    if (seq === undefined) throw new Error("No ledger returned from Horizon");
+    return typeof seq === "string" ? parseInt(seq, 10) : seq;
+  }
+
+  /**
+   * Fetch contract events starting from a cursor, up to a max ledger.
+   * Events with ledger > maxLedger are skipped (not persisted).
+   */
+  async function fetchEvents(
+    cursor: string | undefined,
+    maxLedger: number
+  ): Promise<HorizonContractEvent[]> {
     const url = new URL(
       `/contracts/${config.proofRegistryContractId}/events`,
       config.horizonUrl
@@ -244,34 +470,53 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
-    let page: HorizonEventsPage;
-    try {
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        if (res.status === 404) {
-          // Contract has no events yet — not an error.
-          return 0;
+    // Fetch head ledger (best-effort) so lag is visible in /health.
+    // We fire this in parallel with the events fetch so we don't add
+    // serial latency to every tick.
+    const [, page] = await Promise.all([
+      fetchHeadLedger(),
+      (async () => {
+        health.fetchAttempts++;
+        try {
+          return await fetchEventsWithRetry(
+            url.toString(),
+            AbortSignal.timeout(15_000)
+          );
+        } catch (err) {
+          // All retries exhausted — record the error but do NOT advance cursor.
+          health.lastError = (err as Error).message;
+          health.lastErrorTime = Date.now();
+          health.consecutiveErrors++;
+          health.fetchFailures++;
+          throw err;
         }
-        throw new Error(`Horizon responded ${res.status}: ${await res.text()}`);
-      }
-      page = (await res.json()) as HorizonEventsPage;
-    } catch (err) {
-      console.warn("[indexer] Horizon fetch error:", (err as Error).message);
-      return 0;
-    }
+      })(),
+    ]);
 
     const records = page._embedded?.records ?? [];
-    if (records.length === 0) return 0;
+    if (records.length === 0) {
+      // Successful empty fetch — reset error state and update lag.
+      health.consecutiveErrors = 0;
+      health.lastError = null;
+      health.headLedger = cachedHeadLedger;
+      health.lag =
+        cachedHeadLedger > 0 ? cachedHeadLedger - (await db.getLastLedger()) : -1;
+      return [];
+    }
 
-    let maxLedger = lastLedger;
-    let processed = 0;
-
-    for (const ev of records) {
-      const parsed = parseEvent(ev, config.proofRegistryContractId);
+    // Filter out events beyond the finality boundary
+    return records.filter((ev) => {
       const evLedger =
-        typeof ev.ledger === "string"
-          ? parseInt(ev.ledger, 10)
-          : ev.ledger;
+        typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
+      return evLedger <= maxLedger;
+    });
+  }
+
+  /** Process a batch of events, upserting/revoking claims. Returns count. */
+  async function processEvents(events: HorizonContractEvent[]): Promise<number> {
+    let processed = 0;
+    for (const ev of events) {
+      const parsed = parseEvent(ev, config.proofRegistryContractId);
 
       if (parsed.kind === "verified") {
         await db.upsertClaim({
@@ -289,15 +534,110 @@ export function createIngester(config: Config, db: Db): Ingester {
         await db.revokeClaim(parsed.holder, parsed.credentialType);
         processed++;
       }
+    }
+    return processed;
+  }
 
-      if (evLedger > maxLedger) maxLedger = evLedger;
+  // ── Core ingestion tick ──────────────────────────────────────────────────
+
+  async function tick(): Promise<number> {
+    const lastLedger = await db.getLastLedger();
+
+    // 1. Determine the network head and the finality-safe ceiling.
+    let headLedger: number;
+    try {
+      headLedger = await getLedgerHead();
+    } catch (err) {
+      console.warn("[indexer] Could not fetch ledger head:", (err as Error).message);
+      return 0;
     }
 
+    // 2. Detect potential reorg FIRST: if our cursor claims to have ingested
+    //    a ledger that is now beyond the network head, the chain was likely
+    //    reorged past our last checkpoint. This must run before the
+    //    finality-ceiling early return below — a reorged head is exactly the
+    //    case where (head - lag) has fallen at or below our cursor, which
+    //    would otherwise make reorg detection unreachable.
+    if (lastLedger > headLedger) {
+      console.warn(
+        `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
+          `Rolling back to head and re-scanning.`
+      );
+      return reconcile(headLedger);
+    }
+
+    // The finality ceiling: only persist events at or below (head - lag).
+    // If the network hasn't progressed past our lag buffer yet, there's
+    // nothing final to index.
+    const finalityCeiling = headLedger - config.finalityLag;
+    if (finalityCeiling <= lastLedger) {
+      // Head hasn't advanced past our cursor + lag yet — nothing to do.
+      return 0;
+    }
+
+    // 3. Build the Horizon cursor. For a fresh start with startLedger
+    //    configured, begin there; otherwise resume from lastLedger.
+    const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
+    const cursor =
+      config.startLedger > 0 && lastLedger === 0
+        ? String(config.startLedger * 100_000)
+        : cursorNum > 0
+        ? String(cursorNum)
+        : undefined;
+
+    // 4. Fetch events up to the finality ceiling.
+    let events: HorizonContractEvent[];
+    try {
+      events = await fetchEvents(cursor, finalityCeiling);
+    } catch (err) {
+      console.warn("[indexer] Horizon fetch error:", (err as Error).message);
+      return 0;
+    }
+
+    if (events.length === 0) return 0;
+
+    // 5. Process events and update cursor.
+    const processed = await processEvents(events);
+
+    // Advance cursor to the highest ledger among processed events.
+    let maxLedger = lastLedger;
+    for (const ev of events) {
+      const evLedger = typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
+      if (evLedger > maxLedger) maxLedger = evLedger;
+    }
     if (maxLedger > lastLedger) {
       await db.setLastLedger(maxLedger);
     }
 
+    // Update health on success.
+    health.lastSuccessLedger = maxLedger;
+    health.headLedger = cachedHeadLedger;
+    health.lag = cachedHeadLedger > 0 ? cachedHeadLedger - maxLedger : -1;
+    health.consecutiveErrors = 0;
+    health.lastError = null;
+
     return processed;
+  }
+
+  // ── Reorg reconciliation ─────────────────────────────────────────────────
+
+  /**
+   * Re-scan a bounded window after detecting a reorg or called explicitly.
+   * Deletes claims with ledger_sequence > reorgPoint, then re-indexes
+   * from reorgPoint up to the current finality ceiling.
+   */
+  async function reconcile(reorgPoint: number): Promise<number> {
+    console.log(`[indexer] Reconciling from ledger ${reorgPoint}`);
+
+    // Roll back: delete all claims with ledger_sequence beyond the reorg point.
+    await db.deleteClaimsAfter(reorgPoint);
+
+    // Reset cursor so we re-fetch from the reorg point.
+    await db.setLastLedger(reorgPoint);
+
+    // Now run a normal tick — it will fetch events from reorgPoint onward
+    // up to the new finality ceiling.
+    return tick();
   }
 
   function scheduleNext() {
@@ -317,6 +657,7 @@ export function createIngester(config: Config, db: Db): Ingester {
 
   return {
     tick,
+    reconcile,
     start() {
       if (running) return;
       running = true;
@@ -332,6 +673,9 @@ export function createIngester(config: Config, db: Db): Ingester {
         clearTimeout(timer);
         timer = null;
       }
+    },
+    getHealth() {
+      return { ...health };
     },
   };
 }
