@@ -58,9 +58,9 @@ stellar contract invoke \
   -- register_issuer \
   --issuer_id "$ADMIN" \
   --pubkey "$ISSUER_PUBKEY" \
-  --credential_types '["kyc","age","income","jurisdiction","funds","accreditation"]'
+  --credential_types '["kyc","age","income","jurisdiction","funds","accreditation","employment"]'
 
-for type in kyc age income jurisdiction funds accreditation; do
+for type in kyc age income jurisdiction funds accreditation employment; do
   vk="fixtures/$type/vk"
   [ -f "$vk" ] || { echo "skip $type (no VK — run circuits/scripts/build.sh)"; continue; }
   echo "Registering $type verification key..."
@@ -70,8 +70,18 @@ for type in kyc age income jurisdiction funds accreditation; do
     --send yes \
     -- set_vk \
     --credential_type "$type" \
+    --version 1 \
     --vk-file-path "$vk"
 done
+
+export NEXT_PUBLIC_ISSUER_ADDRESS=$ADMIN
+export NEXT_PUBLIC_ISSUER_REGISTRY_ID=$ISSUER_REGISTRY_ID
+export NEXT_PUBLIC_CREDENTIAL_VERIFIER_ID=$CREDENTIAL_VERIFIER_ID
+export NEXT_PUBLIC_PROOF_REGISTRY_ID=$PROOF_REGISTRY_ID
+export NEXT_PUBLIC_GATED_POOL_ID=$GATED_POOL_ID
+
+echo "Generating TypeScript bindings..."
+./scripts/gen-bindings.sh
 
 cat <<EOF
 

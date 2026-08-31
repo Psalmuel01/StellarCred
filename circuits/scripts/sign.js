@@ -10,9 +10,26 @@
 // DEMO KEY ONLY. A real issuer keeps its secret key private and off the client.
 
 const path = require("path");
-const fe = (m) => path.join(__dirname, "../../frontend/node_modules", m);
-const { secp256k1 } = require(fe("@noble/curves/secp256k1.js"));
-const { sha256 } = require(fe("@noble/hashes/sha2.js"));
+const fs = require("fs");
+
+function loadModule(modulePath) {
+  const candidates = [
+    path.join(__dirname, "../../frontend/node_modules", modulePath),
+    path.join(__dirname, "../../node_modules", modulePath),
+    path.join(__dirname, "../node_modules", modulePath),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return require(candidate);
+    }
+  }
+
+  throw new Error(`Unable to find module '${modulePath}'. Checked: ${candidates.join(", ")}`);
+}
+
+const { secp256k1 } = loadModule("@noble/curves/secp256k1.js");
+const { sha256 } = loadModule("@noble/hashes/sha2.js");
 
 // Use ISSUER_PRIVATE_KEY from env when set; fall back to the dev demo key.
 const DEMO_SK = process.env.ISSUER_PRIVATE_KEY

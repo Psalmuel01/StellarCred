@@ -1,20 +1,64 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { StellarCred } from "./index";
+import { hasClaims, type ClaimType } from "./claims";
 
-export type ClaimType = "kyc" | "age" | "jurisdiction" | "income" | "funds" | "accreditation";
-
-interface UseStellarCredOptions {
+/**
+ * Configuration options for the `useStellarCred` React hook.
+ *
+ * @example
+ * ```tsx
+ * const { claims } = useStellarCred(wallet, {
+ *   claims: ["kyc", "age"],
+ *   minThresholds: { age: 21 },
+ * });
+ * ```
+ */
+export interface UseStellarCredOptions {
   claims?: ClaimType[];
+    /**
+   * Minimum thresholds for parameterized claims.
+   *
+   * Example:
+   * {
+   *   age: 21,
+   *   funds: 50000,
+   * }
+   */
   minThresholds?: Partial<Record<ClaimType, number>>;
 }
 
-interface UseStellarCredResult {
+/**
+ * Result returned by the `useStellarCred` React hook.
+ *
+ * @example
+ * ```tsx
+ * const { claims, loading, error, refetch } = useStellarCred(wallet);
+ * ```
+ */
+export interface UseStellarCredResult {
   claims: Partial<Record<ClaimType, boolean>> | null;
   loading: boolean;
   error: Error | null;
   refetch: () => void;
 }
 
+/**
+ * React hook for checking StellarCred claims for a wallet.
+ *
+ * The hook automatically fetches claim verification status when the wallet
+ * changes and exposes loading, error, and refetch state.
+ *
+ * @param wallet Stellar wallet address, or `null` when disconnected.
+ * @param options Optional configuration for which claims to check.
+ *
+ * @returns Current claim status, loading state, any error, and a refetch function.
+ *
+ * @example
+ * ```tsx
+ * const { claims, loading } = useStellarCred(wallet, {
+ *   claims: ["kyc", "age"],
+ * });
+ * ```
+ */
 export function useStellarCred(
   wallet: string | null,
   options?: UseStellarCredOptions
@@ -35,23 +79,14 @@ export function useStellarCred(
     setError(null);
 
     try {
-      const typesToCheck = options?.claims || ["kyc", "age", "jurisdiction", "income", "funds", "accreditation"];
-      const results: Partial<Record<ClaimType, boolean>> = {};
+      const typesToCheck: ClaimType[] =
+        options?.claims || ["kyc", "age", "jurisdiction", "income", "funds", "accreditation"];
 
-      await Promise.all(
-        typesToCheck.map(async (claimType) => {
-          try {
-            const hasClaim = await StellarCred.hasClaim(wallet, claimType);
-            if (mountedRef.current) {
-              results[claimType] = hasClaim;
-            }
-          } catch {
-            if (mountedRef.current) {
-              results[claimType] = false;
-            }
-          }
-        })
-      );
+      // One batched read shares a single client across all types; per-type
+      // failures resolve to `false` inside `hasClaims`.
+      const results = await hasClaims(wallet, typesToCheck, {
+        minThresholds: options?.minThresholds,
+      });
 
       if (mountedRef.current) {
         setClaims(results);
@@ -77,4 +112,3 @@ export function useStellarCred(
 
   return { claims, loading, error, refetch: fetchClaims };
 }
-

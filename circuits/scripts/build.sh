@@ -31,6 +31,10 @@ type_of() {
     jurisdiction_proof) echo jurisdiction ;;
     funds_proof) echo funds ;;
     accreditation_proof) echo accreditation ;;
+    range_proof) echo range ;;
+    employment_proof) echo employment ;;
+    aggregate_proof) echo aggregate ;;
+    set_membership) echo set_membership ;;
     *) echo "$1" ;;
   esac
 }
@@ -38,6 +42,11 @@ type_of() {
 REPO="$(cd "$ROOT/.." && pwd)"
 FIXTURES="$REPO/fixtures"
 mkdir -p "$FRONTEND_CIRCUITS"
+
+if [ -f "$ROOT/scripts/gen_inputs.sh" ]; then
+  echo "Generating circuit prover inputs..."
+  bash "$ROOT/scripts/gen_inputs.sh"
+fi
 
 build() {
   local name="$1"
@@ -48,18 +57,23 @@ build() {
 
   local type
   type="$(type_of "$name")"
-  local json="target/${name}.json"
-  local gz="target/${name}.gz"
+  # nargo resolves the output dir to the *workspace* root (circuits/target/),
+  # not a per-member target/, since these are workspace members — not bb's
+  # target, which is always relative to --output_path below.
+  local json="$ROOT/target/${name}.json"
+  local gz="$ROOT/target/${name}.gz"
 
-  # The commit helper is only ever executed (to derive commitments), never
-  # proven — compile and stage its JSON, nothing else.
-  if [ "$name" = "commit" ]; then
-    nargo compile
-    cp "$json" "$FRONTEND_CIRCUITS/commit.json"
-    echo "  -> frontend/public/circuits/commit.json"
-    popd >/dev/null
-    return
-  fi
+  # The commit helpers are only ever executed (to derive commitments), never
+  # proven — compile and stage their JSON, nothing else.
+  case "$name" in
+    commit|commit3)
+      nargo compile
+      cp "$json" "$FRONTEND_CIRCUITS/${name}.json"
+      echo "  -> frontend/public/circuits/${name}.json"
+      popd >/dev/null
+      return
+      ;;
+  esac
 
   # Compile + VK are always possible (write_vk needs only the bytecode).
   nargo compile
@@ -87,11 +101,29 @@ build() {
     echo "  -> fixtures/${type}/{proof,public_inputs}"
   fi
 
+  # For jurisdiction_proof: also build an allowlist fixture if Prover_allowlist.toml exists.
+  if [ "$name" = "jurisdiction_proof" ] && [ -f Prover_allowlist.toml ]; then
+    echo "  --- allowlist fixture ---"
+    cp Prover.toml Prover.toml.bak
+    cp Prover_allowlist.toml Prover.toml
+    nargo execute
+    bb prove --scheme ultra_honk --oracle_hash keccak \
+      --bytecode_path "$json" --witness_path "$gz" \
+      --output_path target --output_format bytes_and_fields
+    mkdir -p "$FIXTURES/jurisdiction_allow"
+    cp target/vk "$FIXTURES/jurisdiction_allow/vk"
+    cp target/proof "$FIXTURES/jurisdiction_allow/proof"
+    cp target/public_inputs "$FIXTURES/jurisdiction_allow/public_inputs"
+    echo "  -> fixtures/jurisdiction_allow/{vk,proof,public_inputs}"
+    mv Prover.toml.bak Prover.toml
+  fi
+
   popd >/dev/null
 }
 
 if [ "$#" -gt 0 ]; then
   for n in "$@"; do build "$n"; done
 else
-  for n in commit kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof; do build "$n"; done
+  for n in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof range_proof employment_proof aggregate_proof set_membership; do build "$n"; done
 fi
+

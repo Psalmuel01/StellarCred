@@ -2,17 +2,40 @@
 //! GatedPool (demo)
 //!
 //! A mock DeFi pool that gates **deposits** behind a valid KYC proof in the
-//! ProofRegistry. Withdrawals are open. This is the contract that makes the demo
-//! concrete: same call, two outcomes — "Access Denied" without a proof, "Access
-//! Granted" after one is submitted.
+//! ProofRegistry. Withdrawals are open to the authorized balance owner even
+//! after their credential expires or is revoked. This is the contract that
+//! makes the demo concrete: same call, two outcomes — "Access Denied" without
+//! a proof, "Access Granted" after one is submitted.
 //!
 //! Balances are tracked as a plain ledger here (no real token transfer) to keep
 //! the demo self-contained; swap in a token client for production.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    symbol_short, Address, Env, Symbol,
+    symbol_short, Address, Env, Symbol, Vec,
 };
+
+// ── Event payload structs ───────────────────────────────────────────────────
+
+/// Payload emitted when a caller successfully deposits into the gated pool.
+/// Topics: (symbol_short!("gate_pool"), symbol_short!("deposit"))
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventDeposit {
+    pub caller: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
+
+/// Payload emitted when a caller successfully withdraws from the gated pool.
+/// Topics: (symbol_short!("gate_pool"), symbol_short!("withdraw"))
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventWithdraw {
+    pub caller: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+}
 
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -24,12 +47,20 @@ const BALANCE_TTL: u32 = 120 * DAY_IN_LEDGERS;
 /// exported wasm symbols.
 #[contractclient(name = "RegistryClient")]
 pub trait RegistryInterface {
-    fn is_verified(env: Env, holder: Address, credential_type: Symbol) -> (bool, u64, u64);
+    fn check_claim(
+        env: Env,
+        holder: Address,
+        credential_type: Symbol,
+        min_threshold: Option<u64>,
+        trusted_issuers: Option<Vec<Address>>,
+    ) -> bool;
 }
 
 #[contracttype]
 pub enum DataKey {
     Registry,
+    RequiredType,
+    MinThreshold,
     Balance(Address),
 }
 
@@ -49,11 +80,23 @@ pub struct GatedPool;
 #[contractimpl]
 impl GatedPool {
     /// `registry` is the deployed ProofRegistry contract address.
-    pub fn __constructor(env: Env, registry: Address) {
+    pub fn __constructor(
+        env: Env,
+        registry: Address,
+        required_type: Symbol,
+        min_threshold: Option<u64>,
+    ) {
         env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage()
+            .instance()
+            .set(&DataKey::RequiredType, &required_type);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinThreshold, &min_threshold);
     }
 
-    /// Deposit `amount`. Requires a currently-valid KYC proof for `caller`.
+    /// Deposit `amount`. Requires a currently-valid proof for the configured claim.
+    #[allow(deprecated)]
     pub fn deposit(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -61,16 +104,36 @@ impl GatedPool {
         }
 
         let registry = RegistryClient::new(&env, &Self::registry(&env));
-        let (verified, _at, _expiry) = registry.is_verified(&caller, &symbol_short!("kyc"));
+        let verified = registry.check_claim(
+            &caller,
+            &Self::required_type(&env),
+            &Self::min_threshold(&env),
+            &None,
+        );
         if !verified {
             panic_with_error!(&env, Error::NotKycVerified);
         }
 
         let balance = Self::balance_of(&env, &caller) + amount;
         Self::set_balance(&env, &caller, balance);
+
+        env.events().publish(
+            (symbol_short!("gate_pool"), symbol_short!("deposit")),
+            EventDeposit {
+                caller,
+                amount,
+                new_balance: balance,
+            },
+        );
     }
 
-    /// Withdraw `amount`. Open — no proof required.
+    /// Withdraw `amount` from the caller's balance.
+    ///
+    /// Withdrawal does not require a current credential: a holder retains
+    /// access to their own funds after the credential used for deposit expires
+    /// or is revoked. The caller must still authorize the operation, provide a
+    /// positive amount, and stay within their recorded balance.
+    #[allow(deprecated)]
     pub fn withdraw(env: Env, caller: Address, amount: i128) {
         caller.require_auth();
         if amount <= 0 {
@@ -80,7 +143,19 @@ impl GatedPool {
         if amount > balance {
             panic_with_error!(&env, Error::InsufficientBalance);
         }
-        Self::set_balance(&env, &caller, balance - amount);
+        let remaining = balance
+            .checked_sub(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InsufficientBalance));
+        Self::set_balance(&env, &caller, remaining);
+
+        env.events().publish(
+            (symbol_short!("gate_pool"), symbol_short!("withdraw")),
+            EventWithdraw {
+                caller,
+                amount,
+                new_balance: remaining,
+            },
+        );
     }
 
     pub fn get_balance(env: Env, account: Address) -> i128 {
@@ -89,6 +164,10 @@ impl GatedPool {
 
     pub fn registry_address(env: Env) -> Address {
         Self::registry(&env)
+    }
+
+    pub fn gate(env: Env) -> (Symbol, Option<u64>) {
+        (Self::required_type(&env), Self::min_threshold(&env))
     }
 
     fn balance_of(env: &Env, account: &Address) -> i128 {
@@ -110,6 +189,20 @@ impl GatedPool {
         env.storage()
             .instance()
             .get(&DataKey::Registry)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn required_type(env: &Env) -> Symbol {
+        env.storage()
+            .instance()
+            .get(&DataKey::RequiredType)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
+    }
+
+    fn min_threshold(env: &Env) -> Option<u64> {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinThreshold)
             .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized))
     }
 }

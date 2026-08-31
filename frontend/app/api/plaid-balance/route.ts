@@ -1,44 +1,68 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { logger, stripSensitiveFields, resolveRequestId } from "../../../lib/logger";
+import { checkContentLength, bodyErrorResponse } from "../../../lib/request-limits";
+import {
+  checkLimit,
+  extractIp,
+  hashForLog,
+  tooManyRequestsResponse,
+  LIMITS,
+} from "../../../lib/rate-limit";
+import { fetchPlaidBalance } from "../../../lib/plaid";
 
-export async function GET() {
-  if (!process.env.PLAID_ACCESS_TOKEN) {
-    return NextResponse.json({ balance: 50000, mock: true });
+export async function GET(req: NextRequest) {
+  const requestId = resolveRequestId(req.headers.get("x-request-id"));
+
+  const sendResponse = (response: NextResponse) => {
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+
+  // ── Rate limiting ─────────────────────────────────────────────────────────
+  // Applied before the Content-Length check: floods are rejected before any
+  // header inspection or upstream Plaid call.
+  const ip = extractIp(req);
+  const ipResult = checkLimit(`plaid:ip:${ip}`, LIMITS.plaidPerIp(), LIMITS.windowMs());
+  if (ipResult.throttled) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "rate_limited",
+        route: "plaid-balance",
+        dimension: "ip",
+        ipToken: hashForLog(ip),
+        requestId,
+      }),
+    );
+    return sendResponse(tooManyRequestsResponse(ipResult.retryAfterMs));
   }
 
-  const env = process.env.PLAID_ENV ?? "sandbox";
-  const baseUrl =
-    env === "production"
-      ? "https://production.plaid.com"
-      : env === "development"
-        ? "https://development.plaid.com"
-        : "https://sandbox.plaid.com";
+  // This route reads no body, but it still refuses an oversized one rather
+  // than letting the request reach the upstream Plaid call.
+  const oversized = checkContentLength(req);
+  if (oversized) {
+    logger.warn(stripSensitiveFields({
+      event: "plaid_balance_request_rejected",
+      outcome: oversized.code,
+      requestId,
+    }));
+    return sendResponse(bodyErrorResponse(oversized));
+  }
 
-  const response = await fetch(`${baseUrl}/accounts/balance/get`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: process.env.PLAID_CLIENT_ID,
-      secret: process.env.PLAID_SECRET,
-      access_token: process.env.PLAID_ACCESS_TOKEN,
-    }),
-  });
+  logger.info(stripSensitiveFields({ event: "plaid_balance_request_received", requestId }));
 
-  const result = await response.json();
-  if (!response.ok || result.error_code) {
-    return NextResponse.json(
-      { error: result.error_message ?? "Plaid error" },
-      { status: 502 },
+  const result = await fetchPlaidBalance(requestId);
+
+  if (!result.ok) {
+    return sendResponse(
+      NextResponse.json({ error: result.error, code: result.code }, { status: result.status }),
     );
   }
 
-  const accounts: Array<{ type: string; name: string; balances: { available: number | null; current: number | null } }> =
-    result.accounts ?? [];
-
-  const depository = accounts
-    .filter((a) => a.type === "depository")
-    .map((a) => ({ name: a.name, available: a.balances.available ?? 0 }))
-    .sort((a, b) => b.available - a.available);
-
-  const balance = depository[0]?.available ?? 0;
-  return NextResponse.json({ balance, accounts: depository });
+  return sendResponse(
+    NextResponse.json(
+      result.mock
+        ? { balance: result.balance, mock: true }
+        : { balance: result.balance, accounts: result.accounts },
+    ),
+  );
 }

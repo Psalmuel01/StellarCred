@@ -35,6 +35,8 @@ Areas of particular interest:
 - `prehash: false` is required when signing — Noir uses the raw 32-byte commitment as the message digest. Changing this breaks all existing proofs.
 - Identity fields from KYC providers are used only to derive credential values and are never stored or logged after the API call completes.
 
+See the full threat model and reviewer checklist in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
 ## Pre-Mainnet Security Checklist
 
 Before deploying StellarCred to the Stellar mainnet, verify that all security parameters and operational keys meet the following production standards:
