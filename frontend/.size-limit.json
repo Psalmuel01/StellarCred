@@ -33,6 +33,11 @@
     "limit": "10 kB"
   },
   {
+    "name": "Badge Route JS",
+    "path": ".next/static/chunks/app/badge/**/*.js",
+    "limit": "10 kB"
+  },
+  {
     "name": "Developers & Docs Routes JS",
     "path": [
       ".next/static/chunks/app/developers/**/*.js",

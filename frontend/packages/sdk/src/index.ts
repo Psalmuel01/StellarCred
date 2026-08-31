@@ -277,7 +277,7 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
-import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+import { Client as ProofRegistryClient } from "../../proof-registry/src/index";
 import { configure as configureSharedClaims } from "./claims";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
@@ -850,6 +850,52 @@ export function buildVerifyUrl(options: {
   return url.toString();
 }
 
+/**
+ * Build a shareable embed URL for the StellarCred public verification badge.
+ *
+ * @example
+ * const url = buildBadgeUrl({
+ *   wallet: "G1ABC…",
+ *   claim: "kyc",
+ *   theme: "dark",
+ * });
+ */
+export function buildBadgeUrl(options: {
+  wallet: string;
+  claim: string;
+  theme?: "dark" | "light" | "auto";
+  compact?: boolean;
+  baseUrl?: string;
+}): string {
+  const base = options.baseUrl ?? _config.baseUrl;
+  const url = new URL("/badge", base);
+  url.searchParams.set("wallet", options.wallet);
+  url.searchParams.set("claim", options.claim);
+  if (options.theme && options.theme !== "auto") {
+    url.searchParams.set("theme", options.theme);
+  }
+  if (options.compact) {
+    url.searchParams.set("compact", "1");
+  }
+  return url.toString();
+}
+
+/**
+ * Generate an HTML <iframe> embed code snippet for the verification badge.
+ */
+export function buildBadgeEmbedCode(options: {
+  wallet: string;
+  claim: string;
+  theme?: "dark" | "light" | "auto";
+  compact?: boolean;
+  baseUrl?: string;
+}): string {
+  const src = buildBadgeUrl(options);
+  const width = options.compact ? "180" : "260";
+  const height = options.compact ? "36" : "54";
+  return `<iframe src="${src}" width="${width}" height="${height}" frameborder="0" scrolling="no" style="border:none;overflow:hidden;border-radius:8px;" title="StellarCred Verification Badge"></iframe>`;
+}
+
 // ---------------------------------------------------------------------------
 // Return-URL params — untrusted hints only (Issue #213)
 // ---------------------------------------------------------------------------
@@ -1046,6 +1092,8 @@ export const StellarCred = {
   hasClaims,
   getClaims,
   buildVerifyUrl,
+  buildBadgeUrl,
+  buildBadgeEmbedCode,
   parseReturnParams,
   watchClaim,
   CLAIM_TYPES,

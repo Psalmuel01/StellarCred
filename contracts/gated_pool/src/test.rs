@@ -309,3 +309,34 @@ fn deposit_uses_constructor_provided_registry_not_an_unrelated_one() {
     h.pool.deposit(&user, &100);
     assert_eq!(h.pool.get_balance(&user), 100);
 }
+
+#[test]
+fn deposit_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &250);
+
+    // Verify balance was updated
+    assert_eq!(h.pool.get_balance(&user), 250);
+}
+
+#[test]
+fn withdraw_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let user = Address::generate(&env);
+
+    prove_kyc(&env, &h, &user);
+    h.pool.deposit(&user, &500);
+
+    h.pool.withdraw(&user, &200);
+
+    // Verify balance was updated
+    assert_eq!(h.pool.get_balance(&user), 300);
+}
+

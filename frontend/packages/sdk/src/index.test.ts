@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const isVerified = vi.fn();
 const checkClaim = vi.fn();
 
-vi.mock("../../proof-registry/src/index.js", () => ({
+vi.mock("../../proof-registry/src/index", () => ({
   Client: vi.fn(function ProofRegistryClient() {
     return {
       is_verified: isVerified,

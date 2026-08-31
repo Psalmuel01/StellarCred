@@ -34,6 +34,213 @@ import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
 import { useBatchSelection } from "@/lib/hooks/useBatchSelection";
 import { useImportExport } from "@/lib/hooks/useImportExport";
 import { proofStatus } from "@/lib/proof-helpers";
+// Parse "90 days", "30 days" etc from the credential's expiry string.
+function credTtlSecs(cred: Credential): number {
+  const match = cred.expiry?.match(/(\d+)/);
+  return (match ? parseInt(match[1]) : 30) * 86_400;
+}
+
+// Downloads every locally stored credential as a JSON backup file. Pairs with
+// the "Import credential JSON" panel: the file's contents can be pasted back
+// here (or into another browser/device) to restore. Credentials live only in
+// this browser's localStorage, so this is the only backup path — see the
+// "Where your credentials live" docs section.
+function downloadBackup(): void {
+  const json = exportCredentials();
+  if (!json || json === "[]") return;
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `stellarcred-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function proofStatus(cred: Credential): "unproved" | "proved" | "expired" {
+  if (!cred.provedAt) return "unproved";
+  return cred.provedAt + credTtlSecs(cred) > Math.floor(Date.now() / 1000)
+    ? "proved"
+    : "expired";
+}
+
+function isExpiringSoon(cred: Credential, windowDays = 7): boolean {
+  if (!cred.provedAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = cred.provedAt + credTtlSecs(cred);
+  return expiry > now && expiry <= now + windowDays * 86_400;
+}
+
+function daysRemaining(cred: Credential): number {
+  if (!cred.provedAt) return 0;
+  const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
+  return Math.max(0, Math.ceil(secsLeft / 86_400));
+}
+
+import { useProofTimeline, addTimelineEvent } from "@/lib/useProofTimeline";
+import { Timeline } from "@/components/Timeline";
+import { IconHistory } from "@tabler/icons-react";
+
+// ── Credential expiry helpers ─────────────────────────────────────────────────
+
+function credExpiryTimestamp(cred: Credential): number {
+  return cred.issuedAt + credTtlSecs(cred);
+}
+
+function credIsExpired(cred: Credential): boolean {
+  return credExpiryTimestamp(cred) <= Math.floor(Date.now() / 1000);
+}
+
+function credExpiryWithinDays(cred: Credential, days: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const ts = credExpiryTimestamp(cred);
+  return ts > now && ts <= now + days * 86_400;
+}
+
+function formatExpiryDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+// ── Credential card ──────────────────────────────────────────────────────────
+
+function CredCard({
+  c,
+  address,
+  onProve,
+  onRemove,
+  onInspect: _onInspect,
+  isPreview,
+  selection: _selection,
+}: {
+  c: Credential;
+  address: string;
+  onProve: () => void;
+  onRemove: () => void;
+  onInspect: () => void;
+  isPreview?: boolean;
+  /** Batch selection controls — omitted on cards that can't be batched. */
+  selection?: {
+    checked: boolean;
+    /** Why this card can't currently be added, or null when it can. */
+    blockedReason: string | null;
+    onToggle: () => void;
+  };
+}) {
+  const status = proofStatus(c);
+  const { events } = useProofTimeline(c);
+  const [showHistory, setShowHistory] = useState(false);
+
+  return (
+    <div className="card" style={{ padding: "1rem 1.25rem" }}>
+      <div className="between" style={{ alignItems: "center", gap: "0.75rem" }}>
+        {/* left: credential info */}
+        <div style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{c.title}</span>
+            <span className="mono faint" style={{ fontSize: "0.7rem" }}>{c.claim}</span>
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--faint)", marginTop: "0.15rem" }}>
+            <div>
+              {c.issuer} · <span>{truncateHash(c.commitment)}</span>
+              {status === "proved" && (
+                <>
+                  {" · "}
+                  <span style={{ color: "var(--accent)", opacity: 0.75 }}>
+                    expires in {daysRemaining(c)}d
+                  </span>
+                  {c.provedTxHash && (
+                    <>
+                      {" · "}
+                      <a
+                        href={EXPLORER_TX(c.provedTxHash)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "inherit", display: "inline-flex", alignItems: "center", gap: "0.15rem" }}
+                      >
+                        {c.provedTxHash.slice(0, 6)}…<IconExternalLink size={10} />
+                      </a>
+                    </>
+                  )}
+                </>
+              )}
+              {status === "expired" && (
+                <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
+              )}
+            </div>
+            <div style={{ marginTop: "0.1rem" }}>
+              {credIsExpired(c) ? (
+                <span style={{ color: "var(--danger)", fontWeight: 500 }}>Expired</span>
+              ) : (
+                <span style={{ color: credExpiryWithinDays(c, 30) ? "var(--warn)" : "var(--faint)" }}>
+                  Expires {formatExpiryDate(credExpiryTimestamp(c))}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* right: badges + button + trash */}
+        <div className="card-actions">
+          {isPreview && <Badge variant="pending">Preview</Badge>}
+          <Badge variant="verified" dot={false}>Held</Badge>
+          {status === "proved" && !isExpiringSoon(c) && (
+            <Badge variant="verified" dot={false}>On-chain</Badge>
+          )}
+          {status === "proved" && isExpiringSoon(c) && (
+            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+          )}
+          {status === "expired" && (
+            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
+          <button
+            className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
+            disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
+            title={
+              !address
+                ? "Connect a wallet first"
+                : credIsExpired(c)
+                  ? "This credential has expired"
+                  : !proofSubmissionConfigured()
+                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    : undefined
+            }
+            onClick={onProve}
+          >
+            {status === "proved"  ? "Re-prove" :
+             status === "expired" ? "Re-prove" :
+                                    "Generate proof"}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            title="History"
+            onClick={() => setShowHistory(!showHistory)}
+            style={{ padding: "0.3rem 0.4rem", color: showHistory ? "var(--accent)" : "var(--faint)" }}
+          >
+            <IconHistory size={13} />
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            title="Remove"
+            onClick={onRemove}
+            style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
+          >
+            <IconTrash size={13} />
+          </button>
+        </div>
+      </div>
+      
+      {showHistory && (
+        <Timeline events={events} />
+      )}
+    </div>
+  );
+}
 
 // Extracted subcomponents
 import { SectionLabel } from "@/components/holder/SectionLabel";
@@ -118,6 +325,12 @@ function HolderInner() {
   const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
   const unproved = displayCreds.filter((c) => proofStatus(c) !== "proved");
   const proved = displayCreds.filter((c) => proofStatus(c) === "proved");
+  const unproved = displayCreds.filter((c) => proofStatus(c) === "unproved");
+  const expiringSoon = displayCreds
+    .filter((c) => proofStatus(c) === "proved" && isExpiringSoon(c, 7))
+    .sort((a, b) => daysRemaining(a) - daysRemaining(b));
+  const activeProved = displayCreds.filter((c) => proofStatus(c) === "proved" && !isExpiringSoon(c, 7));
+  const expired = displayCreds.filter((c) => proofStatus(c) === "expired");
 
   // ── Sponsor-aware submission ────────────────────────────────────────────────
 
@@ -209,6 +422,42 @@ function HolderInner() {
       ) : (
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
           {/* Empty state */}
+
+          {/* ── Expiry Warning Banner ── */}
+          {(expiringSoon.length > 0 || expired.length > 0) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="card"
+              style={{
+                padding: "0.85rem 1.15rem",
+                backgroundColor: expired.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(234, 179, 8, 0.08)",
+                borderColor: expired.length > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(234, 179, 8, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
+                <IconAlertTriangle
+                  size={18}
+                  style={{ color: expired.length > 0 ? "var(--danger)" : "var(--warn)", flexShrink: 0 }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {expired.length > 0
+                    ? `${expired.length} proof${expired.length > 1 ? "s have" : " has"} expired and ${expired.length > 1 ? "need" : "needs"} re-proving.`
+                    : `${expiringSoon.length} proof${expiringSoon.length > 1 ? "s are" : " is"} expiring within 7 days.`}
+                </span>
+              </div>
+              <span className="mono faint" style={{ fontSize: "0.75rem" }}>
+                One-click re-prove available below
+              </span>
+            </div>
+          )}
+
+          {/* ── Empty state ── */}
           {creds.length === 0 && !importing && (
             <div className="card" style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}>
               <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
@@ -229,6 +478,43 @@ function HolderInner() {
           )}
 
           {/* Credentials to prove */}
+          {/* ── Expiring Soon (Action Recommended) ── */}
+          {expiringSoon.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expiring soon · Re-prove recommended</SectionLabel>
+              {expiringSoon.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Expired (Action Required) ── */}
+          {expired.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expired proofs · Re-prove required</SectionLabel>
+              {expired.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Credentials to prove ── */}
           {unproved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>Ready to prove</SectionLabel>
@@ -260,6 +546,11 @@ function HolderInner() {
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>On-chain &middot; active proofs</SectionLabel>
               {proved.map((c) => (
+          {/* ── Active proved ── */}
+          {activeProved.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>On-chain · active proofs</SectionLabel>
+              {activeProved.map((c) => (
                 <CredCard
                   key={c.commitment}
                   c={c}
