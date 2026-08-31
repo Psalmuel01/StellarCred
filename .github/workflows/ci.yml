@@ -129,6 +129,11 @@ jobs:
             (cd "$dir" && nargo compile)
           done
 
+      - name: Verify deterministic VK hashes
+        run: |
+          export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
+          bash ../scripts/verify-vks.sh check
+
       - name: Check staged artifacts are current
         run: |
           export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
