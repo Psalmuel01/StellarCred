@@ -9,6 +9,7 @@ packages:
   - 'packages/issuer'
 
 allowBuilds:
+  esbuild: true
   blake-hash: true
   bufferutil: true
   msgpackr-extract: true

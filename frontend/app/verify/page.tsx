@@ -8,10 +8,12 @@ import {
   IconCheck,
   IconBuildingBank,
 } from "@tabler/icons-react";
+import { VerifyLinkError } from "@/app/verify/VerifyLinkError";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
+import { parseVerifyParams, type VerifyError } from "@/lib/verifyParams";
 import { useToast } from "@/components/Toast";
 
 const TYPES = Object.entries(TYPE_META) as [
@@ -37,24 +39,31 @@ function VerifyInner() {
   const searchParams = useSearchParams();
   const toast = useToast();
 
-  // When a protocol redirects here it can specify where to send the user back
-  // (return_url) and exactly which claim it requires (claim). A required claim
-  // locks the selector — the user can't pick something the protocol didn't ask
-  // for.
-  const returnUrl = searchParams.get("return_url");
-  const personaInquiryId = searchParams.get("inquiry-id");
-  const claimParam = searchParams.get("claim") as CredentialType | null;
-  const requiredClaim = claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
+  // A verification link can specify where to send the user back (return_url)
+  // and exactly which claim it requires (claim) — a required claim locks the
+  // selector so the user can't pick something the protocol didn't ask for.
+  // Parse and validate every verification-link parameter up front. If the link
+  // is malformed (bad claim type / bad threshold / missing return URL), we
+  // render an explicit invalid-link screen instead of a blank page, a stuck
+  // spinner, or a silent proceed.
+  const verification = parseVerifyParams({
+    return_url: searchParams.get("return_url"),
+    claim: searchParams.get("claim"),
+    threshold_years: searchParams.get("threshold_years"),
+    threshold: searchParams.get("threshold"),
+    min_threshold: searchParams.get("min_threshold"),
+    restricted: searchParams.get("restricted"),
+    inquiry_id: searchParams.get("inquiry-id"),
+  });
+  const linkError: VerifyError | null = verification.ok ? null : (verification.error ?? null);
+  const returnUrl = verification.returnUrl;
+  const personaInquiryId = verification.inquiryId;
+  const requiredClaim = verification.requiredClaim ?? null;
   const locked = !!requiredClaim;
 
   // Protocol-supplied proof parameters. These flow into the issued credential
   // so the witness route can use them at prove time instead of hardcoded values.
-  const minThresholdParam = searchParams.get("min_threshold") ?? undefined;
-  const claimParamsFromUrl = {
-    threshold_years: searchParams.get("threshold_years") ?? (claimParam === "age" ? minThresholdParam : undefined),
-    threshold: searchParams.get("threshold") ?? (claimParam === "funds" || claimParam === "income" ? minThresholdParam : undefined),
-    restricted: searchParams.get("restricted")?.split(",").filter(Boolean) ?? undefined,
-  };
+  const claimParamsFromUrl: import("@/lib/credential").ClaimParams = verification.claimParams ?? {};
 
   const [selected, setSelected] = useState<CredentialType | null>(
     requiredClaim ?? (TYPES[0]?.[0] ?? null),
@@ -71,6 +80,7 @@ function VerifyInner() {
   const [urlError, setUrlError] = useState("");
   const [requestingDomain, setRequestingDomain] = useState("");
   const [done, setDone] = useState(false);
+  const [personaNotice, setPersonaNotice] = useState("");
   const justIssuedClaims = useRef<string[]>([]);
 
   useEffect(() => {
@@ -130,9 +140,15 @@ function VerifyInner() {
   // When Persona redirects back to /verify?inquiry-id=XXX, resume the pending
   // issue request that was stored in sessionStorage before the redirect.
   useEffect(() => {
-    if (!personaInquiryId || !address) return;
+    if (!personaInquiryId) return;
     const raw = sessionStorage.getItem("sc_persona_pending");
-    if (!raw) return;
+    // No pending issuance to resume — surface a clear message instead of a
+    // silent dead end (e.g. the tab was refreshed after the Persona redirect).
+    if (!raw) {
+      if (address) setPersonaNotice("We couldn't find a verification to resume. Please start again.");
+      return;
+    }
+    setPersonaNotice("");
     sessionStorage.removeItem("sc_persona_pending");
     let pending: Record<string, unknown>;
     try { pending = JSON.parse(raw); } catch { return; }
@@ -168,6 +184,10 @@ function VerifyInner() {
       .finally(() => setBusy(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personaInquiryId, address]);
+
+  const handleBack = () => {
+    router.push("/");
+  };
 
   function setAttr(key: string, val: string) {
     setAttributes((a) => ({ ...a, [key]: val }));
@@ -277,10 +297,16 @@ function VerifyInner() {
 
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
         <div className="card">
-          {!address ? (
+          {linkError ? (
+            <VerifyLinkError error={linkError} onBack={handleBack} />
+          ) : !address ? (
             <div style={{ textAlign: "center", padding: "2rem 0" }}>
               <p className="muted" style={{ marginBottom: "1.25rem", fontSize: "0.9rem" }}>
-                Connect your wallet to request credentials for your address.
+                {locked
+                  ? `Connect your wallet to complete the ${requiredClaim} verification${
+                      requestingDomain ? ` requested by ${requestingDomain}` : ""
+                    }.`
+                  : "Connect your wallet to request credentials for your address."}
               </p>
               <WalletButton />
             </div>
@@ -311,6 +337,19 @@ function VerifyInner() {
             </div>
           ) : (
             <>
+              {personaNotice && (
+                <div style={{
+                  padding: "0.75rem 1rem",
+                  borderRadius: "var(--radius)",
+                  background: "rgba(240, 96, 77, 0.1)",
+                  border: "1px solid rgba(240, 96, 77, 0.2)",
+                  color: "var(--danger)",
+                  fontSize: "0.8125rem",
+                  marginBottom: "1rem"
+                }}>
+                  {personaNotice}
+                </div>
+              )}
               {urlError && (
                 <div style={{
                   padding: "0.75rem 1rem",
