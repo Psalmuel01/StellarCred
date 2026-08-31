@@ -99,6 +99,8 @@ pub struct EventContractUpgraded {
     pub from_version: u32,
     /// New contract version (encoded as major * 1000000 + minor * 1000 + patch)
     pub to_version: u32,
+}
+
 /// Payload emitted when a holder grants a verifier delegated read access
 /// (#396). `credential_type` is already in the event topic tuple, matching
 /// `EventProofSubmitted`'s convention, so it isn't repeated here.
