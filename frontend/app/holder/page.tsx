@@ -1010,12 +1010,13 @@ function ProofFlow({
         // ProofTimeoutError gets a distinct user-visible message — half the
         // point is that stalled provers fail visibly, not as a generic error.
         if (e instanceof ProofTimeoutError) {
-          setError({
-            code: null,
-            friendly:
+          setError(
+            new ContractError(
               "Proof generation timed out. The prover took too long — this can happen on slow devices or with large circuits. Please try again.",
-            raw: e.message,
-          });
+              null,
+              e.message,
+            ),
+          );
           setErrorPhase("timeout");
           setStage("error");
           toast.error("Proof timed out — please try again.");
