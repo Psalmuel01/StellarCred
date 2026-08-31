@@ -48,6 +48,7 @@ function makeConfig(sqlitePath: string): Config {
     stellarNetwork: "testnet",
     horizonUrl: "https://horizon-testnet.stellar.org",
     rpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
     proofRegistryContractId: "CTEST",
     dbDriver: "sqlite",
     sqlitePath,
