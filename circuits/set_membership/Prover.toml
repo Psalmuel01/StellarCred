@@ -1,0 +1,35 @@
+# set_membership — sample Prover.toml
+#
+# This file is regenerated automatically by:
+#   bash circuits/scripts/gen_inputs.sh
+#
+# Values here match the sample tree documented in fixtures/set_membership/README.md:
+#   set = [840, 276, 566, 356]   (US, Germany, Nigeria, Israel — ISO 3166-1 numeric)
+#   member = 840 (US, leaf index 0 in the tree)
+#
+# Commitment: Poseidon2([840, 42], 2) — computed by the commit helper circuit.
+# Merkle path: depth-8 Poseidon2 tree, leaf index 0 (all index bits = 0).
+# Signature: secp256k1 ECDSA over the commitment bytes, demo issuer key.
+#
+# Regenerate with:
+#   bash circuits/scripts/gen_inputs.sh
+
+value = "840"
+salt = "42"
+
+# commitment = Poseidon2([840, 42], 2)
+# Run `bash circuits/scripts/gen_inputs.sh` to populate the real value.
+commitment = "0"
+
+# Merkle inclusion path for value 840 (leaf index 0) in the sample tree.
+# All indices are 0 because leaf 0 is the left child at every level.
+# Run `node circuits/scripts/merkle_tree.js path 840 276 566 356 --for 840`
+# to populate the real values.
+merkle_root = "0"
+path = ["0", "0", "0", "0", "0", "0", "0", "0"]
+indices = ["0", "0", "0", "0", "0", "0", "0", "0"]
+
+# Demo issuer ECDSA signature — populated by gen_inputs.sh via sign.js.
+issuer_x = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+issuer_y = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+sig = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]

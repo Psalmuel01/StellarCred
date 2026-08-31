@@ -15,7 +15,7 @@
   {
     "name": "Holder Route JS",
     "path": ".next/static/chunks/app/holder/**/*.js",
-    "limit": "15 kB"
+    "limit": "16 kB"
   },
   {
     "name": "Issuer Route JS",
@@ -30,6 +30,11 @@
   {
     "name": "Verify Route JS",
     "path": ".next/static/chunks/app/verify/**/*.js",
+    "limit": "10 kB"
+  },
+  {
+    "name": "Badge Route JS",
+    "path": ".next/static/chunks/app/badge/**/*.js",
     "limit": "10 kB"
   },
   {

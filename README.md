@@ -100,6 +100,8 @@ frontend/               Next.js 14 app (App Router)
   packages/sdk/           @stellarcred/sdk — hasClaim / getClaims / buildVerifyUrl
   packages/issuer/        @stellarcred/issuer — server-only issuance (value/salt/commitment/sig)
   lib/                    proof.ts (noir_js + bb.js), contracts.ts (stellar-sdk), wallet
+services/
+  indexer/                off-chain event indexing service (SQLite/Postgres, [README](services/indexer/README.md))
 scripts/deploy.sh       deploy + wire + register issuer + install all VKs on testnet
 scripts/benchmark.sh    measure instruction budget for every public function on testnet
 BENCHMARKS.md           per-function instruction counts, ledger I/O, and fee estimates
@@ -203,6 +205,33 @@ full reference.
 
 ---
 
+## Where your credentials live
+
+Credentials — including the raw attribute value and its random salt — are stored
+**only in the browser's `localStorage`** (key `stellarcred:credentials`). There is
+no StellarCred account and no server-side credential database. This means:
+
+- **Credentials are device-bound.** Clearing site data, switching browsers or
+  devices, or browsing privately erases them — there is no server copy to
+  recover them from.
+- **Back up before you lose them.** On the **Holder** page, click **Export
+  backup** to download a JSON file of every credential (treat it like a
+  password — it contains the raw values). Restore on any device with **Import
+  credential JSON**.
+- **Move one credential at a time.** A credential's detail view offers
+  **Transfer to another device**: you pick a passphrase and the app shows a QR
+  code whose payload is encrypted (AES-256-GCM, PBKDF2 key derivation) before
+  leaving the device — scan it on the other device and enter the passphrase to
+  import.
+- **What reaches the server and chain.** The only server round-trip is
+  `POST /api/witness` (rate-limited, never logged or persisted), which runs the
+  Noir circuit and returns witness bytes for in-browser proving. On chain, only
+  the public inputs — commitment (a hash), issuer key, credential type, expiry —
+  and the proof bytes are written. See the in-app docs (`/docs`) for the full
+  breakdown.
+
+---
+
 ## Prerequisites
 
 - Rust (nightly ok) + the `wasm32v1-none` target: `rustup target add wasm32v1-none`
@@ -292,6 +321,31 @@ cp frontend/.env.example frontend/.env.local
 # 5. Run the app
 cd frontend && pnpm install && pnpm dev
 ```
+
+---
+
+## Development & Common Commands (`Makefile`)
+
+StellarCred spans four toolchains (Rust contracts, Noir zk-circuits, Next.js frontend/SDK, and Node.js indexer). A top-level `Makefile` provides unified build, test, and lint commands:
+
+| Command | Workspace | Description |
+|---|---|---|
+| `make all` | All | Runs `build`, `test`, and `lint` across all workspaces (mirrors CI). |
+| `make build` | All | Builds Soroban contracts, frontend bundles, and indexer service. |
+| `make test` | All | Runs contract unit/snapshot tests, frontend/SDK tests, and indexer tests. |
+| `make lint` | All | Runs cargo clippy (`-D warnings`) and frontend ESLint/typecheck. |
+| `make fmt` | Rust | Checks code formatting across all contract crates (`cargo fmt --check`). |
+| `make build-contracts` | Contracts | Compiles contracts to `wasm32v1-none`. |
+| `make test-contracts` | Contracts | Runs `cargo test --locked`. |
+| `make compile-circuits`| Circuits | Compiles Noir circuits and verifies verification keys (`bb`). |
+| `make test-frontend` | Frontend | Runs frontend SDK tests, theme tests, and issuer package tests. |
+| `make test-sdk` | SDK | Runs standalone `@stellarcred/sdk` integration tests. |
+| `make test-a11y` | Frontend | Runs axe-core accessibility checks via Playwright. |
+| `make test-indexer` | Indexer | Runs Jest test suite for the indexer service. |
+| `make run-indexer` | Indexer | Starts the local indexer service. |
+| `make clean` | All | Cleans all target outputs and build artifacts. |
+
+---
 
 In the browser: install a Stellar wallet (**Freighter**, Albedo, xBull, and
 others via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)

@@ -46,8 +46,16 @@ StellarCred.configure({
   rpcUrl: "https://soroban-testnet.stellar.org",   // defaults to testnet
   networkPassphrase: "Test SDF Network ; September 2015",
   baseUrl: "https://stellarcred.xyz",              // used by buildVerifyUrl
+  requestTimeoutMs: 10000,                         // max time for each RPC read
 });
 ```
+
+Each `is_verified` / `check_claim` simulation is bounded by `requestTimeoutMs`,
+which defaults to 10 seconds. The timeout covers retries as well as the
+underlying RPC call, so a stalled Soroban node cannot leave `hasClaim` or
+`getClaims` pending indefinitely. A timed out read follows the normal failure
+behavior: it returns `false` or an empty result by default, and throws
+`RpcError` when `throwOnError: true` is used.
 
 **Environment variables** (auto-read at import time, no `configure()` needed):
 
@@ -82,6 +90,7 @@ Pass `trustedIssuers` to restrict which issuer(s) a proof must come from — e.g
 ```ts
 const kycOk = await StellarCred.hasClaim(wallet, "kyc", {
   trustedIssuers: ["G...PERSONA_ISSUER", "G...JUMIO_ISSUER"],
+  requestTimeoutMs: 5000,
 });
 
 // Combine with a threshold — both must hold
@@ -247,7 +256,7 @@ function gate(wallet: string, claim: ClaimType, opts?: ClaimOptions) {
 | Export | Kind | Description |
 |---|---|---|
 | `ClaimType` | `"kyc" \| "age" \| "income" \| "jurisdiction" \| "funds" \| "accreditation"` | The credential types StellarCred supports. Mirrors the on-chain `CLAIM_TYPES` constant. |
-| `ClaimOptions` | `{ minThreshold?: number; trustedIssuers?: string[] }` | Optional settings for `hasClaim`. `minThreshold` is forwarded to the on-chain `check_claim` for parameterised claim types and ignored for binary claims (`kyc`, `jurisdiction`). `trustedIssuers` restricts which issuer(s) the proof must come from, for any claim type — omit to accept any registered issuer. |
+| `ClaimOptions` | `{ minThreshold?: number; trustedIssuers?: string[]; requestTimeoutMs?: number }` | Optional settings for `hasClaim`. `minThreshold` is forwarded to the on-chain `check_claim` for parameterised claim types and ignored for binary claims (`kyc`, `jurisdiction`). `trustedIssuers` restricts which issuer(s) the proof must come from, for any claim type — omit to accept any registered issuer. `requestTimeoutMs` bounds the individual read and defaults to 10 seconds. |
 | `Claim` | `{ type: string; verifiedAt: number; expiry: number }` | Shape returned by `getClaims`. |
 | `CLAIM_TYPES` | `readonly ClaimType[]` | The runtime constant. Use `as const` strings for compile-time narrowing. |
 

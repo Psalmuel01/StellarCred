@@ -98,9 +98,43 @@ const envSchema = z
     PLAID_ACCESS_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
     PLAID_ENV: z.enum(["sandbox", "development", "production"]).default("sandbox"),
 
+    // --- Rate limiting --------------------------------------------------------
+    // All limits are optional; unset = built-in defaults (see lib/rate-limit.ts).
+    // RATE_LIMIT_WINDOW_SECONDS applies to every route; the per-route vars set
+    // the maximum request count within that window.
+    //
+    // Single-instance deployments (PM2, Docker, Railway): in-memory store is
+    // fully effective — set these to taste.
+    //
+    // Serverless / multi-replica deployments (Vercel, AWS Lambda, etc.): the
+    // in-memory store is per-isolate, so limits are not enforced across cold
+    // starts or concurrent instances. Replace lib/rate-limit.ts's `checkLimit`
+    // with a shared atomic store (Upstash Redis / Vercel KV) for those targets.
+    RATE_LIMIT_WINDOW_SECONDS: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+    RATE_LIMIT_ISSUE_IP: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+    RATE_LIMIT_ISSUE_WALLET: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+    RATE_LIMIT_WITNESS_IP: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+    RATE_LIMIT_PLAID_IP: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+
     // --- Ops -------------------------------------------------------------------
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
     APP_ORIGIN: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    ERROR_REPORTING_WEBHOOK: z.preprocess(emptyToUndefined, z.string().url().optional()),
   })
   .superRefine((val, ctx) => {
     // The /api/issue route previously discovered this combination missing at

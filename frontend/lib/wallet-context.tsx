@@ -40,11 +40,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // Restore a prior connection on mount (full reload).
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      // storage unavailable (private mode / blocked) — skip restore
+      return;
+    }
     if (!saved) return;
     kitRestore(saved)
       .then(setAddress)
-      .catch(() => localStorage.removeItem(STORAGE_KEY));
+      .catch(() => {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          // storage unavailable — nothing to remove
+        }
+      });
   }, []);
 
   // Poll the wallet's live network while connected, so a network switch made
@@ -79,7 +91,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const err = e instanceof WalletConnectError
         ? e
         : new WalletConnectError("unknown", (e as Error).message ?? "Something went wrong");
-      if (err.kind !== "dismissed") setError(err);
+      // Surface every kind — including "dismissed". Cancellations are rendered
+      // as a benign note (not a hard error) via WalletErrorInfo.benign, per
+      // the per-kind error mapping requirement.
+      setError(err);
     } finally {
       setConnecting(false);
     }
@@ -88,7 +103,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const disconnect = useCallback(() => {
     setAddress("");
     setError(null);
-    localStorage.removeItem(STORAGE_KEY);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // storage unavailable — nothing to remove
+    }
   }, []);
 
   return (

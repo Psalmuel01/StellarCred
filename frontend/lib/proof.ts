@@ -13,6 +13,69 @@
 
 import type { CredentialType } from "./stellar";
 
+// ── Proof timeout ─────────────────────────────────────────────────────────────
+// Stalled provers (wasm hang, network stall on witness fetch) should fail
+// visibly instead of spinning forever. withTimeout composes a deadline onto
+// the existing AbortController plumbing: the caller's signal is forwarded
+// unchanged so user-initiated cancellation still works; when the deadline
+// fires first we throw ProofTimeoutError instead of a raw AbortError.
+
+/** Default maximum time (ms) a proof generation step may take. */
+export const DEFAULT_PROOF_TIMEOUT_MS = 120_000; // 2 minutes
+
+/** Thrown when proof generation exceeds the timeout window. */
+export class ProofTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Proof timed out after ${ms / 1000} seconds`);
+    this.name = "ProofTimeoutError";
+  }
+}
+
+/**
+ * Wraps an abortable async function with a deadline. Returns the result or
+ * throws `ProofTimeoutError` if the deadline fires before the function
+ * resolves. The caller's `signal` is forwarded — when the *caller* aborts
+ * (user cancel), the original error propagates unchanged; only a timeout
+ * produces `ProofTimeoutError`.
+ */
+export function withTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<T> {
+  const {
+    timeoutMs = DEFAULT_PROOF_TIMEOUT_MS,
+    signal: callerSignal,
+  } = opts;
+
+  // Short-circuit: caller already cancelled.
+  if (callerSignal?.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  // Forward caller abort to our controller.
+  const onCallerAbort = () => controller.abort();
+  callerSignal?.addEventListener("abort", onCallerAbort);
+
+  const promise = fn(controller.signal).finally(() => {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  });
+
+  // If timeout fired, swap the raw AbortError for a ProofTimeoutError.
+  return promise.catch((err) => {
+    if (timedOut) throw new ProofTimeoutError(timeoutMs);
+    throw err;
+  });
+}
+
 export interface GeneratedProof {
   /** Raw proof bytes (456 fields × 32 = 14592 bytes), as the contract expects. */
   proof: Uint8Array;

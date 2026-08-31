@@ -1,10 +1,22 @@
 /**
  * api.ts — Read-only HTTP API for the indexer.
  *
- * Endpoints (all public, no authentication):
+ * Security & Access Model:
+ *   - CORS: Configurable origin allowlist (via CORS_ORIGIN / CORS_ALLOWED_ORIGINS).
+ *     Defaults to same-origin / default-deny in production; http://localhost:3000 in dev.
+ *   - Rate Limiting: Per-IP fixed-window rate limiting with 429 Too Many Requests
+ *     and Retry-After header. Configurable via RATE_LIMIT_WINDOW_SECONDS and RATE_LIMIT_MAX.
+ *   - Authentication / API Keys: Public read endpoints do NOT require API keys.
+ *     The indexer only serves public, non-sensitive ledger state (claims, stats, recent events)
+ *     and contains no write endpoints or identity data. Keeping read access keyless ensures
+ *     frictionless composability for dApps, wallets, and community explorers.
+ *     Scraping and DoS risks are mitigated via per-IP rate limiting and CORS enforcement.
+ *
+ * Endpoints:
  *
  *   GET /health
- *     → { status: "ok", lastLedger: number }
+ *     → { status, lastLedger, headLedger, lag, lastError, lastErrorTime,
+ *         consecutiveErrors, fetchAttempts, fetchFailures }
  *
  *   GET /claims?wallet=G…
  *     → { wallet: string, claims: ClaimRow[] }
@@ -12,10 +24,16 @@
  *   GET /stats
  *     → { stats: StatsRow[] }
  *
- *   GET /recent?limit=20&page=1
- *     → { claims: ClaimRow[], limit: number, page: number }
+ *   GET /recent?limit=20&cursor=<opaque>
+ *     → { claims: ClaimRow[], limit: number, nextCursor: string | null }
  *
- * All responses are JSON.  No write endpoints exist.
+ * /recent uses keyset (cursor) pagination ordered by (ledger_sequence, id) —
+ * the `nextCursor` returned with each page is an opaque token that must be
+ * passed back as `?cursor=` to fetch the next page. Unlike OFFSET pagination
+ * this stays stable (no duplicate/skipped rows) while new claims are ingested
+ * between requests, and the indexed range scan never pays OFFSET's skip cost.
+ *
+ * All responses are JSON. No write endpoints exist.
  * No identity fields are stored, so all data here is public chain data.
  */
 
@@ -26,9 +44,42 @@ import express, {
   RequestHandler,
 } from "express";
 import type { Db } from "./db";
+import type { Ingester } from "./ingester";
+import type { Config } from "./config";
+import { parseCorsOrigins } from "./config";
+import { createCorsMiddleware } from "./cors";
+import { RateLimiter } from "./rate-limit";
+import type { RecentCursor } from "./db";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+
+// ── Opaque cursor encoding ───────────────────────────────────────────────────
+// The nextCursor token is the base64url form of "<ledgerSequence>:<id>" — the
+// keyset boundary of the last row on the page. It is opaque to clients: they
+// must echo it back verbatim, never construct or interpret it.
+
+function encodeCursor(cursor: RecentCursor): string {
+  return Buffer.from(`${cursor.ledgerSequence}:${cursor.id}`, "utf8").toString(
+    "base64url"
+  );
+}
+
+function decodeCursor(raw: string): RecentCursor {
+  const decoded = Buffer.from(raw, "base64url").toString("utf8");
+  const [ledgerRaw, idRaw] = decoded.split(":");
+  const ledgerSequence = Number(ledgerRaw);
+  const id = Number(idRaw);
+  if (
+    !Number.isInteger(ledgerSequence) ||
+    !Number.isInteger(id) ||
+    ledgerSequence < 0 ||
+    id < 1
+  ) {
+    throw new Error("invalid cursor");
+  }
+  return { ledgerSequence, id };
+}
 
 // Helper: wrap an async handler and forward errors to next()
 function asyncHandler(
@@ -39,8 +90,11 @@ function asyncHandler(
   };
 }
 
-export function buildApp(db: Db): express.Application {
+export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): express.Application {
   const app = express();
+
+  // Trust reverse proxies (e.g. AWS ALB, Cloudflare, Nginx) so client IP extraction is accurate.
+  app.set("trust proxy", true);
 
   // Security: no body parsing (read-only), conservative headers.
   app.disable("x-powered-by");
@@ -50,12 +104,65 @@ export function buildApp(db: Db): express.Application {
     next();
   });
 
+  // ── CORS ─────────────────────────────────────────────────────────────────
+  const corsOrigins =
+    config?.corsOrigins ??
+    parseCorsOrigins(process.env["CORS_ALLOWED_ORIGINS"] ?? process.env["CORS_ORIGIN"]);
+  app.use(createCorsMiddleware(corsOrigins));
+
+  // ── Rate Limiting ────────────────────────────────────────────────────────
+  const windowMs =
+    config?.rateLimitWindowMs ??
+    Number(process.env["RATE_LIMIT_WINDOW_SECONDS"] ?? "60") * 1000;
+  const max =
+    config?.rateLimitMax ??
+    Number(
+      process.env["RATE_LIMIT_MAX"] ??
+        process.env["RATE_LIMIT_MAX_REQUESTS"] ??
+        "120"
+    );
+  const enabled =
+    config?.rateLimitEnabled ??
+    (process.env["RATE_LIMIT_ENABLED"]?.toLowerCase() !== "false");
+
+  const rateLimiter = new RateLimiter({ windowMs, max, enabled });
+  app.locals["rateLimiter"] = rateLimiter;
+  app.use(rateLimiter.middleware());
+
   // ── GET /health ──────────────────────────────────────────────────────────
+  // Exposes ingester lag so operators can alert when the indexer falls behind.
+  //
+  // status semantics:
+  //   "ok"       — consecutiveErrors === 0
+  //   "degraded" — last fetch failed but some succeeded before it
+  //   "error"    — 3+ consecutive failures (stale data, indexer likely stalled)
   app.get(
     "/health",
     asyncHandler(async (_req, res) => {
       const lastLedger = await db.getLastLedger();
-      res.json({ status: "ok", lastLedger });
+      const h = ingester.getHealth();
+
+      let status: "ok" | "degraded" | "error";
+      if (h.consecutiveErrors === 0) {
+        status = "ok";
+      } else if (h.consecutiveErrors < 3) {
+        status = "degraded";
+      } else {
+        status = "error";
+      }
+
+      res.json({
+        status,
+        lastLedger,
+        headLedger: h.headLedger,
+        lag: h.lag,
+        lastSuccessLedger: h.lastSuccessLedger,
+        lastError: h.lastError,
+        lastErrorTime: h.lastErrorTime,
+        consecutiveErrors: h.consecutiveErrors,
+        fetchAttempts: h.fetchAttempts,
+        fetchFailures: h.fetchFailures,
+      });
     })
   );
 
@@ -85,21 +192,34 @@ export function buildApp(db: Db): express.Application {
     })
   );
 
-  // ── GET /recent?limit=20&page=1 ──────────────────────────────────────────
+  // ── GET /recent?limit=20&cursor=<opaque> ──────────────────────────────────
   app.get(
     "/recent",
     asyncHandler(async (req, res) => {
       const rawLimit = parseInt(String(req.query["limit"] ?? DEFAULT_LIMIT), 10);
-      const rawPage = parseInt(String(req.query["page"] ?? 1), 10);
-
       const limit = isNaN(rawLimit) || rawLimit < 1
         ? DEFAULT_LIMIT
         : Math.min(rawLimit, MAX_LIMIT);
-      const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
-      const offset = (page - 1) * limit;
 
-      const claims = await db.recent(limit, offset);
-      res.json({ claims, limit, page });
+      // Cursor is optional — omit it (or pass cursor=) to start at the newest
+      // claims. A malformed cursor is a client error, not silently page 1.
+      const rawCursor = req.query["cursor"];
+      let cursor: RecentCursor | null = null;
+      if (rawCursor != null && String(rawCursor).trim() !== "") {
+        try {
+          cursor = decodeCursor(String(rawCursor));
+        } catch {
+          res.status(400).json({ error: "invalid cursor" });
+          return;
+        }
+      }
+
+      const { claims, nextCursor } = await db.recent(limit, cursor);
+      res.json({
+        claims,
+        limit,
+        nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
+      });
     })
   );
 

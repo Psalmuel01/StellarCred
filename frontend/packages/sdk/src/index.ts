@@ -43,6 +43,7 @@ let _config = {
     env("STELLARCRED_NETWORK_PASSPHRASE", "NEXT_PUBLIC_NETWORK_PASSPHRASE") ||
     "Test SDF Network ; September 2015",
   baseUrl: env("STELLARCRED_BASE_URL", "NEXT_PUBLIC_STELLARCRED_BASE_URL") || "https://stellarcred.xyz",
+  requestTimeoutMs: 10_000,
   retries: 3,
   baseDelayMs: 500,
   maxDelayMs: 5000,
@@ -59,12 +60,24 @@ export function configure(opts: {
   rpcUrl?: string;
   networkPassphrase?: string;
   baseUrl?: string;
+  requestTimeoutMs?: number;
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
   jitter?: boolean;
 }): void {
   _config = { ..._config, ...opts };
+  const sharedOpts: Parameters<typeof configureSharedClaims>[0] = {};
+  if (opts.registryId !== undefined) sharedOpts.registryId = opts.registryId;
+  if (opts.rpcUrl !== undefined) sharedOpts.rpcUrl = opts.rpcUrl;
+  if (opts.networkPassphrase !== undefined) {
+    sharedOpts.networkPassphrase = opts.networkPassphrase;
+  }
+  if (opts.baseUrl !== undefined) sharedOpts.baseUrl = opts.baseUrl;
+  if (opts.requestTimeoutMs !== undefined) {
+    sharedOpts.requestTimeoutMs = opts.requestTimeoutMs;
+  }
+  if (Object.keys(sharedOpts).length > 0) configureSharedClaims(sharedOpts);
   // The cached client is bound to the old config — drop it so the next read
   // rebuilds against the new one.
   _client = null;
@@ -166,6 +179,21 @@ export class ConfigError extends Error {
 }
 
 /**
+ * Error thrown when a wallet address is empty or is not a valid Stellar
+ * Ed25519 public key.
+ *
+ * In the default fail-soft path, public claim-read APIs return `false`, `null`,
+ * or `[]` for an invalid address. Pass `{ throwOnError: true }` to `hasClaim`
+ * / `getClaims` to surface this error to the caller.
+ */
+export class InvalidAddressError extends Error {
+  constructor(message = "Invalid Stellar address") {
+    super(message);
+    this.name = "InvalidAddressError";
+  }
+}
+
+/**
  * Error thrown when an RPC / contract-simulation call fails (network,
  * timeout at the transport layer, simulation error, etc.). Only surfaces
  * when `{ throwOnError: true }` is passed — distinguishing "couldn't check"
@@ -222,6 +250,11 @@ export interface ClaimOptions {
    */
   trustedIssuers?: string[];
   /**
+   * Maximum time in milliseconds allowed for this read, including retries.
+   * Defaults to the value passed to {@link configure}, or 10 seconds.
+   */
+  requestTimeoutMs?: number;
+  /**
    * When `true`, configuration and RPC failures throw {@link ConfigError} /
    * {@link RpcError} instead of being masked as `false` / empty results.
    * Default `false` preserves the historical fail-soft behaviour so a
@@ -244,13 +277,36 @@ export interface Claim {
 // Low-level read: ProofRegistry.is_verified via simulation
 // ---------------------------------------------------------------------------
 
-import { Client as ProofRegistryClient } from "../../proof-registry/src/index.js";
+import { Client as ProofRegistryClient } from "../../proof-registry/src/index";
+import { configure as configureSharedClaims } from "./claims";
 
 type StellarSDK = typeof import("@stellar/stellar-sdk");
 let _sdk: Promise<StellarSDK> | null = null;
 function getSdk(): Promise<StellarSDK> {
   if (!_sdk) _sdk = import("@stellar/stellar-sdk");
   return _sdk;
+}
+
+/**
+ * Normalize and validate a wallet before any on-chain read.
+ *
+ * This is intentionally performed before `getClient()` so malformed input
+ * cannot result in an RPC/client construction attempt.
+ */
+async function normalizeAndValidateWallet(wallet: string): Promise<string> {
+  const normalized = wallet.trim();
+
+  if (!normalized) {
+    throw new InvalidAddressError("Invalid Stellar address: address is empty");
+  }
+
+  const { StrKey } = await getSdk();
+
+  if (!StrKey.isValidEd25519PublicKey(normalized)) {
+    throw new InvalidAddressError("Invalid Stellar address");
+  }
+
+  return normalized;
 }
 
 // The client is stateless per config, so one instance is shared across every
@@ -323,6 +379,24 @@ function isRetryable(error: any): boolean {
   return true;
 }
 
+class ReadTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`RPC read timed out after ${timeoutMs}ms`);
+    this.name = "ReadTimeoutError";
+  }
+}
+
+function withRequestTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new ReadTimeoutError(timeoutMs)), timeoutMs);
+  });
+
+  return Promise.race([Promise.resolve().then(operation), timeout]).finally(() =>
+    clearTimeout(timeoutId),
+  );
+}
+
 export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   const { retries, baseDelayMs, maxDelayMs, jitter } = _config;
   let attempt = 0;
@@ -348,16 +422,23 @@ async function readIsVerified(
   claimType: string,
   trustedIssuers?: string[],
   throwOnError = false,
+  requestTimeoutMs = _config.requestTimeoutMs,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   const client = await getClient(throwOnError);
   if (!client) return null;
 
   try {
-    const { result } = await withRetry(() => client.is_verified({
-      holder: wallet,
-      credential_type: claimType,
-      trusted_issuers: trustedIssuers,
-    }));
+    const { result } = await withRequestTimeout(
+      () =>
+        withRetry(() =>
+          client.is_verified({
+            holder: wallet,
+            credential_type: claimType,
+            trusted_issuers: trustedIssuers,
+          }),
+        ),
+      requestTimeoutMs,
+    );
     if (!result) return null;
     const [valid, verifiedAt, expiry] = result;
     return { valid, verifiedAt: Number(verifiedAt), expiry: Number(expiry) };
@@ -375,17 +456,24 @@ async function readCheckClaim(
   minThreshold: number,
   trustedIssuers?: string[],
   throwOnError = false,
+  requestTimeoutMs = _config.requestTimeoutMs,
 ): Promise<boolean> {
   const client = await getClient(throwOnError);
   if (!client) return false;
 
   try {
-    const { result } = await withRetry(() => client.check_claim({
-      holder: wallet,
-      credential_type: claimType,
-      min_threshold: BigInt(minThreshold),
-      trusted_issuers: trustedIssuers,
-    }));
+    const { result } = await withRequestTimeout(
+      () =>
+        withRetry(() =>
+          client.check_claim({
+            holder: wallet,
+            credential_type: claimType,
+            min_threshold: BigInt(minThreshold),
+            trusted_issuers: trustedIssuers,
+          }),
+        ),
+      requestTimeoutMs,
+    );
     return result ?? false;
   } catch (err) {
     if (throwOnError) {
@@ -428,8 +516,9 @@ async function readCheckClaim(
  * });
  *
  * @example
- * // Opt into typed errors — network failure throws RpcError, missing
- * // registryId throws ConfigError; "not verified" still returns false.
+ * // Opt into typed errors — invalid wallets throw InvalidAddressError,
+ * // network failure throws RpcError, missing registryId throws ConfigError;
+ * // "not verified" still returns false.
  * try {
  *   const ok = await hasClaim("G1ABC…", "kyc", { throwOnError: true });
  * } catch (err) {
@@ -448,16 +537,41 @@ export async function hasClaim(
 ): Promise<boolean> {
   warnIfMissingRegistryIdOnce();
   const throwOnError = opts?.throwOnError === true;
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch (err) {
+    if (err instanceof InvalidAddressError) {
+      if (throwOnError) throw err;
+      return false;
+    }
+    // Loading the Stellar SDK itself failed. Treat this like the existing
+    // fail-soft/RPC path rather than misclassifying it as invalid input.
+    if (throwOnError) {
+      throw new RpcError("Failed to validate Stellar address", { cause: err });
+    }
+    return false;
+  }
+
   if (opts?.minThreshold !== undefined) {
     return readCheckClaim(
-      wallet,
+      normalizedWallet,
       claimType,
       opts.minThreshold,
       opts.trustedIssuers,
       throwOnError,
+      opts.requestTimeoutMs,
     );
   }
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers, throwOnError);
+
+  const r = await readIsVerified(
+    normalizedWallet,
+    claimType,
+    opts?.trustedIssuers,
+    throwOnError,
+    opts?.requestTimeoutMs,
+  );
   return !!r && r.valid;
 }
 
@@ -487,10 +601,24 @@ export async function hasClaim(
 export async function getClaim(
   wallet: string,
   claimType: string,
-  opts?: Pick<ClaimOptions, "trustedIssuers">,
+  opts?: Pick<ClaimOptions, "trustedIssuers" | "requestTimeoutMs">,
 ): Promise<{ valid: boolean; verifiedAt: number; expiry: number } | null> {
   warnIfMissingRegistryIdOnce();
-  const r = await readIsVerified(wallet, claimType, opts?.trustedIssuers);
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch {
+    return null;
+  }
+
+  const r = await readIsVerified(
+    normalizedWallet,
+    claimType,
+    opts?.trustedIssuers,
+    false,
+    opts?.requestTimeoutMs,
+  );
   return r && r.valid ? r : null;
 }
 
@@ -513,6 +641,8 @@ export interface BatchClaimOptions {
    * registered issuer, pass an empty array to reject every issuer.
    */
   trustedIssuers?: string[];
+  /** Maximum time in milliseconds allowed for each read. */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -546,14 +676,39 @@ export async function hasClaims(
   const unique = Array.from(new Set(types));
   const results: Partial<Record<ClaimType, boolean>> = {};
 
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch {
+    // Preserve the fail-soft batch contract: each requested type is false,
+    // and importantly no client/RPC read is attempted.
+    for (const type of unique) {
+      results[type] = false;
+    }
+    return results;
+  }
+
   await fanOut(unique, async (t) => {
     try {
       const minThreshold = opts?.minThresholds?.[t];
       if (minThreshold !== undefined) {
-        results[t] = await readCheckClaim(wallet, t, minThreshold, opts?.trustedIssuers);
+        results[t] = await readCheckClaim(
+          normalizedWallet,
+          t,
+          minThreshold,
+          opts?.trustedIssuers,
+          false,
+          opts?.requestTimeoutMs,
+        );
         return;
       }
-      const r = await readIsVerified(wallet, t, opts?.trustedIssuers);
+      const r = await readIsVerified(
+        normalizedWallet,
+        t,
+        opts?.trustedIssuers,
+        false,
+        opts?.requestTimeoutMs,
+      );
       results[t] = !!r && r.valid;
     } catch {
       results[t] = false;
@@ -570,23 +725,44 @@ export async function hasClaims(
  * Uses the same batched fan-out as {@link hasClaims}, so all types are read
  * through one shared client.
  *
- * Pass `{ throwOnError: true }` to surface {@link ConfigError} / {@link RpcError}
- * instead of silently dropping failed reads. When `throwOnError` is set, a
- * single failing claim type rejects the whole batch (fail-fast) and discards
- * successful reads for other types.
+ * Pass `{ throwOnError: true }` to surface {@link InvalidAddressError},
+ * {@link ConfigError} / {@link RpcError} instead of silently dropping failed
+ * reads. When `throwOnError` is set, a single failing claim type rejects the
+ * whole batch (fail-fast) and discards successful reads for other types.
  */
 export async function getClaims(
   wallet: string,
-  opts?: Pick<ClaimOptions, "throwOnError">,
+  opts?: Pick<ClaimOptions, "throwOnError" | "requestTimeoutMs">,
 ): Promise<Claim[]> {
   warnIfMissingRegistryIdOnce();
   const throwOnError = opts?.throwOnError === true;
+
+  let normalizedWallet: string;
+  try {
+    normalizedWallet = await normalizeAndValidateWallet(wallet);
+  } catch (err) {
+    if (err instanceof InvalidAddressError) {
+      if (throwOnError) throw err;
+      return [];
+    }
+    if (throwOnError) {
+      throw new RpcError("Failed to validate Stellar address", { cause: err });
+    }
+    return [];
+  }
+
   const results = await fanOut(CLAIM_TYPES, async (t) => {
     // Same isolation as `hasClaims` when fail-soft: `readIsVerified` swallows
     // read errors, but its own `getClient()` await can still reject (a failed
     // SDK import), which would otherwise reject the whole fan-out.
     try {
-      const r = await readIsVerified(wallet, t, undefined, throwOnError);
+      const r = await readIsVerified(
+        normalizedWallet,
+        t,
+        undefined,
+        throwOnError,
+        opts?.requestTimeoutMs,
+      );
       return r && r.valid ? { type: t, verifiedAt: r.verifiedAt, expiry: r.expiry } : null;
     } catch (err) {
       if (throwOnError) throw err;
@@ -674,6 +850,52 @@ export function buildVerifyUrl(options: {
   return url.toString();
 }
 
+/**
+ * Build a shareable embed URL for the StellarCred public verification badge.
+ *
+ * @example
+ * const url = buildBadgeUrl({
+ *   wallet: "G1ABC…",
+ *   claim: "kyc",
+ *   theme: "dark",
+ * });
+ */
+export function buildBadgeUrl(options: {
+  wallet: string;
+  claim: string;
+  theme?: "dark" | "light" | "auto";
+  compact?: boolean;
+  baseUrl?: string;
+}): string {
+  const base = options.baseUrl ?? _config.baseUrl;
+  const url = new URL("/badge", base);
+  url.searchParams.set("wallet", options.wallet);
+  url.searchParams.set("claim", options.claim);
+  if (options.theme && options.theme !== "auto") {
+    url.searchParams.set("theme", options.theme);
+  }
+  if (options.compact) {
+    url.searchParams.set("compact", "1");
+  }
+  return url.toString();
+}
+
+/**
+ * Generate an HTML <iframe> embed code snippet for the verification badge.
+ */
+export function buildBadgeEmbedCode(options: {
+  wallet: string;
+  claim: string;
+  theme?: "dark" | "light" | "auto";
+  compact?: boolean;
+  baseUrl?: string;
+}): string {
+  const src = buildBadgeUrl(options);
+  const width = options.compact ? "180" : "260";
+  const height = options.compact ? "36" : "54";
+  return `<iframe src="${src}" width="${width}" height="${height}" frameborder="0" scrolling="no" style="border:none;overflow:hidden;border-radius:8px;" title="StellarCred Verification Badge"></iframe>`;
+}
+
 // ---------------------------------------------------------------------------
 // Return-URL params — untrusted hints only (Issue #213)
 // ---------------------------------------------------------------------------
@@ -748,6 +970,8 @@ export interface WatchClaimOptions {
   timeoutMs?: number;
   /** For parameterised claims (e.g. age, funds), minimum threshold to require */
   minThreshold?: number;
+  /** Maximum time in milliseconds allowed for each poll read. */
+  requestTimeoutMs?: number;
 }
 
 export interface WatchClaimCallbackOptions extends WatchClaimOptions {
@@ -807,7 +1031,10 @@ export function watchClaim(
       if (isStopped || isPolling) return;
       isPolling = true;
       try {
-        const verified = await hasClaim(wallet, claimType, { minThreshold });
+        const verified = await hasClaim(wallet, claimType, {
+          minThreshold,
+          requestTimeoutMs: opts?.requestTimeoutMs,
+        });
         if (isStopped) return;
         if (verified !== lastState) {
           lastState = verified;
@@ -828,7 +1055,10 @@ export function watchClaim(
         if (isStopped || isPolling) return;
         isPolling = true;
         try {
-          const verified = await hasClaim(wallet, claimType, { minThreshold });
+          const verified = await hasClaim(wallet, claimType, {
+            minThreshold,
+            requestTimeoutMs: opts?.requestTimeoutMs,
+          });
           if (isStopped) return;
           if (verified) {
             stop();
@@ -862,11 +1092,14 @@ export const StellarCred = {
   hasClaims,
   getClaims,
   buildVerifyUrl,
+  buildBadgeUrl,
+  buildBadgeEmbedCode,
   parseReturnParams,
   watchClaim,
   CLAIM_TYPES,
   TimeoutError,
   ConfigError,
+  InvalidAddressError,
   RpcError,
 };
 export default StellarCred;

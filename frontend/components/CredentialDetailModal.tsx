@@ -40,9 +40,15 @@ interface CredentialDetailModalProps {
     claimParams?: Record<string, unknown>;
   };
   onClose: () => void;
+  /**
+   * Optional: invoked with the full credential when the user asks to move it
+   * to another device (passphrase-encrypted transfer QR). The caller owns
+   * the full credential object; the modal only shows a summary.
+   */
+  onTransfer?: (credential: unknown) => void;
 }
 
-export default function CredentialDetailModal({ credential: c, onClose }: CredentialDetailModalProps) {
+export default function CredentialDetailModal({ credential: c, onClose, onTransfer }: CredentialDetailModalProps) {
   const [showRaw, setShowRaw] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
@@ -208,6 +214,15 @@ export default function CredentialDetailModal({ credential: c, onClose }: Creden
         </div>
 
         <div style={{ marginTop: "1.25rem" }}>
+          {onTransfer && (
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ width: "100%", marginBottom: "0.75rem", justifyContent: "center" }}
+              onClick={() => onTransfer(c)}
+            >
+              Transfer to another device
+            </button>
+          )}
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => setShowRaw((v) => !v)}
