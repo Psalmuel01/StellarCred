@@ -13,6 +13,7 @@ import { createIngester } from "./ingester";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
+import type { ClaimRow } from "./db";
 
 import os from "os";
 import path from "path";
@@ -33,6 +34,13 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     startLedger: 0,
     port: 3001,
     finalityLag: 6,
+    corsOrigins: [],
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 120,
+    rateLimitEnabled: true,
+    webhookUrls: [],
+    webhookSecret: undefined,
+    webhookTimeoutMs: 1_000,
     ...overrides,
   };
 }
@@ -45,10 +53,15 @@ function fakeEvent(opts: {
   sourceAccount?: string;
   txHash?: string;
 }) {
+  // Horizon returns topics as base64-encoded XDR ScVals; encode plain
+  // symbol strings the same way the real contract events look.
+  const { xdr } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
   return {
     paging_token: `${opts.ledger * 100_000}`,
     contract_id: "CTEST",
-    topic: opts.topic,
+    topic: opts.topic.map((t) =>
+      xdr.ScVal.scvSymbol(t).toXDR("base64")
+    ),
     value: opts.value,
     ledger: opts.ledger,
     ledger_closed_at: new Date().toISOString(),
@@ -320,15 +333,17 @@ describe("Ingester reconcile", () => {
     const a1 = db.claimsByWallet("GA1");
     expect(a1).toHaveLength(1);
 
-    // GA2 (ledger 20) and GA3 (ledger 30) should be deleted (both > 15)
-    const a2 = db.claimsByWallet("GA2");
-    expect(a2).toHaveLength(0);
-    const a3 = db.claimsByWallet("GA3");
+    // GA2 was deleted (ledger 20 > 15), but the mock re-emits its event at
+    // ledger 25 (within ceiling 44), so it gets re-indexed at ledger 25.
+    const a2 = (await db.claimsByWallet("GA2")) as ClaimRow[];
+    expect(a2).toHaveLength(1);
+    expect(a2[0].ledger_sequence).toBe(25);
+    const a3 = await db.claimsByWallet("GA3");
     expect(a3).toHaveLength(0);
 
-    // Cursor should be at 15 (the reorg point)
+    // Cursor advanced to 25 after re-indexing the event at ledger 25.
     const cursor = db.getLastLedger();
-    expect(cursor).toBe(15);
+    expect(cursor).toBe(25);
   });
 });
 

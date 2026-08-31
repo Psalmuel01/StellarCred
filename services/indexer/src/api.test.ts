@@ -36,6 +36,7 @@ function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
   };
   return {
     tick: async () => 0,
+    reconcile: async () => 0,
     start: () => {},
     stop: () => {},
     getHealth: () => ({ ...health }),
@@ -59,6 +60,9 @@ function makeConfig(sqlitePath: string): Config {
     rateLimitWindowMs: 60000,
     rateLimitMax: 120,
     rateLimitEnabled: true,
+    webhookUrls: [],
+    webhookSecret: undefined,
+    webhookTimeoutMs: 5000,
   };
 }
 

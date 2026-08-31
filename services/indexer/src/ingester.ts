@@ -49,6 +49,7 @@
 import { Horizon } from "@stellar/stellar-sdk";
 import type { Config } from "./config";
 import type { Db } from "./db";
+import { dispatchWebhook } from "./webhook";
 
 // ── Retry configuration ───────────────────────────────────────────────────
 
@@ -470,16 +471,8 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
-    const res = await fetch(url.toString());
-    if (!res.ok) {
-      if (res.status === 404) return [];
-      throw new Error(`Horizon responded ${res.status}: ${await res.text()}`);
-    }
-    const page = (await res.json()) as HorizonEventsPage;
-    const records = page._embedded?.records ?? [];
-    // Fetch head ledger (best-effort) so lag is visible in /health.
-    // We fire this in parallel with the events fetch so we don't add
-    // serial latency to every tick.
+    // Fetch head ledger (best-effort) in parallel with the events fetch so
+    // lag is visible in /health without adding serial latency to every tick.
     const [, page] = await Promise.all([
       fetchHeadLedger(),
       (async () => {
@@ -498,14 +491,12 @@ export function createIngester(config: Config, db: Db): Ingester {
     ]);
 
     const records = page._embedded?.records ?? [];
-    if (records.length === 0) {
-      // Successful empty fetch — reset error state and update lag.
-      health.consecutiveErrors = 0;
-      health.lastError = null;
-      health.headLedger = cachedHeadLedger;
-      health.lag = cachedHeadLedger > 0 ? cachedHeadLedger - lastLedger : -1;
-      return 0;
-    }
+
+    // Successful fetch — reset error state and update lag.
+    health.consecutiveErrors = 0;
+    health.lastError = null;
+    health.headLedger = cachedHeadLedger;
+    health.lag = cachedHeadLedger > 0 ? cachedHeadLedger - maxLedger : -1;
 
     // Filter out events beyond the finality boundary
     return records.filter((ev) => {
@@ -531,9 +522,32 @@ export function createIngester(config: Config, db: Db): Ingester {
           threshold: null,
           revoked: 0,
         });
+        dispatchWebhook(
+          {
+            event: "claim.verified",
+            ledger: parsed.ledgerSequence,
+            wallet: parsed.holder,
+            credentialType: parsed.credentialType,
+            issuer: parsed.issuer,
+            expiry: parsed.expiry,
+            verifiedAt: parsed.verifiedAt,
+            timestamp: new Date().toISOString(),
+          },
+          config
+        );
         processed++;
       } else if (parsed.kind === "revoked") {
         await db.revokeClaim(parsed.holder, parsed.credentialType);
+        dispatchWebhook(
+          {
+            event: "claim.revoked",
+            ledger: typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger,
+            wallet: parsed.holder,
+            credentialType: parsed.credentialType,
+            timestamp: new Date().toISOString(),
+          },
+          config
+        );
         processed++;
       }
     }
@@ -554,6 +568,21 @@ export function createIngester(config: Config, db: Db): Ingester {
       return 0;
     }
 
+    // 2. Detect potential reorg BEFORE the finality early-exit: if our
+    //    cursor claims to have ingested a ledger that is now beyond the
+    //    network head, the chain was likely reorged past our last
+    //    checkpoint. This check must run even when the finality ceiling
+    //    is behind our cursor, otherwise a reorg that moves the head
+    //    below our cursor would never be detected (the finality
+    //    early-exit would silently swallow it).
+    if (lastLedger > headLedger) {
+      console.warn(
+        `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
+          `Rolling back to head and re-scanning.`
+      );
+      return reconcile(headLedger);
+    }
+
     // The finality ceiling: only persist events at or below (head - lag).
     // If the network hasn't progressed past our lag buffer yet, there's
     // nothing final to index.
@@ -561,17 +590,6 @@ export function createIngester(config: Config, db: Db): Ingester {
     if (finalityCeiling <= lastLedger) {
       // Head hasn't advanced past our cursor + lag yet — nothing to do.
       return 0;
-    }
-
-    // 2. Detect potential reorg: if our cursor claims to have ingested
-    //    a ledger that is now beyond the network head, the chain was
-    //    likely reorged past our last checkpoint.
-    if (lastLedger > headLedger) {
-      console.warn(
-        `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
-          `Rolling back to head and re-scanning.`
-      );
-      return reconcile(headLedger);
     }
 
     // 3. Build the Horizon cursor. For a fresh start with startLedger
