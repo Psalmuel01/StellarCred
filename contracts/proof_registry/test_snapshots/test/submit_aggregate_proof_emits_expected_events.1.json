@@ -106,10 +106,10 @@
                 {
                   "vec": [
                     {
-                      "u64": "9999"
+                      "u64": "1000"
                     },
                     {
-                      "u64": "9999"
+                      "u64": "2000"
                     }
                   ]
                 }
@@ -119,11 +119,7 @@
           "sub_invocations": []
         }
       ]
-    ],
-    [],
-    [],
-    [],
-    []
+    ]
   ],
   "ledger": {
     "protocol_version": 26,
@@ -443,7 +439,7 @@
                       "symbol": "expiry"
                     },
                     "val": {
-                      "u64": "9999"
+                      "u64": "2000"
                     }
                   },
                   {
@@ -522,7 +518,7 @@
                       "symbol": "expiry"
                     },
                     "val": {
-                      "u64": "9999"
+                      "u64": "1000"
                     }
                   },
                   {
@@ -679,5 +675,124 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "proof_reg"
+              },
+              {
+                "symbol": "submitted"
+              },
+              {
+                "symbol": "kyc"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "expiry"
+                  },
+                  "val": {
+                    "u64": "1000"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "holder"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "issuer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "verified_at"
+                  },
+                  "val": {
+                    "u64": "0"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "proof_reg"
+              },
+              {
+                "symbol": "submitted"
+              },
+              {
+                "symbol": "age"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "expiry"
+                  },
+                  "val": {
+                    "u64": "2000"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "holder"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "issuer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "verified_at"
+                  },
+                  "val": {
+                    "u64": "0"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }

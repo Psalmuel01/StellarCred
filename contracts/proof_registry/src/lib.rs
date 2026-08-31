@@ -41,7 +41,7 @@ use soroban_sdk::{
 
 /// Payload emitted when a proof is successfully verified and stored.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventProofSubmitted {
     pub holder: Address,
     pub issuer: Address,
@@ -51,7 +51,7 @@ pub struct EventProofSubmitted {
 
 /// Payload emitted when an issuer revokes a holder's proof.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventProofRevoked {
     pub holder: Address,
     pub issuer: Address,
@@ -60,7 +60,7 @@ pub struct EventProofRevoked {
 
 /// Payload emitted when submissions are paused by admin.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventPaused {
     pub admin: Address,
     pub paused_at: u64,
@@ -68,7 +68,7 @@ pub struct EventPaused {
 
 /// Payload emitted when submissions are unpaused by admin.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventUnpaused {
     pub admin: Address,
     pub unpaused_at: u64,

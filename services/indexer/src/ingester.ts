@@ -2,10 +2,14 @@
  * ingester.ts — Poll Horizon for ProofRegistry contract events and write them
  * into the local DB.
  *
- * ProofRegistry emits two kinds of events:
+ * All emitted event topics and payload schemas are documented authoritatively in
+ * `EVENTS.md` (and `docs/EVENTS.md`).
  *
- *   Verified  topics: ["proof", "verified"]  value: expiry (u64)
- *   Revoked   topics: ["revoked"]            value: (holder, cred_type, issuer, ts)
+ * ProofRegistry event topics follow the tuple convention:
+ *   Submitted: ("proof_reg", "submitted", <credential_type>) -> EventProofSubmitted
+ *   Revoked:   ("proof_reg", "revoked", <credential_type>)   -> EventProofRevoked
+ *   Paused:    ("proof_reg", "paused")                       -> EventPaused
+ *   Unpaused:  ("proof_reg", "unpaused")                     -> EventUnpaused
  *
  * Horizon's /effects and /transactions endpoints don't surface Soroban contract
  * events natively, so we use the dedicated

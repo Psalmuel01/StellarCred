@@ -24,7 +24,7 @@ use ultrahonk_soroban_verifier::{UltraHonkVerifier, PROOF_BYTES};
 /// Payload emitted when a verification key is registered or replaced.
 /// Topics: ("cred_ver", "vk_set", credential_type)
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventVkSet {
     /// The admin address that performed the update.
     pub admin: Address,
@@ -33,7 +33,7 @@ pub struct EventVkSet {
 /// Payload emitted when an obsolete verification key is removed.
 /// Topics: ("cred_ver", "vk_pruned", credential_type)
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventVkPruned {
     pub admin: Address,
     pub version: u32,
