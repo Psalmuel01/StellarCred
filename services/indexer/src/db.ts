@@ -86,6 +86,16 @@ export interface Db {
   stats(): StatsRow[] | Promise<StatsRow[]>;
 
   /**
+   * Return reputation stats for one issuer, derived entirely from indexed
+   * events (#398): how many credentials they've issued, how many are
+   * currently active vs revoked, which credential types they cover, and
+   * when they first appear in the index. An issuer with no indexed claims
+   * gets a zeroed row rather than an error — same "unknown = empty" contract
+   * as claimsByWallet.
+   */
+  issuerStats(issuer: string): IssuerStatsRow | Promise<IssuerStatsRow>;
+
+  /**
    * Return recent verified (non-revoked) claims, newest first, using keyset
    * (cursor) pagination ordered by (ledger_sequence DESC, id DESC). Fetches up
    * to `limit + 1` rows internally so the page can report whether more exist.
@@ -135,6 +145,19 @@ export interface StatsRow {
   total: number;
   active: number;
   revoked: number;
+}
+
+/** Per-issuer reputation stats derived from indexed events (#398). */
+export interface IssuerStatsRow {
+  issuer: string;
+  /** Total credentials ever issued by this issuer (active + revoked). */
+  total: number;
+  active: number;
+  revoked: number;
+  /** Distinct credential types this issuer has issued, alphabetical. */
+  credential_types: string[];
+  /** Unix seconds of this issuer's earliest indexed claim; null if none. */
+  first_seen: number | null;
 }
 
 // ── SQLite adapter ─────────────────────────────────────────────────────────
@@ -295,6 +318,40 @@ export function createSqliteDb(config: Config): Db {
            ORDER BY total DESC`
         )
         .all() as StatsRow[];
+    },
+
+    issuerStats(issuer: string) {
+      const agg = raw
+        .prepare(
+          `SELECT
+             COUNT(*)                          AS total,
+             COUNT(*) FILTER (WHERE revoked=0) AS active,
+             COUNT(*) FILTER (WHERE revoked=1) AS revoked,
+             MIN(verified_at)                  AS first_seen
+           FROM claims
+           WHERE issuer = ?`
+        )
+        .get(issuer) as {
+        total: number;
+        active: number;
+        revoked: number;
+        first_seen: number | null;
+      };
+      const types = raw
+        .prepare(
+          `SELECT DISTINCT credential_type FROM claims
+           WHERE issuer = ?
+           ORDER BY credential_type`
+        )
+        .all(issuer) as { credential_type: string }[];
+      return {
+        issuer,
+        total: agg.total,
+        active: agg.active,
+        revoked: agg.revoked,
+        credential_types: types.map((t) => t.credential_type),
+        first_seen: agg.first_seen,
+      };
     },
 
     recent(limit: number, cursor: RecentCursor | null) {
@@ -477,6 +534,39 @@ export function createPostgresDb(config: Config): Db {
         ORDER BY total DESC
       `);
       return res.rows;
+    },
+
+    async issuerStats(issuer: string) {
+      const aggRes = await pool.query<{
+        total: number;
+        active: number;
+        revoked: number;
+        first_seen: string | null;
+      }>(
+        `SELECT
+           COUNT(*)::int                         AS total,
+           COUNT(*) FILTER (WHERE revoked=0)::int AS active,
+           COUNT(*) FILTER (WHERE revoked=1)::int AS revoked,
+           MIN(verified_at)                       AS first_seen
+         FROM claims
+         WHERE issuer = $1`,
+        [issuer]
+      );
+      const typesRes = await pool.query<{ credential_type: string }>(
+        `SELECT DISTINCT credential_type FROM claims
+         WHERE issuer = $1
+         ORDER BY credential_type`,
+        [issuer]
+      );
+      const agg = aggRes.rows[0];
+      return {
+        issuer,
+        total: agg?.total ?? 0,
+        active: agg?.active ?? 0,
+        revoked: agg?.revoked ?? 0,
+        credential_types: typesRes.rows.map((r) => r.credential_type),
+        first_seen: agg?.first_seen != null ? Number(agg.first_seen) : null,
+      };
     },
 
     async recent(limit: number, cursor: RecentCursor | null) {

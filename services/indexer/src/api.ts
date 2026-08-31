@@ -27,6 +27,9 @@
  *   GET /recent?limit=20&cursor=<opaque>
  *     → { claims: ClaimRow[], limit: number, nextCursor: string | null }
  *
+ *   GET /issuers/:issuer/stats
+ *     → { issuer, total, active, revoked, credential_types: string[], first_seen: number | null }
+ *
  * /recent uses keyset (cursor) pagination ordered by (ledger_sequence, id) —
  * the `nextCursor` returned with each page is an opaque token that must be
  * passed back as `?cursor=` to fetch the next page. Unlike OFFSET pagination
@@ -220,6 +223,25 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
         limit,
         nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
       });
+    })
+  );
+
+  // ── GET /issuers/:issuer/stats ───────────────────────────────────────────
+  // Reputation stats derived entirely from indexed events (#398) — how many
+  // credentials an issuer has issued, active vs revoked, which credential
+  // types they cover, and how long they've been indexed. Public: this is the
+  // same class of aggregate chain data /stats already exposes, just sliced
+  // by issuer instead of by credential_type.
+  app.get(
+    "/issuers/:issuer/stats",
+    asyncHandler(async (req, res) => {
+      const issuer = req.params["issuer"];
+      if (typeof issuer !== "string" || issuer.trim() === "") {
+        res.status(400).json({ error: "issuer path parameter is required" });
+        return;
+      }
+      const stats = await db.issuerStats(issuer.trim());
+      res.json(stats);
     })
   );
 

@@ -461,7 +461,16 @@ function HolderInner() {
           <span className="eyebrow">Holder</span>
           <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Your credentials</h1>
         </div>
-        <WalletButton />
+        <div className="row" style={{ gap: "0.75rem" }}>
+          {/* Selective disclosure presets (#386): a named, shareable bundle
+              of several claim types — defined and shared from its own page
+              rather than crowding this one, but linked from here since the
+              issue asks for the entry point to live on the holder page. */}
+          <a href="/presets" className="btn btn-secondary">
+            Presets
+          </a>
+          <WalletButton />
+        </div>
       </div>
 
       <ConfigBanner />
