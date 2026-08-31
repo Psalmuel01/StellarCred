@@ -140,6 +140,23 @@ pub struct ProofRecord {
     pub vk_version: u32,
 }
 
+/// Aggregate, per-credential-type usage counters (see #397). `total_submitted`
+/// is a monotonic lifetime count of successful verifications; `active` is a
+/// best-effort count of currently-occupied `(holder, credential_type)` slots.
+/// `active` is bumped only the first time a slot is filled (a holder
+/// resubmitting/refreshing the same credential type does not double-count),
+/// and is decremented on explicit revocation. It intentionally does NOT
+/// track passive expiry — an expired-but-never-revoked slot still counts as
+/// "active" until someone calls `revoke`/`revoke_proof`/`revoke_all` on it,
+/// matching this contract's existing lazy-expiry model (see `is_verified`)
+/// rather than requiring a background sweep.
+#[contracttype]
+#[derive(Clone)]
+pub struct CredentialTypeCounters {
+    pub total_submitted: u64,
+    pub active: u64,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct LegacyProofRecord {
@@ -167,6 +184,8 @@ pub enum DataKey {
     IssuerRegistry,
     Paused,
     Proof(Address, Symbol),
+    /// Aggregate usage counters for a credential type (see #397).
+    TypeCounters(Symbol),
 }
 
 #[contracterror]
@@ -305,6 +324,7 @@ impl ProofRegistry {
         }
 
         let key = DataKey::Proof(holder.clone(), credential_type.clone());
+        let is_new_slot = !env.storage().persistent().has(&key);
         let record = ProofRecord {
             verified_at: env.ledger().timestamp(),
             expiry,
@@ -315,6 +335,7 @@ impl ProofRegistry {
         };
         env.storage().persistent().set(&key, &record);
         Self::bump_ttl(&env, &key, expiry);
+        Self::record_submission(&env, &credential_type, is_new_slot);
 
         env.events().publish(
             (
@@ -389,6 +410,7 @@ impl ProofRegistry {
             }
 
             let key = DataKey::Proof(holder.clone(), sub.credential_type.clone());
+            let is_new_slot = !env.storage().persistent().has(&key);
             let effective_version = sub.vk_version.unwrap_or(0);
             let record = ProofRecord {
                 verified_at: now,
@@ -404,6 +426,7 @@ impl ProofRegistry {
             };
             env.storage().persistent().set(&key, &record);
             Self::bump_ttl(&env, &key, sub.expiry);
+            Self::record_submission(&env, &sub.credential_type, is_new_slot);
 
             env.events().publish(
                 (
@@ -563,6 +586,12 @@ impl ProofRegistry {
         }
     }
 
+    /// Aggregate usage counters for `credential_type` (see #397). Returns
+    /// zeroed counters for a type that has never had a proof submitted.
+    pub fn get_type_counters(env: Env, credential_type: Symbol) -> CredentialTypeCounters {
+        Self::read_counters(&env, &credential_type)
+    }
+
     pub fn get_record(env: Env, holder: Address, credential_type: Symbol) -> Option<ProofRecord> {
         env.storage()
             .persistent()
@@ -604,9 +633,12 @@ impl ProofRegistry {
     /// Revoke a cached proof. The holder authorizes their own revocation.
     pub fn revoke_proof(env: Env, holder: Address, credential_type: Symbol) {
         holder.require_auth();
-        env.storage()
-            .persistent()
-            .remove(&DataKey::Proof(holder, credential_type));
+        let key = DataKey::Proof(holder, credential_type.clone());
+        let existed = env.storage().persistent().has(&key);
+        env.storage().persistent().remove(&key);
+        if existed {
+            Self::record_revocation(&env, &credential_type);
+        }
     }
 
     pub fn revoke_all(env: Env, holder: Address) {
@@ -621,9 +653,12 @@ impl ProofRegistry {
             Symbol::new(&env, "employment"),
         ];
         for t in types {
-            env.storage()
-                .persistent()
-                .remove(&DataKey::Proof(holder.clone(), t));
+            let key = DataKey::Proof(holder.clone(), t.clone());
+            let existed = env.storage().persistent().has(&key);
+            env.storage().persistent().remove(&key);
+            if existed {
+                Self::record_revocation(&env, &t);
+            }
         }
     }
 
@@ -642,11 +677,15 @@ impl ProofRegistry {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
+        let was_active = !record.revoked && record.expiry > env.ledger().timestamp();
         record.revoked = true;
         env.storage().persistent().set(&key, &record);
         env.storage()
             .persistent()
             .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+        if was_active {
+            Self::record_revocation(&env, &credential_type);
+        }
 
         // Emit: topics = ("proof_reg", "revoked", credential_type)
         //       data   = EventProofRevoked { holder, issuer, revoked_at }
@@ -773,6 +812,7 @@ impl ProofRegistry {
         issuer: Address,
     ) {
         let key = DataKey::Proof(holder.clone(), credential_type.clone());
+        let is_new_slot = !env.storage().persistent().has(&key);
         let record = ProofRecord {
             verified_at,
             expiry,
@@ -783,6 +823,7 @@ impl ProofRegistry {
         };
         env.storage().persistent().set(&key, &record);
         Self::bump_ttl(env, &key, expiry);
+        Self::record_submission(env, credential_type, is_new_slot);
     }
 
     fn bump_ttl(env: &Env, key: &DataKey, expiry: u64) {
@@ -828,6 +869,50 @@ impl ProofRegistry {
         } else {
             None
         }
+    }
+
+    fn counters_key(credential_type: &Symbol) -> DataKey {
+        DataKey::TypeCounters(credential_type.clone())
+    }
+
+    fn read_counters(env: &Env, credential_type: &Symbol) -> CredentialTypeCounters {
+        env.storage()
+            .persistent()
+            .get(&Self::counters_key(credential_type))
+            .unwrap_or(CredentialTypeCounters {
+                total_submitted: 0,
+                active: 0,
+            })
+    }
+
+    fn write_counters(env: &Env, credential_type: &Symbol, counters: &CredentialTypeCounters) {
+        let key = Self::counters_key(credential_type);
+        env.storage().persistent().set(&key, counters);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROOF_BUMP_THRESHOLD, PROOF_TTL);
+    }
+
+    /// Records a successful verification for `credential_type`. `is_new_slot`
+    /// is whether the `(holder, credential_type)` storage key existed before
+    /// this write — pass the result of `!env.storage().persistent().has(&key)`
+    /// checked before the record is written.
+    fn record_submission(env: &Env, credential_type: &Symbol, is_new_slot: bool) {
+        let mut counters = Self::read_counters(env, credential_type);
+        counters.total_submitted = counters.total_submitted.saturating_add(1);
+        if is_new_slot {
+            counters.active = counters.active.saturating_add(1);
+        }
+        Self::write_counters(env, credential_type, &counters);
+    }
+
+    /// Records an explicit revocation of a previously-occupied slot for
+    /// `credential_type`. Only call when the slot existed prior to the
+    /// revoking operation.
+    fn record_revocation(env: &Env, credential_type: &Symbol) {
+        let mut counters = Self::read_counters(env, credential_type);
+        counters.active = counters.active.saturating_sub(1);
+        Self::write_counters(env, credential_type, &counters);
     }
 
     fn issuer_registry(env: &Env) -> Address {

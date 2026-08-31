@@ -721,3 +721,93 @@ fn aggregate_rejects_over_max_expiry_in_any_slot() {
             .0
     );
 }
+
+// ── #397: per-credential-type analytics counters ────────────────────────────
+
+#[test]
+fn counters_start_at_zero_for_an_unused_type() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 0);
+    assert_eq!(c.active, 0);
+}
+
+#[test]
+fn submit_increments_total_and_active_once_per_holder_slot() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder1 = Address::generate(&env);
+    let holder2 = Address::generate(&env);
+
+    submit(&env, &h, &holder1, 9999);
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 1);
+    assert_eq!(c.active, 1);
+
+    // A second holder occupies a new slot: both counters advance.
+    submit(&env, &h, &holder2, 9999);
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 2);
+    assert_eq!(c.active, 2);
+
+    // The first holder resubmitting (refreshing) the same credential type
+    // advances total_submitted (another verification happened) but not
+    // active (no new slot was occupied).
+    submit(&env, &h, &holder1, 9999);
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 3);
+    assert_eq!(c.active, 2);
+}
+
+#[test]
+fn holder_self_revoke_decrements_active_not_total() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 9999);
+    h.registry.revoke_proof(&holder, &symbol_short!("kyc"));
+
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 1);
+    assert_eq!(c.active, 0);
+
+    // Revoking again (nothing to revoke) must not underflow/double-decrement.
+    h.registry.revoke_proof(&holder, &symbol_short!("kyc"));
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.active, 0);
+}
+
+#[test]
+fn issuer_revoke_decrements_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 9999);
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.total_submitted, 1);
+    assert_eq!(c.active, 0);
+}
+
+#[test]
+fn revoke_all_decrements_active_for_every_occupied_type() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 9999);
+    h.registry.revoke_all(&holder);
+
+    let c = h.registry.get_type_counters(&symbol_short!("kyc"));
+    assert_eq!(c.active, 0);
+    assert_eq!(c.total_submitted, 1);
+}
