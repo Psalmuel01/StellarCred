@@ -89,7 +89,12 @@ const nextConfig = {
 
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+      `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'blob:'`,
+      // /sw.js is served same-origin and needed for PWA offline support.
+      // blob: is required because service worker script URLs resolve to blob:
+      // origins after first registration; the 'self' directive alone doesn't
+      // cover re-registrations that resolve to a blob URL.
+      `script-src-elem 'self' /sw.js`,
       "style-src 'self' 'unsafe-inline'",
       // Wallet icons for the Stellar Wallets Kit picker: stellar.creit.tech hosts
       // Albedo/Freighter/xBull/Rabet/Lobstr/Hana/Klever/WalletConnect's, storage.herewallet.app
