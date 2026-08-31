@@ -3,15 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { IconBook2, IconCode, IconMenu2, IconX } from "@tabler/icons-react";
 import { ThemeToggle } from "./ThemeToggle";
-
-const LINKS = [
-  { href: "/holder", label: "Wallet" },
-  { href: "/verify", label: "Verify" },
-  { href: "/issuer", label: "Issuer" },
-  { href: "/apps", label: "Apps" },
-];
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 function ShieldIcon() {
   return (
@@ -35,6 +30,8 @@ function ShieldIcon() {
 }
 
 export function SiteNav() {
+  const t = useTranslations("common");
+  const tNav = useTranslations("nav");
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
@@ -63,6 +60,13 @@ export function SiteNav() {
     };
   }, [menuOpen]);
 
+  const LINKS = [
+    { href: "/holder", label: t("wallet") },
+    { href: "/verify", label: t("verify") },
+    { href: "/issuer", label: t("issuer") },
+    { href: "/apps", label: t("apps") },
+  ];
+
   return (
     <header ref={headerRef} className={`nav${menuOpen ? " menu-open" : ""}`}>
       <div className="nav-inner">
@@ -76,7 +80,7 @@ export function SiteNav() {
         <button
           type="button"
           className="nav-toggle"
-          aria-label="Toggle menu"
+          aria-label={tNav("toggleMenu")}
           aria-expanded={menuOpen}
           aria-controls="mobile-nav-links mobile-nav-right"
           onClick={() => setMenuOpen((o) => !o)}
@@ -102,15 +106,16 @@ export function SiteNav() {
             className={`seg-link${pathname.startsWith("/docs") ? " active" : ""}`}
           >
             <IconBook2 size={14} stroke={1.8} />
-            Docs
+            {t("docs")}
           </Link>
           <Link
             href="/developers"
             className={`seg-link${pathname.startsWith("/developers") ? " active" : ""}`}
           >
             <IconCode size={14} stroke={1.8} />
-            Developers
+            {t("developers")}
           </Link>
+          <LanguageSwitcher />
           <ThemeToggle />
         </div>
       </div>

@@ -1,7 +1,13 @@
+"use client";
+
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { IconRouteSquare, IconArrowLeft } from "@tabler/icons-react";
 
 export default function NotFound() {
+  const t = useTranslations("notFound");
+  const tc = useTranslations("common");
+
   return (
     <div
       className="reveal"
@@ -30,14 +36,14 @@ export default function NotFound() {
         <IconRouteSquare size={24} color="var(--accent)" stroke={1.5} />
       </div>
 
-      <h1 style={{ fontSize: "3rem", margin: "0", letterSpacing: "-0.03em" }}>404</h1>
+      <h1 style={{ fontSize: "3rem", margin: "0", letterSpacing: "-0.03em" }}>{t("title")}</h1>
       <p className="muted" style={{ fontSize: "0.9375rem", maxWidth: 400, lineHeight: 1.7, margin: "0.5rem 0 2rem" }}>
-        This page does not exist — or the proof was never generated here.
+        {t("description")}
       </p>
 
       <Link href="/" className="btn btn-primary">
         <IconArrowLeft size={15} />
-        Home
+        {tc("home")}
       </Link>
     </div>
   );

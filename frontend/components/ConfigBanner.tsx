@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { IconInfoCircle } from "@tabler/icons-react";
 import {
   contractsConfigured,
@@ -18,6 +19,7 @@ import {
  * IssuerRegistry, not just the contract IDs.
  */
 export function ConfigBanner({ requireIssuance = false }: { requireIssuance?: boolean }) {
+  const t = useTranslations("configBanner");
   const missing = missingContractEnvVars();
   const missingIssue = requireIssuance ? missingIssueConfigEnvVars() : [];
   const allMissing = Array.from(new Set([...missing, ...missingIssue]));
@@ -42,11 +44,11 @@ export function ConfigBanner({ requireIssuance = false }: { requireIssuance?: bo
     >
       <IconInfoCircle size={16} className="muted" style={{ flexShrink: 0, marginTop: 2 }} />
       <span className="muted">
-        <strong style={{ color: "var(--text)" }}>App not fully configured.</strong>{" "}
-        {requireIssuance ? "Credential issuance and " : ""}On-chain submission is
-        disabled — missing env vars:{" "}
-        <span className="mono">{allMissing.join(", ")}</span>. Run{" "}
-        <span className="mono">./scripts/deploy.sh</span> and set them in{" "}
+        <strong style={{ color: "var(--text)" }}>{t("appNotConfigured")}</strong>{" "}
+        {requireIssuance ? t("issuanceAnd") : ""}
+        {t("onChainDisabled")}{" "}
+        <span className="mono">{allMissing.join(", ")}</span>. {t("runDeploy")}{" "}
+        <span className="mono">./scripts/deploy.sh</span> {t("andSetThemIn")}{" "}
         <span className="mono">frontend/.env.local</span>.
       </span>
     </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { useWallet } from "@/lib/wallet-context";
 import { NETWORK } from "@/lib/stellar";
@@ -9,6 +10,7 @@ import { NETWORK } from "@/lib/stellar";
 // on its own as the user switches networks — no reconnect required.
 export function NetworkBanner() {
   const { address, networkMismatch } = useWallet();
+  const t = useTranslations("networkBanner");
   if (!address || !networkMismatch) return null;
 
   const want = NETWORK === "public" ? "Mainnet" : "Testnet";
@@ -27,7 +29,7 @@ export function NetworkBanner() {
     >
       <IconAlertTriangle size={16} style={{ color: "var(--warn)", flexShrink: 0 }} />
       <span style={{ color: "var(--text)" }}>
-        Wrong network detected. Switch your wallet to <strong>{want}</strong> to continue.
+        {t("wrongNetwork")} <strong>{want}</strong> {t("toContinue")}
       </span>
     </div>
   );
