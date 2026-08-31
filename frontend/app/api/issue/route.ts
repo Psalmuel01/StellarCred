@@ -376,11 +376,13 @@ async function executeRequest(
   // ── Per-wallet rate limit ────────────────────────────────────────────────
   // Checked here (after body parse) because the wallet address lives in the
   // body. Returns 429 before any provider call or signing work is started.
+  // The wallet window is longer (default 1 hour) than the IP window (default
+  // 1 minute) to prevent credential-spam while still allowing normal usage.
   if (holder) {
     const walletResult = checkLimit(
       `issue:wallet:${holder}`,
       LIMITS.issuePerWallet(),
-      LIMITS.windowMs(),
+      LIMITS.walletWindowMs(),
     );
     if (walletResult.throttled) {
       logger.warn(

@@ -15,43 +15,38 @@
  * ## Key extraction
  *
  * - **IP** — read in order: `x-forwarded-for` (first value), `x-real-ip`,
- *   `cf-connecting-ip` (Cloudflare), then fall back to `"unknown"`. Never
+ *   `cf-connecting-ip` (Cloudflare), then fall back to `"unknown"`.  Never
  *   logged verbatim; only a SHA-256–truncated token appears in log events.
  * - **Wallet address** — callers supply this from the already-parsed body.
  *   It is never logged; same hashed token approach.
  *
  * Both are hashed before any log line is written so PII never enters the log
- * pipeline. The raw values are used only for the in-process Map lookup.
+ * pipeline.  The raw values are used only for the in-process Map lookup.
  *
  * ## Configuration (env vars)
  *
- * | Variable                        | Default | Meaning                                 |
- * |---------------------------------|---------|-----------------------------------------|
- * | `RATE_LIMIT_ISSUE_IP`           | 20      | max issue requests per IP per window    |
- * | `RATE_LIMIT_ISSUE_WALLET`       | 10      | max issue requests per wallet per window|
- * | `RATE_LIMIT_WITNESS_IP`         | 60      | max witness requests per IP per window  |
- * | `RATE_LIMIT_PLAID_IP`           | 30      | max plaid-balance requests per IP/window|
- * | `RATE_LIMIT_WINDOW_SECONDS`     | 60      | window length in seconds (all routes)   |
+ * | Variable                                    | Default | Meaning                                 |
+ * |---------------------------------------------|---------|-----------------------------------------|
+ * | `RATELIMIT_BACKEND`                         | memory  | backend: `memory` or `redis`            |
+ * | `RATE_LIMIT_REDIS_URL`                      | —       | Upstash Redis URL (required if redis)   |
+ * | `RATE_LIMIT_ISSUE_IP`                       | 20      | max issue requests per IP per window    |
+ * | `RATE_LIMIT_ISSUE_WALLET`                   | 10      | max issue requests per wallet per window|
+ * | `RATE_LIMIT_WINDOW_SECONDS`                 | 60      | IP window length in seconds (1 minute)  |
+ * | `RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS`    | 3600    | wallet window length in seconds (1 hour)|
+ * | `RATE_LIMIT_WITNESS_IP`                     | 60      | max witness requests per IP per window  |
+ * | `RATE_LIMIT_PLAID_IP`                       | 30      | max plaid-balance requests per IP/window|
  *
  * ## Multi-instance / serverless deploy note
  *
- * This store is **in-process only**.  On a single long-lived server (PM2,
- * Docker single replica, Railway single instance) it is fully effective.
+ * The default `memory` store is **in-process only**.  On a single long-lived
+ * server (PM2, Docker single replica, Railway single instance) it is fully
+ * effective.
  *
  * On **serverless / edge** targets (Vercel Functions, AWS Lambda, Cloudflare
  * Workers) each invocation may run in a separate isolate that starts with an
  * empty store, making per-process counters ineffective across concurrent cold
- * starts.  For those deployments you should replace this module with a shared
- * atomic counter backed by a low-latency store, for example:
- *
- *   - **Upstash Redis** (`@upstash/ratelimit` + `@upstash/redis`) — the
- *     `FixedWindow` algorithm maps directly to what this module implements.
- *     Replace the `checkLimit` call sites with `ratelimit.limit(key)`.
- *   - **Vercel KV** (same Upstash backend, zero config in Vercel projects).
- *   - **Redis (ioredis / node-redis)** — INCR + EXPIRE or a Lua script for
- *     atomic fixed-window counting.
- *   - **DynamoDB conditional writes** — viable on AWS Lambda when you already
- *     pay for DynamoDB.
+ * starts.  Set `RATELIMIT_BACKEND=redis` and provide `RATE_LIMIT_REDIS_URL`
+ * (an Upstash Redis REST URL) for those deployments.
  *
  * The interface exposed here (`checkLimit`, `RateLimitResult`) is intentionally
  * thin so swapping the backing store requires changing only this file.
@@ -72,6 +67,12 @@ function readInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * The rate-limit backend.  Resolved once at module load from
+ * `RATELIMIT_BACKEND` (default: `memory`).
+ */
+export type RateLimitBackend = "memory" | "redis";
+
 /** Limits for each protected route. Resolved once at module load. */
 export const LIMITS = {
   /** Max requests per IP per window on /api/issue. */
@@ -82,8 +83,16 @@ export const LIMITS = {
   witnessPerIp: () => readInt("RATE_LIMIT_WITNESS_IP", 60),
   /** Max requests per IP per window on /api/plaid-balance. */
   plaidPerIp: () => readInt("RATE_LIMIT_PLAID_IP", 30),
-  /** Window duration in milliseconds (shared by all routes). */
+  /** IP window duration in milliseconds (default: 60s = 1 minute). */
   windowMs: () => readInt("RATE_LIMIT_WINDOW_SECONDS", 60) * 1000,
+  /** Per-wallet window duration in milliseconds (default: 3600s = 1 hour). */
+  walletWindowMs: () => readInt("RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS", 3600) * 1000,
+  /** Backend selector — `memory` (dev default) or `redis` (production). */
+  backend: (): RateLimitBackend => {
+    const raw = process.env.RATELIMIT_BACKEND;
+    if (raw === "redis") return "redis";
+    return "memory";
+  },
 } as const;
 
 // ---------------------------------------------------------------------------

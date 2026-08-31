@@ -287,6 +287,15 @@ function VerifyInner() {
       body: JSON.stringify({ ...pending, persona_inquiry_id: personaInquiryId }),
     })
       .then(async (res) => {
+        if (res.status === 429) {
+          const retryAfter = res.headers.get("Retry-After");
+          const retrySecs = retryAfter ? Number(retryAfter) : null;
+          throw new Error(
+            retrySecs && retrySecs > 0
+              ? `Too many requests — please try again in ${retrySecs} second${retrySecs === 1 ? "" : "s"}.`
+              : "Too many requests — please try again shortly.",
+          );
+        }
         if (!res.ok) {
           const d = (await res.json().catch(() => null)) as {
             error?: string;
@@ -414,6 +423,15 @@ function VerifyInner() {
         });
         window.location.href = personaUrl;
         return; // don't clear busy — page is navigating away
+      }
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After");
+        const retrySecs = retryAfter ? Number(retryAfter) : null;
+        throw new Error(
+          retrySecs && retrySecs > 0
+            ? `Too many requests — please try again in ${retrySecs} second${retrySecs === 1 ? "" : "s"}.`
+            : "Too many requests — please try again shortly.",
+        );
       }
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as {
