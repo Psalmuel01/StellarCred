@@ -13,6 +13,7 @@ import { createIngester } from "./ingester";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
+import { xdr } from "@stellar/stellar-sdk";
 
 import os from "os";
 import path from "path";
@@ -34,26 +35,40 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     port: 3001,
     finalityLag: 6,
     corsOrigins: ["http://localhost:3000"],
-    rateLimitWindowMs: 60_000,
+    rateLimitWindowMs: 60000,
     rateLimitMax: 120,
     rateLimitEnabled: true,
     ...overrides,
   } as Config;
 }
 
-/** Build a fake Horizon contract event record. */
+/**
+ * Encode an ScVal as XDR base64 (what Horizon returns for event topics/values).
+ */
+function scValBase64(sc: xdr.ScVal): string {
+  return xdr.ScVal.toXDR(sc).toString("base64");
+}
+
+/**
+ * Build a fake Horizon contract event record for a ProofRegistry "verified"
+ * event: topics [proof, verified] and a u64 expiry as the value. The XDR is
+ * real (built with stellar-sdk) so it round-trips through ingester.ts's
+ * decodeScVal — earlier fixtures used plain strings, which never parsed.
+ */
 function fakeEvent(opts: {
   ledger: number;
-  topic: string[];
-  value: string;
   sourceAccount?: string;
   txHash?: string;
 }) {
   return {
     paging_token: `${opts.ledger * 100_000}`,
     contract_id: "CTEST",
-    topic: opts.topic,
-    value: opts.value,
+    topic: ["proof", "verified"].map((s) =>
+      scValBase64(xdr.ScVal.scvSymbol(s))
+    ),
+    value: scValBase64(
+      xdr.ScVal.scvU64(xdr.Uint64.fromString("1"))
+    ),
     ledger: opts.ledger,
     ledger_closed_at: new Date().toISOString(),
     transaction_hash: opts.txHash ?? "txhash",
@@ -110,18 +125,8 @@ describe("Ingester finality lag", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 90,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==", // u64 = 1
-                sourceAccount: "GALICE",
-              }),
-              fakeEvent({
-                ledger: 96,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GBOB",
-              }),
+              fakeEvent({ ledger: 90, sourceAccount: "GALICE" }),
+              fakeEvent({ ledger: 96, sourceAccount: "GBOB" }),
             ],
           },
         }),
@@ -214,12 +219,7 @@ describe("Ingester reorg detection", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 42,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GNEW",
-              }),
+              fakeEvent({ ledger: 42, sourceAccount: "GNEW" }),
             ],
           },
         }),
@@ -302,12 +302,7 @@ describe("Ingester reconcile", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 25,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GA2",
-              }),
+              fakeEvent({ ledger: 25, sourceAccount: "GA2" }),
             ],
           },
         }),
@@ -320,24 +315,23 @@ describe("Ingester reconcile", () => {
     // Reconcile from ledger 15
     const processed = await ingester.reconcile(15);
 
-    // GA1 (ledger 10) should still exist (≤ reorg point)
+    // GA1 (ledger 10, below the reorg point) should still exist
     const a1 = db.claimsByWallet("GA1");
     expect(a1).toHaveLength(1);
 
-    // GA3 (ledger 30) should be deleted (> 15) and not re-emitted by Horizon,
-    // so it stays gone after the re-scan.
+    // GA3 (ledger 30, above the reorg point) is deleted by the rollback…
     const a3 = db.claimsByWallet("GA3");
     expect(a3).toHaveLength(0);
 
-    // GA2 (old ledger 20) is rolled back by the reorg, then re-indexed from
-    // the valid verified event at ledger 25 that Horizon returns in the
-    // reorged range — reconcile() deletes AND re-ingests.
+    // …while GA2 (ledger 20, above the reorg point) is re-indexed from the
+    // re-scan: the mock Horizon returns a fresh "verified" event for GA2 at
+    // ledger 25 (within the finality ceiling), so it comes back.
     const a2 = await db.claimsByWallet("GA2");
     expect(a2).toHaveLength(1);
     expect(a2[0].ledger_sequence).toBe(25);
 
-    // The cursor should have advanced to the highest re-indexed ledger (25),
-    // not be stuck at the reorg point.
+    // Cursor advances to the highest ledger re-indexed (25), not the reorg
+    // point — reconcile deletes and then re-ingests.
     const cursor = db.getLastLedger();
     expect(cursor).toBe(25);
   });
@@ -375,12 +369,7 @@ describe("Ingester finalize lag with HEAD_LEDGER override", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 100,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GALICE",
-              }),
+              fakeEvent({ ledger: 100, sourceAccount: "GALICE" }),
             ],
           },
         }),

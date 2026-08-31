@@ -473,18 +473,41 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
-    // Use the retrying fetcher — it handles a 404 (contract has no events)
-    // as an empty page and backs off on 5xx / 429 transient failures.
-    const page = await fetchEventsWithRetry(
-      url.toString(),
-      AbortSignal.timeout(15_000)
-    );
-    const records = page._embedded?.records ?? [];
-    // Refresh the cached network head (best-effort, fire-and-forget) so the
-    // next tick's /health lag is fresh without adding serial latency here.
-    void fetchHeadLedger();
+    // Fetch head ledger (best-effort) so lag is visible in /health.
+    // We fire this in parallel with the events fetch so we don't add
+    // serial latency to every tick.
+    const [, page] = await Promise.all([
+      fetchHeadLedger(),
+      (async () => {
+        health.fetchAttempts++;
+        try {
+          return await fetchEventsWithRetry(
+            url.toString(),
+            AbortSignal.timeout(15_000)
+          );
+        } catch (err) {
+          // All retries exhausted — record the error but do NOT advance cursor.
+          health.lastError = (err as Error).message;
+          health.lastErrorTime = Date.now();
+          health.consecutiveErrors++;
+          health.fetchFailures++;
+          throw err;
+        }
+      })(),
+    ]);
 
-    // Filter out events beyond the finality boundary.
+    const records = page._embedded?.records ?? [];
+    if (records.length === 0) {
+      // Successful empty fetch — reset error state and update lag.
+      health.consecutiveErrors = 0;
+      health.lastError = null;
+      health.headLedger = cachedHeadLedger;
+      health.lag =
+        cachedHeadLedger > 0 ? cachedHeadLedger - (await db.getLastLedger()) : -1;
+      return [];
+    }
+
+    // Filter out events beyond the finality boundary
     return records.filter((ev) => {
       const evLedger =
         typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
@@ -532,11 +555,12 @@ export function createIngester(config: Config, db: Db): Ingester {
       return 0;
     }
 
-    // Detect potential reorg FIRST: if our cursor claims to have ingested a
-    // ledger that is now beyond the network head, the chain was likely reorged
-    // past our last checkpoint — roll back even though no *new* finals are
-    // available yet. This check must precede the finality-ceiling early return
-    // or a reorged cursor would just look "ahead" and never be reconciled.
+    // 2. Detect potential reorg FIRST: if our cursor claims to have ingested
+    //    a ledger that is now beyond the network head, the chain was likely
+    //    reorged past our last checkpoint. This must run before the
+    //    finality-ceiling early return below — a reorged head is exactly the
+    //    case where (head - lag) has fallen at or below our cursor, which
+    //    would otherwise make reorg detection unreachable.
     if (lastLedger > headLedger) {
       console.warn(
         `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
