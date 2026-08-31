@@ -72,29 +72,84 @@ export const PROOF_REGISTRY_ERRORS: Record<number, string> = {
   12: "Invalid expiry — the credential expiry is either in the past or too far in the future. Re-issue with a valid validity window.",
 };
 
-export interface ContractError {
-  friendly: string;
-  code: number | null;
-  raw: string;
+/**
+ * A typed, instanceof-checkable error thrown whenever a Soroban contract panic
+ * is detected during proof submission. Callers can:
+ *
+ *   - Branch on `e instanceof ContractError` to distinguish contract panics
+ *     from network / wallet errors.
+ *   - Read `e.code` to handle specific error codes programmatically.
+ *   - Use `isRetryableContractError(e)` to decide whether to show a retry
+ *     button or a terminal failure state.
+ */
+export class ContractError extends Error {
+  /** Numeric discriminant from the Soroban Error enum, or null for non-contract errors. */
+  readonly code: number | null;
+  /** Human-readable message looked up from PROOF_REGISTRY_ERRORS, or a generic fallback. */
+  readonly friendly: string;
+  /** The original raw error string from the RPC / SDK. */
+  readonly raw: string;
+
+  constructor(friendly: string, code: number | null, raw: string) {
+    super(friendly);
+    this.name = "ContractError";
+    this.code = code;
+    this.friendly = friendly;
+    this.raw = raw;
+    // Restore the prototype chain in envs that transpile classes to ES5.
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
+/**
+ * Returns `true` when the error condition may resolve on its own and the
+ * caller is safe to retry the same submission:
+ *
+ *   - SubmissionsPaused (#11): the admin may un-pause; retry later.
+ *   - Unknown codes / network-level errors (no code): transient RPC blips.
+ *
+ * Returns `false` for deterministic failures where re-submitting the same
+ * proof will always produce the same error:
+ *   - VerificationFailed (#2): the ZK proof is cryptographically invalid.
+ *   - NotAuthorized (#3): wrong wallet signature.
+ *   - IssuerNotTrusted (#4): issuer not registered for this type.
+ *   - IssuerKeyMismatch (#5): credential signed with a key no longer on-chain.
+ *   - NotInitialized (#1), BatchTooLarge (#7), BatchEmpty (#8),
+ *     DuplicateCredentialType (#9), AggregateLayoutInvalid (#10),
+ *     InvalidExpiry (#12): caller must fix the submission before retrying.
+ */
+export function isRetryableContractError(e: ContractError): boolean {
+  // SubmissionsPaused: retryable — the admin may un-pause.
+  if (e.code === 11) return true;
+  // Deterministic contract errors: retrying will always fail.
+  if (e.code !== null) return false;
+  // No code: network / auth-level transient error — allow retry.
+  return true;
+}
+
+/**
+ * Parse a raw RPC/SDK error string into a typed {@link ContractError}.
+ *
+ * This is the single conversion point between the wire representation
+ * (`Error(Contract, #N)`) and the typed error taxonomy.
+ */
 export function parseContractError(raw: string): ContractError {
   const match = raw.match(/Error\(Contract,\s*#(\d+)\)/);
   if (match) {
     const code = parseInt(match[1]);
-    return {
+    return new ContractError(
+      PROOF_REGISTRY_ERRORS[code] ?? `Contract error #${code}.`,
       code,
-      friendly: PROOF_REGISTRY_ERRORS[code] ?? `Contract error #${code}.`,
       raw,
-    };
+    );
   }
   if (raw.includes("Error(Auth")) {
-    return { code: null, friendly: "Wallet authorisation failed — approve the transaction in your wallet.", raw };
+    return new ContractError("Wallet authorisation failed — approve the transaction in your wallet.", null, raw);
   }
   if (raw.includes("Error(WasmVm")) {
-    return { code: null, friendly: "Contract execution failed — the proof or inputs were malformed.", raw };
+    return new ContractError("Contract execution failed — the proof or inputs were malformed.", null, raw);
   }
-  return { code: null, friendly: raw, raw };
+  return new ContractError(raw, null, raw);
 }
 
 export interface VerificationStatus {
@@ -148,7 +203,7 @@ async function sendAndConfirm(
       typeof (sent.errorResult as { toXDR?: (f: string) => string }).toXDR === "function"
         ? (sent.errorResult as { toXDR: (f: string) => string }).toXDR("hex")
         : String(sent.errorResult);
-    throw new Error(`${label} rejected: ${errHex}`);
+    throw parseContractError(`${label} rejected: ${errHex}`);
   }
 
   const start = Date.now();
@@ -169,7 +224,8 @@ async function sendAndConfirm(
     }
   }
   if (result.status !== "SUCCESS") {
-    throw new Error(`Transaction ${sent.hash} did not succeed (${result.status}).`);
+    const raw = `Transaction ${sent.hash} did not succeed (${result.status}).`;
+    throw parseContractError(raw);
   }
   return sent.hash;
 }
@@ -318,7 +374,7 @@ export async function submitProofs(params: {
       typeof (sent.errorResult as { toXDR?: (f: string) => string }).toXDR === "function"
         ? (sent.errorResult as { toXDR: (f: string) => string }).toXDR("hex")
         : String(sent.errorResult);
-    throw new Error(`Batch submission rejected: ${errHex}`);
+    throw parseContractError(`Batch submission rejected: ${errHex}`);
   }
 
   function isBadUnionSwitch(e: unknown): boolean {
@@ -343,7 +399,8 @@ export async function submitProofs(params: {
     }
   }
   if (result.status !== "SUCCESS") {
-    throw new Error(`Batch transaction ${sent.hash} did not succeed (${result.status}).`);
+    const raw = `Batch transaction ${sent.hash} did not succeed (${result.status}).`;
+    throw parseContractError(raw);
   }
   return sent.hash;
 }

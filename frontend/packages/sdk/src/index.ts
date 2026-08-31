@@ -193,12 +193,6 @@ export class InvalidAddressError extends Error {
   }
 }
 
-/**
- * Error thrown when an RPC / contract-simulation call fails (network,
- * timeout at the transport layer, simulation error, etc.). Only surfaces
- * when `{ throwOnError: true }` is passed — distinguishing "couldn't check"
- * from "not verified" (`false`).
- */
 export class RpcError extends Error {
   /** Underlying transport / simulation failure, when available. */
   cause?: unknown;
@@ -209,6 +203,101 @@ export class RpcError extends Error {
       this.cause = options.cause;
     }
   }
+}
+
+/**
+ * The canonical mapping from ProofRegistry Soroban error-enum discriminants
+ * to human-readable messages.
+ *
+ * This table is the **single source of truth** for code→message translation.
+ * It mirrors the Rust `Error` enum in `contracts/proof_registry/src/lib.rs`
+ * exactly — every variant that exists there must have an entry here.
+ *
+ * Codes:
+ *   1  NotInitialized
+ *   2  VerificationFailed
+ *   3  NotAuthorized
+ *   4  IssuerNotTrusted
+ *   5  IssuerKeyMismatch
+ *   6  ProofNotFound
+ *   7  BatchTooLarge
+ *   8  BatchEmpty
+ *   9  DuplicateCredentialType
+ *   10 AggregateLayoutInvalid
+ *   11 SubmissionsPaused
+ *   12 InvalidExpiry
+ */
+export const PROOF_REGISTRY_ERRORS: Record<number, string> = {
+  1: "Contracts not initialised — check that all contract IDs are set in the environment.",
+  2: "Proof verification failed — the ZK proof is invalid or was generated against the wrong circuit VK.",
+  3: "Not authorised — wallet signature missing or wrong account.",
+  4: "Issuer not trusted — the issuer address isn't registered for this credential type.",
+  5: "Issuer key mismatch — this credential was signed with a key that doesn't match what's registered on-chain. Re-issue the credential and try again.",
+  6: "Proof not found — no on-chain proof exists for this holder and credential type.",
+  7: "Batch too large — reduce the number of proofs and try again.",
+  8: "Batch is empty — include at least one proof submission.",
+  9: "Duplicate credential type — the batch contains two proofs for the same claim type. Remove the duplicate and try again.",
+  10: "Aggregate proof layout invalid — the number of credentials or public inputs don't match the expected format. Re-generate the aggregate proof.",
+  11: "Submissions paused — the protocol admin has temporarily halted new proof submissions. Try again later.",
+  12: "Invalid expiry — the credential expiry is either in the past or too far in the future. Re-issue with a valid validity window.",
+};
+
+/**
+ * A typed, instanceof-checkable error that wraps a Soroban contract panic
+ * surfaced during proof submission. SDK consumers can:
+ *
+ *   - Branch on `e instanceof ContractError` to distinguish contract panics
+ *     from network / wallet errors.
+ *   - Read `e.code` to handle specific error codes programmatically.
+ *   - Use `isRetryableContractError(e)` to decide whether to offer a retry.
+ *
+ * @example
+ * ```ts
+ * import StellarCred, { ContractError, isRetryableContractError } from "@stellarcred/sdk";
+ *
+ * try {
+ *   await submitProof(...);
+ * } catch (e) {
+ *   if (e instanceof ContractError) {
+ *     console.error(`Contract error #${e.code}: ${e.friendly}`);
+ *     const canRetry = isRetryableContractError(e);
+ *   }
+ * }
+ * ```
+ */
+export class ContractError extends Error {
+  /** Numeric discriminant from the Soroban Error enum, or null for non-contract errors. */
+  readonly code: number | null;
+  /** Human-readable message looked up from {@link PROOF_REGISTRY_ERRORS}, or a generic fallback. */
+  readonly friendly: string;
+  /** The original raw error string from the RPC / SDK. */
+  readonly raw: string;
+
+  constructor(friendly: string, code: number | null, raw: string) {
+    super(friendly);
+    this.name = "ContractError";
+    this.code = code;
+    this.friendly = friendly;
+    this.raw = raw;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Returns `true` when the error condition may resolve on its own and the
+ * caller is safe to retry the same submission.
+ *
+ * Retryable:
+ *   - SubmissionsPaused (#11): the admin may un-pause; retry later.
+ *   - No code (network / auth-level transient errors): RPC blips.
+ *
+ * Terminal (retrying with the same proof will always fail):
+ *   - Any other known contract error code.
+ */
+export function isRetryableContractError(e: ContractError): boolean {
+  if (e.code === 11) return true;   // SubmissionsPaused — try again later
+  if (e.code !== null) return false; // any other known contract panic is deterministic
+  return true;                       // no code = network/transient
 }
 
 /** The credential types StellarCred supports. Matches the contract Symbols. */
@@ -1097,10 +1186,13 @@ export const StellarCred = {
   parseReturnParams,
   watchClaim,
   CLAIM_TYPES,
+  PROOF_REGISTRY_ERRORS,
   TimeoutError,
   ConfigError,
   InvalidAddressError,
   RpcError,
+  ContractError,
+  isRetryableContractError,
 };
 export default StellarCred;
 

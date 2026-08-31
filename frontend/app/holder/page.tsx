@@ -34,7 +34,8 @@ import {
   submitProofs,
   MAX_BATCH_SIZE,
   parseContractError,
-  type ContractError,
+  ContractError,
+  isRetryableContractError,
   type ProofSubmissionParams,
 } from "@/lib/contracts";
 import {
@@ -1020,7 +1021,7 @@ function ProofFlow({
           toast.error("Proof timed out — please try again.");
           return;
         }
-        const parsed = parseContractError((e as Error).message);
+        const parsed = e instanceof ContractError ? e : parseContractError((e as Error).message);
         setError(parsed);
         setErrorPhase("proving");
         setStage("error");
@@ -1073,7 +1074,7 @@ function ProofFlow({
       addEvent("verified", { txHash: hash });
       toast.success(`Proof confirmed on-chain for ${cred.title}`, { txHash: hash });
     } catch (e) {
-      const parsed = parseContractError((e as Error).message);
+      const parsed = e instanceof ContractError ? e : parseContractError((e as Error).message);
       setError(parsed);
       setErrorPhase("submitting");
       setStage("error");
@@ -1287,8 +1288,8 @@ function ProofFlow({
                 )}
               </div>
             )}
-            {/* Retry submission without re-proving when the proof exists */}
-            {errorPhase === "submitting" && proof && (
+            {/* Retry submission without re-proving when the proof exists and error is retryable */}
+            {errorPhase === "submitting" && proof && error && isRetryableContractError(error) && (
               <button
                 className="btn btn-primary"
                 style={{ marginTop: "1rem", width: "100%" }}
@@ -1406,7 +1407,7 @@ function BatchProofFlow({
             return next;
           });
           setBatchStage("error");
-          const parsed = parseContractError((e as Error).message);
+          const parsed = e instanceof ContractError ? e : parseContractError((e as Error).message);
           setBatchError(parsed);
           toast.error(`Proof generation failed for ${cred.title}: ${parsed.friendly}`);
           return;
@@ -1443,7 +1444,7 @@ function BatchProofFlow({
             return next;
           });
           setBatchStage("error");
-          const parsed = parseContractError((e as Error).message);
+          const parsed = e instanceof ContractError ? e : parseContractError((e as Error).message);
           setBatchError(parsed);
           toast.error(`Proof generation failed for ${cred.title}: ${parsed.friendly}`);
           return;
@@ -1512,8 +1513,8 @@ function BatchProofFlow({
 
         toast.success(`Confirmed ${creds.length} proofs on-chain`, { txHash: hash });
       })
-      .catch((e: any) => {
-        const parsed = parseContractError((e as Error).message);
+      .catch((e: unknown) => {
+        const parsed = e instanceof ContractError ? e : parseContractError((e as Error).message);
         setBatchError(parsed);
         setBatchStage("error");
         toast.error(`Batch submission failed: ${parsed.friendly}`);
