@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
   IconArrowRight,
@@ -11,19 +11,30 @@ import {
   IconLock,
   IconCode,
   IconDatabase,
+  IconSearch,
+  IconX,
+  IconHash,
 } from "@tabler/icons-react";
 
 // ── Table of contents ────────────────────────────────────────────────────────
 
-const TOC = [
-  { id: "overview",     label: "Overview" },
-  { id: "how-it-works", label: "How it works" },
-  { id: "credentials", label: "Credential types" },
-  { id: "zk-proofs",   label: "ZK proof system" },
-  { id: "contracts",   label: "Smart contracts" },
-  { id: "privacy",     label: "Privacy model" },
-  { id: "toolchain",   label: "Toolchain" },
-  { id: "get-started", label: "Get started" },
+interface TocItem {
+  id: string;
+  label: string;
+  level: number;
+  content: string;
+}
+
+const INITIAL_TOC: TocItem[] = [
+  { id: "overview", label: "Overview", level: 2, content: "" },
+  { id: "how-it-works", label: "How it works", level: 2, content: "" },
+  { id: "credentials", label: "Credential types", level: 2, content: "" },
+  { id: "zk-proofs", label: "ZK proof system", level: 2, content: "" },
+  { id: "contracts", label: "Smart contracts", level: 2, content: "" },
+  { id: "privacy",     label: "Privacy model", level: 2, content: "" },
+  { id: "storage",     label: "Where your credentials live", level: 2, content: "" },
+  { id: "toolchain",   label: "Toolchain", level: 2, content: "" },
+  { id: "get-started", label: "Get started", level: 2, content: "" },
 ];
 
 // ── Small components ─────────────────────────────────────────────────────────
@@ -32,6 +43,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
   return (
     <h2
       id={id}
+      className="heading-group"
       style={{
         scrollMarginTop: "80px",
         fontSize: "1.35rem",
@@ -41,25 +53,91 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
         display: "flex",
         alignItems: "center",
         gap: "0.6rem",
+        position: "relative",
       }}
     >
-      {children}
+      <a
+        href={`#${id}`}
+        aria-label={typeof children === "string" ? `Link to section: ${children}` : `Link to section: ${id}`}
+        style={{
+          color: "inherit",
+          textDecoration: "none",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.6rem",
+        }}
+      >
+        {children}
+        <span
+          style={{
+            color: "var(--accent)",
+            display: "inline-flex",
+            alignItems: "center",
+            marginLeft: "0.2rem",
+          }}
+          className="anchor-link-icon"
+          title={`Deep link to #${id}`}
+        >
+          <IconHash size={18} stroke={2} />
+        </span>
+      </a>
     </h2>
   );
 }
 
-function SubHeading({ children }: { children: React.ReactNode }) {
+function SubHeading({ id, children }: { id?: string; children: React.ReactNode }) {
+  const autoId =
+    id ||
+    (typeof children === "string"
+      ? children.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+      : undefined);
+
   return (
     <h3
+      id={autoId}
+      className="heading-group"
       style={{
+        scrollMarginTop: "80px",
         fontSize: "1rem",
         fontWeight: 600,
         marginBottom: "0.5rem",
         marginTop: "1.75rem",
         color: "var(--text)",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        position: "relative",
       }}
     >
-      {children}
+      {autoId ? (
+        <a
+          href={`#${autoId}`}
+          aria-label={`Link to section: ${autoId}`}
+          style={{
+            color: "inherit",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          {children}
+          <span
+            style={{
+              color: "var(--accent)",
+              display: "inline-flex",
+              alignItems: "center",
+              marginLeft: "0.2rem",
+            }}
+            className="anchor-link-icon"
+            title={`Deep link to #${autoId}`}
+          >
+            <IconHash size={15} stroke={2} />
+          </span>
+        </a>
+      ) : (
+        children
+      )}
     </h3>
   );
 }
@@ -273,9 +351,43 @@ function CredRow({
 
 export default function DocsPage() {
   const [active, setActive] = useState("overview");
+  const [toc, setToc] = useState<TocItem[]>(INITIAL_TOC);
+  const [filterQuery, setFilterQuery] = useState("");
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Auto-generate TOC from section headings in the DOM
   useEffect(() => {
+    const headingElements = Array.from(
+      document.querySelectorAll("article h2, article h3")
+    );
+    const items: TocItem[] = headingElements.map((el) => {
+      if (!el.id) {
+        const slug =
+          el.textContent
+            ?.trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "") || "section";
+        el.id = slug;
+      }
+      const section = el.closest("section");
+      const contentText = section ? section.textContent || "" : el.textContent || "";
+      return {
+        id: el.id,
+        label: el.textContent?.trim() || "",
+        level: el.tagName.toLowerCase() === "h3" ? 3 : 2,
+        content: contentText.toLowerCase(),
+      };
+    });
+    if (items.length > 0) {
+      setToc(items);
+    }
+  }, []);
+
+  // Scroll-spy observer for active section highlight
+  useEffect(() => {
+    if (toc.length === 0) return;
     observerRef.current?.disconnect();
     observerRef.current = new IntersectionObserver(
       (entries) => {
@@ -283,13 +395,103 @@ export default function DocsPage() {
           if (e.isIntersecting) setActive(e.target.id);
         }
       },
-      { rootMargin: "-20% 0px -70% 0px", threshold: 0 },
+      { rootMargin: "-15% 0px -70% 0px", threshold: 0 }
     );
-    TOC.forEach(({ id }) => {
+    toc.forEach(({ id }) => {
       const el = document.getElementById(id);
       if (el) observerRef.current!.observe(el);
     });
-    return () => observerRef.current?.disconnect();
+
+    const handleScroll = () => {
+      if (
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 50
+      ) {
+        if (toc.length > 0) {
+          setActive(toc[toc.length - 1].id);
+        }
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      observerRef.current?.disconnect();
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [toc]);
+
+  // Deep link to section on load or on hash change
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash) {
+        const id = window.location.hash.slice(1);
+        if (id) {
+          const el = document.getElementById(id);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth" });
+            setActive(id);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    const timer = setTimeout(() => {
+      handleHashChange();
+    }, 150);
+
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // Filter and search logic
+  const filteredToc = useMemo(() => {
+    if (!filterQuery.trim()) return toc;
+    const lower = filterQuery.trim().toLowerCase();
+    return toc.filter(
+      (item) =>
+        item.label.toLowerCase().includes(lower) || item.content.includes(lower)
+    );
+  }, [toc, filterQuery]);
+
+  const jumpToFirstMatch = useCallback(
+    (query?: string) => {
+      const q = query !== undefined ? query : filterQuery;
+      if (!q.trim()) return;
+      const lower = q.trim().toLowerCase();
+      const match = toc.find(
+        (item) =>
+          item.label.toLowerCase().includes(lower) ||
+          item.content.includes(lower)
+      );
+      if (match) {
+        const el = document.getElementById(match.id);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth" });
+          setActive(match.id);
+          window.history.pushState(null, "", `#${match.id}`);
+        }
+      }
+    },
+    [filterQuery, toc]
+  );
+
+  const handleFilterChange = (val: string) => {
+    setFilterQuery(val);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (!val.trim()) return;
+
+    debounceTimerRef.current = setTimeout(() => {
+      jumpToFirstMatch(val);
+    }, 350);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
   }, []);
 
   return (
@@ -339,8 +541,79 @@ export default function DocsPage() {
             display: "flex",
             flexDirection: "column",
             gap: "0.15rem",
+            maxHeight: "calc(100vh - 100px)",
+            overflowY: "auto",
+            paddingRight: "0.5rem",
           }}
         >
+          <div style={{ marginBottom: "0.85rem" }}>
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <IconSearch
+                size={14}
+                color="var(--faint)"
+                style={{
+                  position: "absolute",
+                  left: "0.6rem",
+                  pointerEvents: "none",
+                }}
+              />
+              <input
+                type="search"
+                placeholder="Filter sections..."
+                aria-label="Filter documentation sections"
+                value={filterQuery}
+                onChange={(e) => handleFilterChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    jumpToFirstMatch();
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  padding: "0.45rem 1.8rem 0.45rem 2rem",
+                  fontSize: "0.8rem",
+                  background: "var(--input)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text)",
+                  outline: "none",
+                  transition: "border-color 0.15s ease",
+                }}
+                onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+                onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+              />
+              {filterQuery && (
+                <button
+                  type="button"
+                  aria-label="Clear filter"
+                  onClick={() => {
+                    handleFilterChange("");
+                  }}
+                  style={{
+                    position: "absolute",
+                    right: "0.5rem",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--faint)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    padding: 0,
+                  }}
+                >
+                  <IconX size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+
           <p
             style={{
               fontSize: "0.7rem",
@@ -350,31 +623,65 @@ export default function DocsPage() {
               color: "var(--faint)",
               marginBottom: "0.5rem",
               paddingLeft: "0.6rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
             }}
           >
-            On this page
+            <span>On this page</span>
+            {filterQuery && (
+              <span style={{ fontSize: "0.65rem", color: "var(--accent)", textTransform: "none" }}>
+                {filteredToc.length} {filteredToc.length === 1 ? "match" : "matches"}
+              </span>
+            )}
           </p>
-          {TOC.map((item) => (
-            <a
-              key={item.id}
-              href={`#${item.id}`}
+
+          {filteredToc.length > 0 ? (
+            filteredToc.map((item) => (
+              <a
+                key={item.id}
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  const el = document.getElementById(item.id);
+                  if (el) {
+                    el.scrollIntoView({ behavior: "smooth" });
+                    setActive(item.id);
+                    window.history.pushState(null, "", `#${item.id}`);
+                  }
+                }}
+                style={{
+                  fontSize: item.level === 3 ? "0.78rem" : "0.84rem",
+                  padding: "0.4rem 0.6rem",
+                  paddingLeft: item.level === 3 ? "1.4rem" : "0.6rem",
+                  borderRadius: "var(--radius-xs)",
+                  color: active === item.id ? "var(--accent)" : "var(--muted)",
+                  background: active === item.id ? "rgba(62,207,142,0.08)" : "transparent",
+                  borderLeft: active === item.id
+                    ? "2px solid var(--accent)"
+                    : "2px solid transparent",
+                  transition: "all 0.15s var(--ease)",
+                  lineHeight: 1.4,
+                  display: "block",
+                  textDecoration: "none",
+                  fontWeight: active === item.id ? 600 : 400,
+                }}
+              >
+                {item.label}
+              </a>
+            ))
+          ) : (
+            <div
               style={{
-                fontSize: "0.84rem",
-                padding: "0.4rem 0.6rem",
-                borderRadius: "var(--radius-xs)",
-                color: active === item.id ? "var(--accent)" : "var(--muted)",
-                background: active === item.id ? "rgba(62,207,142,0.08)" : "transparent",
-                borderLeft: active === item.id
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
-                transition: "all 0.15s var(--ease)",
-                lineHeight: 1.4,
-                display: "block",
+                padding: "0.75rem 0.6rem",
+                fontSize: "0.8rem",
+                color: "var(--faint)",
+                fontStyle: "italic",
               }}
             >
-              {item.label}
-            </a>
-          ))}
+              No matching sections
+            </div>
+          )}
         </aside>
 
         {/* ── Content ── */}
@@ -394,7 +701,7 @@ export default function DocsPage() {
               underlying data.
             </P>
             <P>
-              Every proof is generated locally in the holder's browser using the{" "}
+              Every proof is generated locally in the holder&apos;s browser using the{" "}
               <strong style={{ color: "var(--text)" }}>UltraHonk</strong> proof system
               (Noir 1.0.0-beta.9 / Barretenberg 0.87.0). The Stellar chain stores only a
               compact verification record — no personal data touches the ledger.
@@ -421,11 +728,11 @@ export default function DocsPage() {
                 title: "Issue",
                 body: (
                   <>
-                    The issuer calls <Code>POST /api/issue</Code> (server-side) with the holder's
+                    The issuer calls <Code>POST /api/issue</Code> (server-side) with the holder&apos;s
                     wallet address and the relevant attribute (e.g. date of birth). The server
                     computes a <strong style={{color:"var(--text)"}}>Poseidon2 commitment</strong>{" "}
                     over <Code>(value, salt)</Code>, signs the commitment with a secp256k1 demo key,
-                    and returns the full credential JSON. The credential is stored in the holder's
+                    and returns the full credential JSON. The credential is stored in the holder&apos;s
                     <Code>localStorage</Code> — never on a server.
                   </>
                 ),
@@ -452,9 +759,9 @@ export default function DocsPage() {
                 body: (
                   <>
                     The holder submits the proof to <Code>ProofRegistry.submit_proof</Code> via a
-                    Freighter-signed Stellar transaction. The registry checks the issuer is trusted
+                    wallet-signed Stellar transaction. The registry checks the issuer is trusted
                     via <Code>IssuerRegistry</Code>, verifies the on-chain public key matches the
-                    one in the proof's public inputs, and forwards to <Code>CredentialVerifier</Code>{" "}
+                    one in the proof&apos;s public inputs, and forwards to <Code>CredentialVerifier</Code>{" "}
                     which runs the BN254 UltraHonk verifier as a Soroban host function. If all pass,
                     a record <Code>(verified_at, expiry)</Code> is written to persistent storage.
                     Any protocol can then call <Code>ProofRegistry.is_verified</Code> — a free,
@@ -520,7 +827,7 @@ export default function DocsPage() {
             </SectionHeading>
             <P>
               Each credential type has a dedicated Noir circuit. The circuit proves the
-              claim using the commitment, the issuer's signature, and optional public
+              claim using the commitment, the issuer&apos;s signature, and optional public
               parameters — all without revealing the underlying attribute.
             </P>
 
@@ -575,7 +882,7 @@ export default function DocsPage() {
               ZK proof system
             </SectionHeading>
 
-            <SubHeading>UltraHonk</SubHeading>
+            <SubHeading id="ultrahonk">UltraHonk</SubHeading>
             <P>
               StellarCred uses the <strong style={{color:"var(--text)"}}>UltraHonk</strong> proving
               system from the Aztec Barretenberg library. UltraHonk is a PLONK-family
@@ -588,7 +895,7 @@ export default function DocsPage() {
               webpack for the heavy proving machinery.
             </P>
 
-            <SubHeading>Poseidon2 commitment</SubHeading>
+            <SubHeading id="poseidon2-commitment">Poseidon2 commitment</SubHeading>
             <P>
               The credential stores a <strong style={{color:"var(--text)"}}>Poseidon2 hash</strong>{" "}
               of the attribute value and a random 248-bit salt:
@@ -600,7 +907,7 @@ export default function DocsPage() {
               commitment even for low-entropy values like country codes.
             </P>
 
-            <SubHeading>secp256k1 issuer signature</SubHeading>
+            <SubHeading id="secp256k1-issuer-signature">secp256k1 issuer signature</SubHeading>
             <P>
               After computing the commitment, the issuer signs it with a{" "}
               <strong style={{color:"var(--text)"}}>secp256k1 ECDSA</strong> key using{" "}
@@ -647,7 +954,7 @@ export default function DocsPage() {
               />
             </div>
 
-            <SubHeading>Public-input layout</SubHeading>
+            <SubHeading id="public-input-layout">Public-input layout</SubHeading>
             <P>
               Each circuit outputs the following public inputs (32 bytes per field, big-endian):
             </P>
@@ -766,6 +1073,152 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </Callout>
           </section>
 
+          {/* Where your credentials live ────────────────────────── */}
+          <section style={{ marginBottom: "3.5rem" }}>
+            <SectionHeading id="storage">
+              <IconDatabase size={20} color="var(--accent)" stroke={1.8} />
+              Where your credentials live
+            </SectionHeading>
+
+            <P>
+              Your credentials — including the raw attribute value (date of birth, income,
+              balance…) and its random salt — are stored <strong style={{color:"var(--text)"}}>only in
+              this browser&apos;s <Code>localStorage</Code></strong>, under the key{" "}
+              <Code>stellarcred:credentials</Code>. There is no StellarCred account and no
+              server-side credential database: the credential JSON exists only on the device
+              that received it.
+            </P>
+
+            <Callout variant="warn">
+              <strong>Credentials are browser-specific and can be lost permanently.</strong>{" "}
+              Clearing site data, switching to a different browser or device, or browsing in
+              private/incognito mode erases them — there is no server-side copy to recover
+              them from. Back up (below) before any of those happen.
+            </Callout>
+
+            <SubHeading>Back up and restore</SubHeading>
+            <P>
+              Open the <strong style={{color:"var(--text)"}}>Holder</strong> page and click{" "}
+              <strong style={{color:"var(--text)"}}>Export backup</strong> — the browser downloads a JSON
+              file containing every credential. Keep that file somewhere safe: it contains the
+              raw sensitive attribute values, so treat it like a password. To restore — on a new
+              browser, a new device, or after clearing site data — open the Holder page there,
+              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and pastethe file&apos;s contents. Restored credentials generate and submit proofs exactly like
+              newly issued ones.
+            </P>
+            <P>
+              To move a single credential to another device, open its details (click the
+              credential on the Holder page) and choose{" "}
+              <strong style={{color:"var(--text)"}}>Transfer to another device</strong>. You pick a
+              passphrase and the app shows a QR code; the credential is encrypted with that
+              passphrase (AES-256-GCM, key derived via PBKDF2 — see <Code>lib/crypto.ts</Code>)
+              before it ever becomes a QR code, so the code alone reveals nothing. On the other
+              device, scan the QR and enter the same passphrase to import.
+            </P>
+
+            <SubHeading>What is stored, and where</SubHeading>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <div className="card" style={{ padding: "1.1rem 1.25rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--faint)",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  Stored on this device
+                </div>
+                {[
+                  "Raw attribute (age, income, country, …)",
+                  "Random salt",
+                  "Full credential JSON + issuer signature",
+                  "Proof status (provedAt / tx hash)",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      fontSize: "0.8375rem",
+                      color: "var(--muted)",
+                      padding: "0.3rem 0",
+                    }}
+                  >
+                    <IconLock size={11} color="var(--faint)" />
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <div className="card card-accent" style={{ padding: "1.1rem 1.25rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--accent)",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  Never stored on a server
+                </div>
+                {[
+                  "Credential value / salt",
+                  "Credential JSON (discarded after use)",
+                  "Passphrase or derived key",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      fontSize: "0.8375rem",
+                      color: "var(--muted)",
+                      padding: "0.3rem 0",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: "var(--accent)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <P>
+              One nuance: while <em>stored</em> credentials never leave your device, generating a
+              proof sends your credential inputs to <Code>POST /api/witness</Code> (StellarCred&apos;s
+              own server), which executes the Noir circuit and returns the witness bytes; the
+              proof itself is then computed in your browser. That route is rate-limited, never
+              logs the sensitive fields, and does not persist the credential — the values exist
+              only in transit for that single request (see <em>How it works</em> above).
+            </P>
+            <P>
+              On the chain side, submitting a proof writes only the public inputs — the
+              commitment (a hash), the issuer&apos;s public key, the credential type, and an expiry
+              timestamp — plus the ~14 KB proof bytes. See <em>Privacy model</em> above for the
+              full breakdown.
+            </P>
+          </section>
+
           {/* Toolchain ──────────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="toolchain">
@@ -823,14 +1276,14 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               ))}
             </div>
 
-            <SubHeading>Build circuits</SubHeading>
+            <SubHeading id="build-circuits">Build circuits</SubHeading>
             <CodeBlock>{`# From repo root
 cd circuits
 bash scripts/build.sh          # compiles all 5 circuits + commit helper
                                # outputs *.json to frontend/public/circuits/
                                # outputs VKs to fixtures/*/vk`}</CodeBlock>
 
-            <SubHeading>Deploy contracts</SubHeading>
+            <SubHeading id="deploy-contracts">Deploy contracts</SubHeading>
             <CodeBlock>{`stellar keys generate --global deployer --network testnet --fund
 SOURCE=deployer ./scripts/deploy.sh
 # Copy the printed NEXT_PUBLIC_* vars into frontend/.env.local`}</CodeBlock>
@@ -855,8 +1308,9 @@ SOURCE=deployer ./scripts/deploy.sh
               }}
             >
               <li>
-                Install <strong style={{color:"var(--text)"}}>Freighter wallet</strong> and
-                switch it to <strong style={{color:"var(--text)"}}>Testnet</strong>
+                Install a <strong style={{color:"var(--text)"}}>Stellar wallet</strong> (Freighter,
+                Albedo, xBull, and others are supported) and switch it to{" "}
+                <strong style={{color:"var(--text)"}}>Testnet</strong>
               </li>
               <li>
                 Fund your address via{" "}
@@ -873,7 +1327,7 @@ SOURCE=deployer ./scripts/deploy.sh
               </li>
               <li>
                 Click <strong style={{color:"var(--text)"}}>Submit to Stellar</strong>,
-                approve in Freighter, and check the <strong style={{color:"var(--text)"}}>Apps</strong>{" "}
+                approve in your wallet, and check the <strong style={{color:"var(--text)"}}>Apps</strong>{" "}
                 page to see your eligibility update live
               </li>
             </ol>

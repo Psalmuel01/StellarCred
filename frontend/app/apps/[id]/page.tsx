@@ -1,83 +1,47 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, notFound } from "next/navigation";
 import {
   IconLock,
   IconCheck,
   IconCircle,
   IconArrowRight,
   IconArrowLeft,
+  IconLoader2,
+  IconAlertCircle,
+  IconRefresh,
+  IconQrcode,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
-import { useWallet } from "@/lib/wallet-context";
+import { useWallet, usePreviewMode } from "@/lib/wallet-context";
 import { Badge } from "@/components/Badge";
 import { ConfigBanner } from "@/components/ConfigBanner";
-import { usePreviewMode } from "@/lib/wallet-context";
-import { checkClaim } from "@/lib/contracts";
-import { getProtocol } from "@/lib/protocols";
+import { QrCodeModal } from "@/components/QrCodeModal";
+import { getProtocol, type Protocol } from "@/lib/protocols";
+import { useProtocolAccessCheck } from "@/lib/use-protocol-access";
 
-function ProtocolDetailInner() {
-  const { id } = useParams<{ id: string }>();
-  const { address } = useWallet();
-  const searchParams = useSearchParams();
-
-  const scVerified = searchParams.get("sc_verified") === "true";
-  const scWallet = searchParams.get("sc_wallet");
-  const activeWallet = address ?? scWallet ?? null;
-  const isPreview = usePreviewMode();
-
-  const protocol = getProtocol(id);
-
-  const [statuses, setStatuses] = useState<boolean[]>([]);
-  const [checked, setChecked] = useState(false);
-  const [inputValue, setInputValue] = useState(protocol?.inputDefault ?? "");
-
-  useEffect(() => {
-    if (!protocol) return;
-    setStatuses(protocol.requirements.map(() => false));
-  }, [protocol]);
-
-  useEffect(() => {
-    if (isPreview && protocol) {
-      setChecked(true);
-      setStatuses(protocol.requirements.map(() => true));
-      return;
-    }
-    if (!activeWallet || !protocol) {
-      setChecked(false);
-      setStatuses(protocol?.requirements.map(() => false) ?? []);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const results = await Promise.all(
-          protocol.requirements.map((r) => checkClaim(activeWallet, r.type, r.minThreshold)),
-        );
-        if (!cancelled) setStatuses(results);
-      } catch {
-        // contracts not deployed — requirements stay unmet
-      } finally {
-        if (!cancelled) setChecked(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeWallet, protocol]);
-
-  if (!protocol) {
-    return (
-      <div style={{ textAlign: "center", padding: "4rem 0" }}>
-        <p className="muted">Protocol not found.</p>
-        <Link href="/apps" className="btn btn-secondary btn-sm" style={{ marginTop: "1rem" }}>
-          <IconArrowLeft size={14} /> Back to Apps
-        </Link>
-      </div>
-    );
-  }
-
-  const eligible = statuses.length > 0 && statuses.every(Boolean);
+function ProtocolDetailBody({
+  protocol,
+  activeWallet,
+  networkKey,
+  isPreview,
+  scVerified,
+}: {
+  protocol: Protocol;
+  activeWallet: string | null;
+  networkKey: string | boolean;
+  isPreview: boolean;
+  scVerified: boolean;
+}) {
+  const { state, statuses, retry, eligible, checking } = useProtocolAccessCheck(
+    protocol.requirements,
+    activeWallet,
+    { isPreview: isPreview && Boolean(activeWallet), networkKey },
+  );
+  const [inputValue, setInputValue] = useState(protocol.inputDefault);
+  const [showQr, setShowQr] = useState(false);
 
   return (
     <>
@@ -86,7 +50,12 @@ function ProtocolDetailInner() {
           <Link
             href="/apps"
             className="row faint"
-            style={{ fontSize: "0.8125rem", gap: "0.35rem", marginBottom: "0.5rem", textDecoration: "none" }}
+            style={{
+              fontSize: "0.8125rem",
+              gap: "0.35rem",
+              marginBottom: "0.5rem",
+              textDecoration: "none",
+            }}
           >
             <IconArrowLeft size={13} /> Apps
           </Link>
@@ -128,13 +97,14 @@ function ProtocolDetailInner() {
       <ConfigBanner />
 
       <div className="grid grid-2" style={{ alignItems: "start", gap: "1.5rem" }}>
-        {/* Left — info + eligibility */}
         <div className="card">
-          <p className="muted" style={{ fontSize: "0.875rem", lineHeight: 1.7, marginBottom: "1.5rem" }}>
+          <p
+            className="muted"
+            style={{ fontSize: "0.875rem", lineHeight: 1.7, marginBottom: "1.5rem" }}
+          >
             {protocol.description}
           </p>
 
-          {/* Stat */}
           <div
             style={{
               padding: "0.65rem 0.9rem",
@@ -150,25 +120,44 @@ function ProtocolDetailInner() {
             <div style={{ fontWeight: 600, fontSize: "1.75rem", letterSpacing: "-0.03em" }}>
               {protocol.stat.value}
             </div>
-            <div className="mono faint" style={{ fontSize: "0.7rem" }}>{protocol.stat.sub}</div>
+            <div className="mono faint" style={{ fontSize: "0.7rem" }}>
+              {protocol.stat.sub}
+            </div>
           </div>
 
-          {/* Requirements */}
-          <span className="eyebrow" style={{ marginBottom: "0.4rem", display: "block" }}>Requirements</span>
+          <span className="eyebrow" style={{ marginBottom: "0.4rem", display: "block" }}>
+            Requirements
+          </span>
           <div className="stack" style={{ marginBottom: "1.25rem" }}>
             {protocol.requirements.map((r, i) => (
               <div className="line" key={r.label}>
                 <span className="row" style={{ gap: "0.6rem" }}>
-                  {statuses[i] ? (
+                  {checking ? (
+                    <IconLoader2 size={15} color="var(--faint)" className="spin" />
+                  ) : state === "error" ? (
+                    <IconAlertCircle size={15} color="var(--danger)" />
+                  ) : statuses[i] ? (
                     <IconCheck size={15} color="var(--accent)" stroke={2.5} />
                   ) : (
                     <IconCircle size={15} color="var(--faint)" />
                   )}
-                  <span style={{ fontSize: "0.875rem", color: statuses[i] ? "var(--text)" : "var(--muted)" }}>
+                  <span
+                    style={{
+                      fontSize: "0.875rem",
+                      color:
+                        !checking && state !== "error" && statuses[i]
+                          ? "var(--text)"
+                          : "var(--muted)",
+                    }}
+                  >
                     {r.label}
                   </span>
                 </span>
-                {statuses[i] ? (
+                {checking ? (
+                  <Badge variant="pending">Checking</Badge>
+                ) : state === "error" ? (
+                  <Badge variant="denied">Unavailable</Badge>
+                ) : statuses[i] ? (
                   <Badge variant="verified">Proved</Badge>
                 ) : (
                   <Badge variant="pending">Needed</Badge>
@@ -177,25 +166,59 @@ function ProtocolDetailInner() {
             ))}
           </div>
 
-          {checked && !eligible && !isPreview && (
-            <Link
-              href={protocol.verifyUrl}
+          {state === "error" && (
+            <button
+              type="button"
               className="btn btn-secondary"
-              style={{ width: "100%" }}
+              style={{ width: "100%", marginBottom: "0.75rem" }}
+              onClick={retry}
             >
-              Get verified
-              <IconArrowRight size={14} />
-            </Link>
+              <IconRefresh size={14} />
+              Retry access check
+            </button>
           )}
 
-          {!activeWallet && !isPreview && (
+          {state === "denied" && !isPreview && (
+            <div className="row" style={{ gap: "0.5rem" }}>
+              <Link
+                href={protocol.verifyUrl}
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+              >
+                Get verified
+                <IconArrowRight size={14} />
+              </Link>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                title="Scan to verify on another device"
+                onClick={() => setShowQr(true)}
+              >
+                <IconQrcode size={16} />
+              </button>
+            </div>
+          )}
+
+          {showQr && (
+            <QrCodeModal
+              title="Verify on another device"
+              value={
+                typeof window !== "undefined"
+                  ? new URL(protocol.verifyUrl, window.location.origin).toString()
+                  : protocol.verifyUrl
+              }
+              hint={`Scan with a phone to continue this ${protocol.name} verification request there.`}
+              onClose={() => setShowQr(false)}
+            />
+          )}
+
+          {!activeWallet && (
             <p className="faint" style={{ marginTop: "0.75rem", fontSize: "0.8rem" }}>
               Connect your wallet to check eligibility.
             </p>
           )}
         </div>
 
-        {/* Right — action */}
         <div
           className="card"
           style={{
@@ -205,15 +228,22 @@ function ProtocolDetailInner() {
         >
           <div className="between" style={{ marginBottom: "1.5rem" }}>
             <span className="eyebrow">{protocol.actionLabel}</span>
-            {checked && (
-              eligible
-                ? <Badge variant="verified">Access granted</Badge>
-                : <Badge variant="denied">Access denied</Badge>
+            {state === "loading" && (
+              <span className="row faint" style={{ gap: "0.35rem", fontSize: "0.75rem" }}>
+                <IconLoader2 size={14} className="spin" />
+                Checking…
+              </span>
             )}
+            {state === "granted" && <Badge variant="verified">Access granted</Badge>}
+            {state === "denied" && <Badge variant="denied">Access denied</Badge>}
+            {state === "error" && <Badge variant="denied">Check failed</Badge>}
           </div>
 
-          <label className="field-label">{protocol.inputLabel}</label>
+          <label className="field-label" htmlFor="protocol-input">
+            {protocol.inputLabel}
+          </label>
           <input
+            id="protocol-input"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             disabled={!eligible}
@@ -230,8 +260,14 @@ function ProtocolDetailInner() {
             }}
             disabled={!eligible || isPreview}
           >
-            {isPreview ? "Connect wallet to check access" : eligible ? protocol.actionLabel : (
-              <><IconLock size={14} /> Prove eligibility first</>
+            {isPreview ? (
+              "Connect wallet to check access"
+            ) : eligible ? (
+              protocol.actionLabel
+            ) : (
+              <>
+                <IconLock size={14} /> Prove eligibility first
+              </>
             )}
           </button>
 
@@ -243,6 +279,34 @@ function ProtocolDetailInner() {
         </div>
       </div>
     </>
+  );
+}
+
+function ProtocolDetailInner() {
+  const { id } = useParams<{ id: string }>();
+  const { address, networkMismatch } = useWallet();
+  const searchParams = useSearchParams();
+
+  const scVerified = searchParams.get("sc_verified") === "true";
+  const scWallet = searchParams.get("sc_wallet");
+  const activeWallet = address || scWallet || null;
+  const isPreview = usePreviewMode();
+  const networkKey = networkMismatch ? "mismatch" : "ok";
+
+  const protocol = getProtocol(id);
+
+  if (!protocol) {
+    notFound();
+  }
+
+  return (
+    <ProtocolDetailBody
+      protocol={protocol}
+      activeWallet={activeWallet}
+      networkKey={networkKey}
+      isPreview={isPreview}
+      scVerified={scVerified}
+    />
   );
 }
 

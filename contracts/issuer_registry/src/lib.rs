@@ -10,9 +10,36 @@
 //! `jurisdiction`, `income`, `human`, `employer`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    BytesN, Env, String, Symbol, Vec,
 };
+
+// ── Event types ──────────────────────────────────────────────────────────────
+// Topics follow the convention: (contract, action, credential_type_or_unit).
+// `contract` is always `symbol_short!("iss_reg")` for IssuerRegistry events.
+// `action`   identifies the operation.
+// For events that are not credential-type-specific, the third topic is omitted
+// (tuple length 2).
+
+/// Payload emitted when an issuer is registered or updated.
+/// Topics: ("iss_reg", "register")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventIssuerRegistered {
+    /// The address of the newly registered issuer.
+    pub issuer: Address,
+    /// The issuer's secp256k1 public key (x || y, 32 bytes each).
+    pub pubkey: BytesN<64>,
+}
+
+/// Payload emitted when an issuer is revoked.
+/// Topics: ("iss_reg", "revoked")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventIssuerRevoked {
+    /// The address of the revoked issuer.
+    pub issuer: Address,
+}
 
 // Persistent-entry lifetime management (~5s ledgers).
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -33,11 +60,25 @@ pub struct Issuer {
 }
 
 #[contracttype]
+#[derive(Clone)]
+pub struct IssuerMetadata {
+    pub name: Option<String>,
+    pub url: Option<String>,
+    pub logo: Option<String>,
+}
+
+#[contracttype]
 pub enum DataKey {
     Admin,
     Issuer(Address),
     /// Append-only list of registered issuer addresses for enumeration.
+    /// Stored in persistent storage to avoid hitting the instance-storage
+    /// size cap as the issuer set grows.
     IssuerList,
+    IssuerMetadata(Address),
+    /// Total number of registered issuers; kept in sync with IssuerList so
+    /// callers can size pagination requests without loading the whole list.
+    IssuerCount,
 }
 
 #[contracterror]
@@ -46,7 +87,15 @@ pub enum DataKey {
 pub enum Error {
     NotInitialized = 1,
     IssuerNotFound = 2,
+    MetadataTooLong = 3,
 }
+
+/// Maximum byte length for on-chain metadata fields.
+/// These caps prevent unbounded storage blobs that would inflate rent
+/// and read costs.
+const MAX_NAME_LEN: u32 = 64;
+const MAX_URL_LEN: u32 = 256;
+const MAX_LOGO_LEN: u32 = 256;
 
 #[contract]
 pub struct IssuerRegistry;
@@ -59,6 +108,10 @@ impl IssuerRegistry {
     }
 
     /// Register (or overwrite) a trusted issuer. Admin-only.
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
+    // value-based publish to stay consistent with the rest of the codebase.
+    #[allow(deprecated)]
     pub fn register_issuer(
         env: Env,
         issuer_id: Address,
@@ -67,7 +120,7 @@ impl IssuerRegistry {
     ) {
         Self::require_admin(&env);
         let issuer = Issuer {
-            pubkey,
+            pubkey: pubkey.clone(),
             credential_types,
             revoked: false,
         };
@@ -77,22 +130,49 @@ impl IssuerRegistry {
             .persistent()
             .extend_ttl(&key, BUMP_THRESHOLD, ENTRY_TTL);
 
+        // Maintain the enumeration list in persistent storage (not instance
+        // storage) so large issuer sets don't hit Soroban's per-entry size cap.
+        let list_key = DataKey::IssuerList;
         let mut list: Vec<Address> = env
             .storage()
-            .instance()
-            .get(&DataKey::IssuerList)
+            .persistent()
+            .get(&list_key)
             .unwrap_or_else(|| Vec::new(&env));
         if !list.contains(&issuer_id) {
-            list.push_back(issuer_id);
-            env.storage().instance().set(&DataKey::IssuerList, &list);
+            list.push_back(issuer_id.clone());
+            env.storage().persistent().set(&list_key, &list);
+            env.storage()
+                .persistent()
+                .extend_ttl(&list_key, BUMP_THRESHOLD, ENTRY_TTL);
+            // Bump the count.
+            let count_key = DataKey::IssuerCount;
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0u32);
+            env.storage().persistent().set(&count_key, &(count + 1));
+            env.storage()
+                .persistent()
+                .extend_ttl(&count_key, BUMP_THRESHOLD, ENTRY_TTL);
         }
+
+        // Emit: topics = ("iss_reg", "register")
+        //       data   = EventIssuerRegistered { issuer, pubkey }
+        env.events().publish(
+            (symbol_short!("iss_reg"), symbol_short!("register")),
+            EventIssuerRegistered {
+                issuer: issuer_id,
+                pubkey,
+            },
+        );
     }
 
     /// Mark an issuer as revoked. Admin-only. Existing proofs are not affected
     /// here — revocation propagates through `is_valid_issuer` checks.
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
+    // value-based publish to stay consistent with the rest of the codebase.
+    #[allow(deprecated)]
     pub fn revoke_issuer(env: Env, issuer_id: Address) {
         Self::require_admin(&env);
-        let key = DataKey::Issuer(issuer_id);
+        let key = DataKey::Issuer(issuer_id.clone());
         let mut issuer: Issuer = env
             .storage()
             .persistent()
@@ -103,14 +183,72 @@ impl IssuerRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&key, BUMP_THRESHOLD, ENTRY_TTL);
+
+        // Emit: topics = ("iss_reg", "revoked")
+        //       data   = EventIssuerRevoked { issuer }
+        env.events().publish(
+            (symbol_short!("iss_reg"), symbol_short!("revoked")),
+            EventIssuerRevoked { issuer: issuer_id },
+        );
     }
 
     /// All registered issuer addresses (including revoked).
+    ///
+    /// # Warning
+    /// This returns the full list in a single Vec. For production deployments
+    /// with a large number of issuers, prefer [`get_issuers_page`] to bound
+    /// the per-call read footprint and avoid hitting Soroban resource limits.
     pub fn get_issuers(env: Env) -> Vec<Address> {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::IssuerList)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Paginated read of registered issuer addresses (including revoked).
+    ///
+    /// Returns up to `limit` addresses starting at zero-based index `start`.
+    /// `limit` is capped at 20 to bound the per-call read footprint; passing a
+    /// larger value silently uses 20 instead.
+    ///
+    /// Use [`issuer_count`] to determine how many pages are needed:
+    /// ```text
+    /// pages = ceil(issuer_count() / limit)
+    /// ```
+    pub fn get_issuers_page(env: Env, start: u32, limit: u32) -> Vec<Address> {
+        // Cap limit to 20 to guard against resource-limit exhaustion as the
+        // issuer set grows. Soroban instruction budgets make materialising a
+        // very large slice in one call prohibitively expensive.
+        const MAX_PAGE_SIZE: u32 = 20;
+        let effective_limit = limit.min(MAX_PAGE_SIZE);
+
+        let list: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IssuerList)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let total = list.len();
+        if start >= total || effective_limit == 0 {
+            return Vec::new(&env);
+        }
+
+        let end = total.min(start + effective_limit);
+        let mut page = Vec::new(&env);
+        for i in start..end {
+            page.push_back(list.get(i).unwrap());
+        }
+        page
+    }
+
+    /// Total number of registered issuers (including revoked).
+    /// Use this together with [`get_issuers_page`] to iterate the full set
+    /// without loading it all at once.
+    pub fn issuer_count(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::IssuerCount)
+            .unwrap_or(0u32)
     }
 
     /// Full on-chain record for a registered issuer.
@@ -134,6 +272,54 @@ impl IssuerRegistry {
             Some(issuer) => !issuer.revoked && issuer.credential_types.contains(&credential_type),
             None => false,
         }
+    }
+
+    /// Set optional on-chain metadata (name, url, logo) for an issuer.
+    /// Admin-only. Pass `None` for fields you don't want to set.
+    pub fn set_issuer_metadata(
+        env: Env,
+        issuer: Address,
+        name: Option<String>,
+        url: Option<String>,
+        logo: Option<String>,
+    ) {
+        Self::require_admin(&env);
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Issuer(issuer.clone()))
+        {
+            panic_with_error!(&env, Error::IssuerNotFound);
+        }
+        // Enforce per-field length caps to bound storage rent.
+        if let Some(ref n) = name {
+            if n.len() > MAX_NAME_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
+        }
+        if let Some(ref u) = url {
+            if u.len() > MAX_URL_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
+        }
+        if let Some(ref l) = logo {
+            if l.len() > MAX_LOGO_LEN {
+                panic_with_error!(&env, Error::MetadataTooLong);
+            }
+        }
+        let metadata = IssuerMetadata { name, url, logo };
+        let key = DataKey::IssuerMetadata(issuer.clone());
+        env.storage().persistent().set(&key, &metadata);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, BUMP_THRESHOLD, ENTRY_TTL);
+    }
+
+    /// Read the optional on-chain metadata for an issuer.
+    /// Returns `None` if no metadata has been set.
+    pub fn get_issuer_metadata(env: Env, issuer: Address) -> Option<IssuerMetadata> {
+        let key = DataKey::IssuerMetadata(issuer);
+        env.storage().persistent().get(&key)
     }
 
     pub fn admin(env: Env) -> Address {

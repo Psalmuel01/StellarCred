@@ -97,6 +97,11 @@ revoked: boolean;
  */
 threshold: Option<u64>;
   verified_at: u64;
+  /**
+ * VK version that was used to verify this proof. Preserved so that old
+ * proofs remain valid even after the circuit is upgraded to a new version.
+ */
+vk_version: u32;
 }
 
 
@@ -110,6 +115,11 @@ export interface ProofSubmission {
   issuer_id: string;
   proof: Buffer;
   public_inputs: Array<u32>;
+  /**
+ * VK version to use for verification. `None` defaults to the latest
+ * registered version (recommended for new submissions).
+ */
+vk_version: Option<u32>;
 }
 
 export interface Client {
@@ -149,6 +159,12 @@ export interface Client {
   check_claim: ({holder, credential_type, min_threshold, trusted_issuers}: {holder: string, credential_type: string, min_threshold: Option<u64>, trusted_issuers: Option<Array<string>>}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
 
   /**
+   * Construct and simulate a get_record transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns the stored record as-is (no validity computation); None when absent
+   */
+  get_record: ({holder, credential_type}: {holder: string, credential_type: string}, options?: MethodOptions) => Promise<AssembledTransaction<Option<ProofRecord>>>
+
+  /**
    * Construct and simulate a is_verified transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Returns `(is_currently_valid, verified_at, expiry)`. `is_currently_valid`
    * accounts for expiry against the current ledger time.
@@ -174,7 +190,7 @@ export interface Client {
    * (ledger timestamp, seconds). The holder authorizes their own submission.
    * `issuer_id` must be registered and trusted for `credential_type`.
    */
-  submit_proof: ({holder, issuer_id, credential_type, proof, public_inputs, expiry}: {holder: string, issuer_id: string, credential_type: string, proof: Buffer, public_inputs: Buffer, expiry: u64}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+  submit_proof: ({holder, issuer_id, credential_type, proof, public_inputs, vk_version, expiry}: {holder: string, issuer_id: string, credential_type: string, proof: Buffer, public_inputs: Buffer, vk_version: Option<u32>, expiry: u64}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
    * Construct and simulate a verifier_address transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -222,6 +238,7 @@ export class Client extends ContractClient {
         "AAAAAQAAAJlBIHNpbmdsZSBwcm9vZiBzdWJtaXNzaW9uIGluc2lkZSBhIGJhdGNoLiBNaXJyb3JzIHRoZSBpbmRpdmlkdWFsIHBhcmFtZXRlcnMKb2YgYHN1Ym1pdF9wcm9vZmAgYnV0IGdyb3VwZWQgaW50byBhIHN0cnVjdCBzbyB0aGV5IGNhbiBiZSBwYXNzZWQgYXMgYSBgVmVjYC4AAAAAAAAAAAAAD1Byb29mU3VibWlzc2lvbgAAAAAFAAAAAAAAAA9jcmVkZW50aWFsX3R5cGUAAAAAEQAAAAAAAAAGZXhwaXJ5AAAAAAAGAAAAAAAAAAlpc3N1ZXJfaWQAAAAAAAATAAAAAAAAAAVwcm9vZgAAAAAAAA4AAAAAAAAADXB1YmxpY19pbnB1dHMAAAAAAAPqAAAABA==",
         "AAAAAAAAAAAAAAAJc2V0X2FkbWluAAAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAA=",
         "AAAAAAAAAbtMaWtlIGBpc192ZXJpZmllZGAgYnV0IGFsc28gZW5mb3JjZXMgYSBtaW5pbXVtIHRocmVzaG9sZCBmb3IgcGFyYW1ldGVyaXNlZApjcmVkZW50aWFsIHR5cGVzIChhZ2UsIGluY29tZSwgZnVuZHMpLiBBIHByb29mIHN1Ym1pdHRlZCB3aXRoIGEgdGhyZXNob2xkCm9mIDIwMF8wMDAgc2F0aXNmaWVzIGBtaW5fdGhyZXNob2xkID0gNTBfMDAwYCBiZWNhdXNlIGl0IHByb3ZlcyBzdHJpY3RseQptb3JlLiBGb3IgYGt5Y2AgYW5kIGBqdXJpc2RpY3Rpb25gLCBwYXNzIGBtaW5fdGhyZXNob2xkID0gTm9uZWAuCgpgdHJ1c3RlZF9pc3N1ZXJzYCwgaWYgYFNvbWVgLCByZXN0cmljdHMgd2hpY2ggaXNzdWVyJ3MgcHJvb2YgaXMgYWNjZXB0ZWQK4oCUIHNlZSBgaXNfdmVyaWZpZWRgLiBgTm9uZWAgYWNjZXB0cyBhbnkgcmVnaXN0ZXJlZCBpc3N1ZXIgKHVuY2hhbmdlZApiZWhhdmlvdXIpLgAAAAALY2hlY2tfY2xhaW0AAAAABAAAAAAAAAAGaG9sZGVyAAAAAAATAAAAAAAAAA9jcmVkZW50aWFsX3R5cGUAAAAAEQAAAAAAAAANbWluX3RocmVzaG9sZAAAAAAAA+gAAAAGAAAAAAAAAA90cnVzdGVkX2lzc3VlcnMAAAAD6AAAA+oAAAATAAAAAQAAAAE=",
+        "AAAAAAAAAEtSZXR1cm5zIHRoZSBzdG9yZWQgcmVjb3JkIGFzLWlzIChubyB2YWxpZGl0eSBjb21wdXRhdGlvbik7IE5vbmUgd2hlbiBhYnNlbnQAAAAACmdldF9yZWNvcmQAAAAAAAIAAAAAAAAABmhvbGRlcgAAAAAAEwAAAAAAAAAPY3JlZGVudGlhbF90eXBlAAAAABEAAAABAAAD6AAAB9AAAAALUHJvb2ZSZWNvcmQA",
         "AAAAAAAAAeZSZXR1cm5zIGAoaXNfY3VycmVudGx5X3ZhbGlkLCB2ZXJpZmllZF9hdCwgZXhwaXJ5KWAuIGBpc19jdXJyZW50bHlfdmFsaWRgCmFjY291bnRzIGZvciBleHBpcnkgYWdhaW5zdCB0aGUgY3VycmVudCBsZWRnZXIgdGltZS4KCmB0cnVzdGVkX2lzc3VlcnNgLCBpZiBgU29tZWAsIHJlc3RyaWN0cyB3aGljaCBpc3N1ZXIncyBwcm9vZiBpcyBhY2NlcHRlZDoKdGhlIHN0b3JlZCBwcm9vZidzIGlzc3VlciBtdXN0IGJlIGluIHRoZSBsaXN0LCBvciB0aGlzIHJldHVybnMKYChmYWxzZSwgdmVyaWZpZWRfYXQsIGV4cGlyeSlgIGV2ZW4gaWYgdGhlIHByb29mIGlzIG90aGVyd2lzZSB2YWxpZCDigJQKdGltZXN0YW1wcyBhcmUgc3RpbGwgcmV0dXJuZWQgZm9yIGF1ZGl0LCBtYXRjaGluZyB0aGUgZXhpc3RpbmcKcmV2b2tlZC9leHBpcmVkIGJlaGF2aW91ci4gYE5vbmVgIGFjY2VwdHMgYW55IHJlZ2lzdGVyZWQgaXNzdWVyCih1bmNoYW5nZWQgYmVoYXZpb3VyKS4AAAAAAAtpc192ZXJpZmllZAAAAAADAAAAAAAAAAZob2xkZXIAAAAAABMAAAAAAAAAD2NyZWRlbnRpYWxfdHlwZQAAAAARAAAAAAAAAA90cnVzdGVkX2lzc3VlcnMAAAAD6AAAA+oAAAATAAAAAQAAA+0AAAADAAAAAQAAAAYAAAAG",
         "AAAAAAAAAEJSZXZva2UgYSBjYWNoZWQgcHJvb2YuIFRoZSBob2xkZXIgYXV0aG9yaXplcyB0aGVpciBvd24gcmV2b2NhdGlvbi4AAAAAAAxyZXZva2VfcHJvb2YAAAACAAAAAAAAAAZob2xkZXIAAAAAABMAAAAAAAAAD2NyZWRlbnRpYWxfdHlwZQAAAAARAAAAAA==",
         "AAAAAAAAAM1WZXJpZnkgYSBwcm9vZiBhbmQsIGlmIHZhbGlkLCBjYWNoZSBpdCBmb3IgYGhvbGRlcmAgdW50aWwgYGV4cGlyeWAKKGxlZGdlciB0aW1lc3RhbXAsIHNlY29uZHMpLiBUaGUgaG9sZGVyIGF1dGhvcml6ZXMgdGhlaXIgb3duIHN1Ym1pc3Npb24uCmBpc3N1ZXJfaWRgIG11c3QgYmUgcmVnaXN0ZXJlZCBhbmQgdHJ1c3RlZCBmb3IgYGNyZWRlbnRpYWxfdHlwZWAuAAAAAAAADHN1Ym1pdF9wcm9vZgAAAAYAAAAAAAAABmhvbGRlcgAAAAAAEwAAAAAAAAAJaXNzdWVyX2lkAAAAAAAAEwAAAAAAAAAPY3JlZGVudGlhbF90eXBlAAAAABEAAAAAAAAABXByb29mAAAAAAAADgAAAAAAAAANcHVibGljX2lucHV0cwAAAAAAAA4AAAAAAAAABmV4cGlyeQAAAAAABgAAAAA=",
@@ -238,6 +255,7 @@ export class Client extends ContractClient {
         upgrade: this.txFromJSON<null>,
         set_admin: this.txFromJSON<null>,
         check_claim: this.txFromJSON<boolean>,
+        get_record: this.txFromJSON<Option<ProofRecord>>,
         is_verified: this.txFromJSON<readonly [boolean, u64, u64]>,
         revoke_proof: this.txFromJSON<null>,
         submit_proof: this.txFromJSON<null>,

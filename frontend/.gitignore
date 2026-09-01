@@ -3,8 +3,17 @@
 /out
 next-env.d.ts
 .env
+.env.example
 .env.local
 *.tsbuildinfo
 
 # Copied from node_modules/@aztec/bb.js by scripts/copy-bb.mjs (predev/prebuild)
 /public/bb/
+
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Hash-chained issuance audit log (written at runtime by /api/issue)
+/.data/

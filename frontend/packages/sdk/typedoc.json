@@ -1,0 +1,8 @@
+{
+  "entryPoints": ["src/index.ts", "src/react.ts"],
+  "out": "docs/api",
+  "tsconfig": "tsconfig.json",
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true
+}

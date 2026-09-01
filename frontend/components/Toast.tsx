@@ -28,6 +28,7 @@ type ToastEntry = {
   variant: ToastVariant;
   message: string;
   txHash?: string;
+  count: number;
 };
 
 type ToastContextValue = {
@@ -38,6 +39,7 @@ type ToastContextValue = {
 };
 
 const AUTO_DISMISS_MS = 5000;
+const MAX_VISIBLE_TOASTS = 3;
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -73,10 +75,34 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const push = useCallback(
     (variant: ToastVariant, message: string, opts?: ToastOptions) => {
-      const id = nextId.current++;
-      setToasts((prev) => [...prev, { id, variant, message, txHash: opts?.txHash }]);
-      timers.current.set(id, setTimeout(() => dismiss(id), AUTO_DISMISS_MS));
-      return id;
+      let resultId = nextId.current++;
+      setToasts((prev) => {
+        const last = prev[prev.length - 1];
+        if (
+          last &&
+          last.variant === variant &&
+          last.message === message &&
+          last.txHash === opts?.txHash
+        ) {
+          resultId = last.id;
+          const timer = timers.current.get(last.id);
+          if (timer) clearTimeout(timer);
+          timers.current.set(last.id, setTimeout(() => dismiss(last.id), AUTO_DISMISS_MS));
+          return [...prev.slice(0, -1), { ...last, count: last.count + 1 }];
+        }
+
+        const entry: ToastEntry = { id: resultId, variant, message, txHash: opts?.txHash, count: 1 };
+        const next = [...prev, entry];
+        const removed = next.length > MAX_VISIBLE_TOASTS ? next.slice(0, -MAX_VISIBLE_TOASTS) : [];
+        removed.forEach((toast) => {
+          const timer = timers.current.get(toast.id);
+          if (timer) clearTimeout(timer);
+          timers.current.delete(toast.id);
+        });
+        timers.current.set(resultId, setTimeout(() => dismiss(resultId), AUTO_DISMISS_MS));
+        return next.slice(-MAX_VISIBLE_TOASTS);
+      });
+      return resultId;
     },
     [dismiss],
   );
@@ -109,7 +135,13 @@ function ToastStack({
 }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="toast-stack" role="region" aria-label="Notifications">
+    <div
+      className="toast-stack"
+      role="status"
+      aria-live={toasts.some((toast) => toast.variant === "error") ? "assertive" : "polite"}
+      aria-atomic="false"
+      aria-label="Notifications"
+    >
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
       ))}
@@ -128,10 +160,13 @@ function ToastItem({ toast, onDismiss }: { toast: ToastEntry; onDismiss: () => v
     );
 
   return (
-    <div className={`toast toast-${toast.variant}`} role="status">
+    <div className={`toast toast-${toast.variant}`}>
       <span className="toast-icon">{icon}</span>
       <div className="toast-body">
-        <span className="toast-message">{toast.message}</span>
+        <span className="toast-message">
+          {toast.message}
+          {toast.count > 1 && <span className="toast-count"> ({toast.count})</span>}
+        </span>
         {toast.txHash && (
           <a
             href={EXPLORER_TX(toast.txHash)}
