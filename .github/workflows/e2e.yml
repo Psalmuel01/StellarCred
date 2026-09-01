@@ -22,7 +22,7 @@ jobs:
       group: stellarcred-e2e-testnet
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust and wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -31,7 +31,7 @@ jobs:
           targets: wasm32v1-none
 
       - name: Install Node and pnpm
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: pnpm
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload redacted E2E log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stellarcred-e2e-log
           path: e2e.log

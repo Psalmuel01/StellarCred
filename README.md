@@ -23,8 +23,8 @@ reusable proofs instead of re-submitting personal data to every app.
 - **Real on-chain ZK verification.** `CredentialVerifier` runs the host-native
   BN254 UltraHonk verifier ([`rs-soroban-ultrahonk`](https://github.com/yugocabrio/rs-soroban-ultrahonk)),
   not a stub. The full path — protocol → ProofRegistry → IssuerRegistry +
-  CredentialVerifier → BN254 — is covered by **21 passing contract tests** over
-  genuine proofs for all four credential types.
+  CredentialVerifier → BN254 — is covered by **125 passing contract tests** over
+  genuine proofs for all credential types.
 - **Issuer signature verified in zero-knowledge.** Each circuit verifies the
   issuer's secp256k1 ECDSA signature over the credential commitment
   (`std::ecdsa_secp256k1`) inside the proof, and the contract binds that key to
@@ -201,7 +201,7 @@ full reference.
    result. Identity fields are sent once to the provider and never stored.
 4. **Proof expiry.** `ProofRegistry` uses persistent storage with an explicit
    `expiry` (checked against ledger time) plus TTL extension.
-5. **Contract upgradeability.** `ProofRegistry` supports an admin-controlled upgrade path using Soroban's native `update_current_contract_wasm` capability. The administrative key is initialized at deployment time and can be subsequently transferred to a multisig wallet or DAO.
+5. **Contract governance is role-based.** Privileged actions on `CredentialVerifier`, `IssuerRegistry`, and `ProofRegistry` are gated by a role map (`Map<Symbol, Address>`) rather than a single admin key. The deployer is seeded the `admin` role (plus `upgrader` and `pauser` on `ProofRegistry`) at construction, and the root admin can delegate or rotate holders with `grant_role` / `revoke_role` (`has_role` is a public view). Each privileged function is guarded by its specific role: `set_vk` / `deprecate_version` / `refresh_latest_version_ttl` → `admin`, issuer registration / revocation / metadata → `admin`, `ProofRegistry.upgrade` → `upgrader`, `pause` / `unpause` → `pauser`, `migrate_record` → `admin`. Upgrade and pause power can therefore live on separate keys (multisig, release engineer, security/ops key, DAO) from day-to-day administration, and each key can be rotated independently. `set_admin` transfers the root key together with every role the old root held, so the existing deploy/upgrade flow is unchanged.
 
 ---
 
@@ -246,7 +246,7 @@ no StellarCred account and no server-side credential database. This means:
 
 ```bash
 # Contracts — real proof verification in tests
-cargo test                 # 21 tests, incl. genuine BN254 verification
+cargo test                 # 125 tests, incl. genuine BN254 verification
 stellar contract build     # wasm artifacts → target/wasm32v1-none/release
 
 # Circuits — compile, prove, and stage circuit JSON for the frontend
@@ -407,9 +407,10 @@ Deploy and wire the contracts on the Stellar Mainnet:
   (~13.5% of the 100M per-transaction budget), confirming the protocol fits
   comfortably within Soroban's limits. Read-only functions (`is_verified`,
   `check_claim`) use <400K instructions (<0.4%). See [BENCHMARKS.md](BENCHMARKS.md).
-- **21 contract tests pass**, including real proof verification for all credential
-  types, in-circuit ECDSA, untrusted-issuer and wrong-issuer-key rejections, and
-  a proof-expiry test that advances ledger time.
+- **125 contract tests pass**, including real proof verification for all credential
+  types, in-circuit ECDSA, untrusted-issuer and wrong-issuer-key rejections,
+  proof-expiry tests that advance ledger time, and role-based access control
+  (role holder can act, non-holder cannot, admin can grant/revoke).
 - **Toolchain is pinned**: Noir `1.0.0-beta.9`, Barretenberg `bb 0.87.0`, matching
   the verifier crate; the VK is deterministic from the circuit.
 - Server-side issuance, multi-claim flow, the return-URL redirect, the
