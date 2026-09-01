@@ -76,6 +76,13 @@ export function withTimeout<T>(
   });
 }
 
+/** The compiled Noir circuit artifact emitted by circuits/scripts/build.sh to
+ * /public/circuits/<type>.json.
+ */
+export interface CircuitArtifact {
+  bytecode: string;
+}
+
 export interface GeneratedProof {
   /** Raw proof bytes (456 fields × 32 = 14592 bytes), as the contract expects. */
   proof: Uint8Array;
@@ -163,7 +170,7 @@ async function buildBackend(type: CredentialType): Promise<Backend> {
       `Compiled circuit "${type}" not found. Run the circuit build to emit /public/circuits/${type}.json.`,
     );
   }
-  const circuit = (await circuitRes.json()) as { bytecode: string };
+  const circuit = (await circuitRes.json()) as CircuitArtifact;
   const { UltraHonkBackend } = await loadBb();
   return new UltraHonkBackend(circuit.bytecode, backendOptions());
 }

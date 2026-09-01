@@ -593,7 +593,10 @@ function HolderInner() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => {
+                    removeCredentialProofs(c.commitment);
+                    setCreds(removeCredential(c.commitment));
+                  }}
                   onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
                 />
@@ -611,7 +614,10 @@ function HolderInner() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => {
+                    removeCredentialProofs(c.commitment);
+                    setCreds(removeCredential(c.commitment));
+                  }}
                   onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
                 />
@@ -629,7 +635,10 @@ function HolderInner() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => {
+                    removeCredentialProofs(c.commitment);
+                    setCreds(removeCredential(c.commitment));
+                  }}
                   onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
                   selection={
@@ -711,7 +720,10 @@ function HolderInner() {
                   c={c}
                   address={address}
                   onProve={() => setView({ kind: "single", cred: c })}
-                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onRemove={() => {
+                    removeCredentialProofs(c.commitment);
+                    setCreds(removeCredential(c.commitment));
+                  }}
                   onInspect={() => setDetailCred(c)}
                   isPreview={isPreview}
                 />
@@ -983,6 +995,43 @@ function ProofFlow({
           () => setElapsed(Math.floor((Date.now() - start) / 1000)),
           1000,
         );
+        // Reuse path (#426): if a valid, matching proof is already cached for
+        // this credential and the on-chain record is still valid, skip the
+        // expensive witness + proving stages entirely.
+        const vkVersion = await resolveVkVersion(cred.type);
+        const key = buildProofKey({
+          type: cred.type,
+          commitment: cred.commitment,
+          claimParams: cred.claimParams,
+          vkVersion,
+        });
+
+        // Local proofStatus catches expiry; a live is_verified read
+        // additionally catches revocation the wallet doesn't know about
+        // (falls back to true when contracts are unreachable).
+        let onChainStillValid = proofStatus(cred) === "proved";
+        if (onChainStillValid && holder) {
+          try {
+            const st = await isVerified(holder, cred.type);
+            onChainStillValid = st.valid;
+          } catch {
+            // contracts not configured — trust the local record
+          }
+        }
+
+        const cached = getCachedProof(key, { onChainStillValid });
+        if (signal.aborted) return;
+        if (cached) {
+          setProofKey(key);
+          setReused(true);
+          setProof(entryToGeneratedProof(cached));
+          setStage("generated");
+          toast.success(
+            `Using existing proof for ${cred.title} — params unchanged`,
+          );
+          return;
+        }
+
         // Stage 1: witness (server) — wrapped with a deadline so a stalled
         // prover fails visibly instead of spinning forever.
         setStage("witness");
@@ -1096,6 +1145,8 @@ function ProofFlow({
       setTxHash(hash);
       onProved(hash);
       setStage("confirmed");
+      // Record the cache entry as proved so it can be reused until it expires.
+      if (proofKey) markProofProved(proofKey, { ttlSecs: credTtlSecs(cred) });
       addEvent("verified", { txHash: hash });
       toast.success(`Proof confirmed on-chain for ${cred.title}`, { txHash: hash });
     } catch (e) {
@@ -1598,6 +1649,11 @@ function BatchProofFlow({
         setTxHash(hash);
         const commitments = currentCreds.map((c) => c.commitment);
         onProved(hash, commitments);
+        // Record each cache entry as proved so it can be reused until it expires.
+        currentCreds.forEach((cred, i) => {
+          const k = proofKeys.current[i];
+          if (k) markProofProved(k, { ttlSecs: credTtlSecs(cred) });
+        });
         setBatchStage("confirmed");
 
         currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));

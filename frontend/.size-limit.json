@@ -15,7 +15,7 @@
   {
     "name": "Holder Route JS",
     "path": ".next/static/chunks/app/holder/**/*.js",
-    "limit": "16 kB"
+    "limit": "17 kB"
   },
   {
     "name": "Issuer Route JS",
