@@ -30,6 +30,9 @@ import {
   InvalidAddressError,
   RpcError,
   TimeoutError,
+  ContractError,
+  PROOF_REGISTRY_ERRORS,
+  isRetryableContractError,
   StellarCred,
   withRetry,
 } from "./index";
@@ -43,9 +46,30 @@ describe("error taxonomy exports", () => {
     expect(StellarCred.RpcError).toBe(RpcError);
     expect(StellarCred.TimeoutError).toBe(TimeoutError);
     expect(StellarCred.InvalidAddressError).toBe(InvalidAddressError);
+    expect(StellarCred.ContractError).toBe(ContractError);
+    expect(StellarCred.PROOF_REGISTRY_ERRORS).toBe(PROOF_REGISTRY_ERRORS);
+    expect(StellarCred.isRetryableContractError).toBe(isRetryableContractError);
     expect(new ConfigError().name).toBe("ConfigError");
     expect(new RpcError().name).toBe("RpcError");
     expect(new InvalidAddressError().name).toBe("InvalidAddressError");
+    const contractErr = new ContractError("Proof verification failed", 2, "Error(Contract, #2)");
+    expect(contractErr).toBeInstanceOf(Error);
+    expect(contractErr).toBeInstanceOf(ContractError);
+    expect(contractErr.name).toBe("ContractError");
+    expect(contractErr.code).toBe(2);
+    expect(contractErr.friendly).toBe("Proof verification failed");
+    expect(contractErr.raw).toBe("Error(Contract, #2)");
+  });
+
+  it("isRetryableContractError distinguishes retryable vs terminal codes", () => {
+    const pausedErr = new ContractError("Submissions paused", 11, "Error(Contract, #11)");
+    expect(isRetryableContractError(pausedErr)).toBe(true);
+
+    const netErr = new ContractError("network failed", null, "raw network error");
+    expect(isRetryableContractError(netErr)).toBe(true);
+
+    const verifyErr = new ContractError("Verification failed", 2, "Error(Contract, #2)");
+    expect(isRetryableContractError(verifyErr)).toBe(false);
   });
 });
 

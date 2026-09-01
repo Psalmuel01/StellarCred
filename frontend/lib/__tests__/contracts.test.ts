@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../wallet", () => ({ signTx: vi.fn() }));
 
-import { parseContractError, PROOF_REGISTRY_ERRORS } from "../contracts";
+import { parseContractError, PROOF_REGISTRY_ERRORS, ContractError, isRetryableContractError } from "../contracts";
 
 // ── ProofRegistry Error enum coverage ────────────────────────────────────────
 //
@@ -49,17 +49,23 @@ describe("parseContractError", () => {
       const raw = `Error(Contract, #${code})`;
       const result = parseContractError(raw);
 
+      // Typed error instance — callers can instanceof-check
+      expect(result).toBeInstanceOf(ContractError);
+      expect(result).toBeInstanceOf(Error);
+      expect(result.name).toBe("ContractError");
+
       expect(result.code).toBe(code);
       expect(result.raw).toBe(raw);
       expect(result.friendly).toBe(PROOF_REGISTRY_ERRORS[code]);
       // Friendly message must never fall back to the raw "Contract error #N." default.
-      expect(result.friendly).not.toMatch(/^Contract error #\d+\.$/);
+      expect(result.friendly).not.toMatch(/^Contract error #\d+\.$/)
     });
 
     it("returns code and a fallback message for an unknown contract error code", () => {
       const raw = "Error(Contract, #99)";
       const result = parseContractError(raw);
 
+      expect(result).toBeInstanceOf(ContractError);
       expect(result.code).toBe(99);
       expect(result.friendly).toBe("Contract error #99.");
       expect(result.raw).toBe(raw);
@@ -161,5 +167,34 @@ describe("parseContractError", () => {
       expect(result.code).toBeNull();
       expect(result.friendly).toBe("");
     });
+  });
+});
+
+// ── isRetryableContractError ──────────────────────────────────────────────────
+
+describe("isRetryableContractError", () => {
+  it("returns true for code 11 (SubmissionsPaused) — admin may un-pause", () => {
+    const e = parseContractError("Error(Contract, #11)");
+    expect(isRetryableContractError(e)).toBe(true);
+  });
+
+  it("returns true when code is null (network / transient)", () => {
+    const e = parseContractError("some unexpected rpc error");
+    expect(isRetryableContractError(e)).toBe(true);
+  });
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12] as const)(
+    "returns false for deterministic code %i",
+    (code) => {
+      const e = parseContractError(`Error(Contract, #${code})`);
+      expect(isRetryableContractError(e)).toBe(false);
+    },
+  );
+
+  it("ContractError is instanceof Error", () => {
+    const e = parseContractError("Error(Contract, #2)");
+    expect(e).toBeInstanceOf(Error);
+    expect(e).toBeInstanceOf(ContractError);
+    expect(e.name).toBe("ContractError");
   });
 });
