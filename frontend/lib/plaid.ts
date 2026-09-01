@@ -42,11 +42,17 @@ function plaidBaseUrl(): string {
  */
 export async function fetchPlaidBalance(requestId: string): Promise<PlaidBalanceResult> {
   if (!process.env.PLAID_ACCESS_TOKEN) {
+    const rawMockBalance = process.env.PLAID_MOCK_BALANCE;
+    const parsedMockBalance = rawMockBalance !== undefined ? Number(rawMockBalance) : NaN;
+    const mockBalance =
+      Number.isFinite(parsedMockBalance) && parsedMockBalance >= 0 ? parsedMockBalance : 50000;
+
     logger.warn(
       stripSensitiveFields({ event: "plaid_mock_mode", requestId }),
-      "PLAID_ACCESS_TOKEN not set — returning mock balance $50,000",
+      `PLAID_ACCESS_TOKEN not set — returning mock balance $${mockBalance.toLocaleString()}`,
     );
-    return { ok: true, mock: true, balance: 50000 };
+
+    return { ok: true, mock: true, balance: mockBalance };
   }
 
   const controller = new AbortController();
@@ -105,7 +111,11 @@ export async function fetchPlaidBalance(requestId: string): Promise<PlaidBalance
   // Only the stable error_code enum is logged — never error_message, which
   // can embed more free-form (and potentially sensitive) detail.
   logger.info(
-    stripSensitiveFields({ event: "plaid_response", outcome: result.error_code ?? "ok", requestId }),
+    stripSensitiveFields({
+      event: "plaid_response",
+      outcome: result.error_code ?? "ok",
+      requestId,
+    }),
   );
 
   if (!response.ok || result.error_code) {
@@ -117,13 +127,20 @@ export async function fetchPlaidBalance(requestId: string): Promise<PlaidBalance
     };
   }
 
-  const accounts: Array<{ type: string; name: string; balances: { available: number | null } }> =
-    (result.accounts as never) ?? [];
+  const accounts: Array<{
+    type: string;
+    name: string;
+    balances: { available: number | null };
+  }> = (result.accounts as never) ?? [];
 
   const depository = accounts
     .filter((a) => a.type === "depository")
     .map((a) => ({ name: a.name, available: a.balances.available ?? 0 }))
     .sort((a, b) => b.available - a.available);
 
-  return { ok: true, balance: depository[0]?.available ?? 0, accounts: depository };
+  return {
+    ok: true,
+    balance: depository[0]?.available ?? 0,
+    accounts: depository,
+  };
 }

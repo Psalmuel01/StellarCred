@@ -47,14 +47,23 @@ const VALID_CLAIMS = TYPES.map(([k]) => k);
 function getOrCreateRequestId(): string {
   if (typeof window === "undefined") return "";
   const KEY = "sc_request_id";
-  let id = sessionStorage.getItem(KEY);
-  if (!id) {
-    id = window.crypto?.randomUUID
+  try {
+    let id = sessionStorage.getItem(KEY);
+    if (!id) {
+      id = window.crypto?.randomUUID
+        ? window.crypto.randomUUID()
+        : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+      sessionStorage.setItem(KEY, id);
+    }
+    return id;
+  } catch {
+    // storage unavailable (private mode / blocked) — return a one-shot id
+    // that won't be persisted; correlation across the Persona redirect won't
+    // work but the issuance flow itself is unaffected
+    return window.crypto?.randomUUID
       ? window.crypto.randomUUID()
       : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-    sessionStorage.setItem(KEY, id);
   }
-  return id;
 }
 
 function VerifyInner() {
@@ -348,7 +357,7 @@ function VerifyInner() {
           // Never router.push an external URL — do a real browser navigation.
           window.location.href = dest.toString();
         }
-      } catch (e) {
+      } catch {
         setUrlError("Invalid return URL: Must be a well-formed URL.");
         router.push("/holder");
       }
@@ -609,6 +618,9 @@ function VerifyInner() {
                       role="radio"
                       aria-checked={on}
                       aria-label={m.title}
+                      aria-disabled={locked}
+                      aria-controls={on ? `panel-${key}` : undefined}
+                      aria-expanded={on}
                       tabIndex={on ? 0 : -1}
                       style={{
                         padding: "0.75rem 0.9rem",

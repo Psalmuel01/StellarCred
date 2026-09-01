@@ -701,7 +701,7 @@ export default function DocsPage() {
               underlying data.
             </P>
             <P>
-              Every proof is generated locally in the holder's browser using the{" "}
+              Every proof is generated locally in the holder&apos;s browser using the{" "}
               <strong style={{ color: "var(--text)" }}>UltraHonk</strong> proof system
               (Noir 1.0.0-beta.9 / Barretenberg 0.87.0). The Stellar chain stores only a
               compact verification record — no personal data touches the ledger.
@@ -728,11 +728,11 @@ export default function DocsPage() {
                 title: "Issue",
                 body: (
                   <>
-                    The issuer calls <Code>POST /api/issue</Code> (server-side) with the holder's
+                    The issuer calls <Code>POST /api/issue</Code> (server-side) with the holder&apos;s
                     wallet address and the relevant attribute (e.g. date of birth). The server
                     computes a <strong style={{color:"var(--text)"}}>Poseidon2 commitment</strong>{" "}
                     over <Code>(value, salt)</Code>, signs the commitment with a secp256k1 demo key,
-                    and returns the full credential JSON. The credential is stored in the holder's
+                    and returns the full credential JSON. The credential is stored in the holder&apos;s
                     <Code>localStorage</Code> — never on a server.
                   </>
                 ),
@@ -761,7 +761,7 @@ export default function DocsPage() {
                     The holder submits the proof to <Code>ProofRegistry.submit_proof</Code> via a
                     wallet-signed Stellar transaction. The registry checks the issuer is trusted
                     via <Code>IssuerRegistry</Code>, verifies the on-chain public key matches the
-                    one in the proof's public inputs, and forwards to <Code>CredentialVerifier</Code>{" "}
+                    one in the proof&apos;s public inputs, and forwards to <Code>CredentialVerifier</Code>{" "}
                     which runs the BN254 UltraHonk verifier as a Soroban host function. If all pass,
                     a record <Code>(verified_at, expiry)</Code> is written to persistent storage.
                     Any protocol can then call <Code>ProofRegistry.is_verified</Code> — a free,
@@ -827,7 +827,7 @@ export default function DocsPage() {
             </SectionHeading>
             <P>
               Each credential type has a dedicated Noir circuit. The circuit proves the
-              claim using the commitment, the issuer's signature, and optional public
+              claim using the commitment, the issuer&apos;s signature, and optional public
               parameters — all without revealing the underlying attribute.
             </P>
 
@@ -1083,7 +1083,7 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             <P>
               Your credentials — including the raw attribute value (date of birth, income,
               balance…) and its random salt — are stored <strong style={{color:"var(--text)"}}>only in
-              this browser's <Code>localStorage</Code></strong>, under the key{" "}
+              this browser&apos;s <Code>localStorage</Code></strong>, under the key{" "}
               <Code>stellarcred:credentials</Code>. There is no StellarCred account and no
               server-side credential database: the credential JSON exists only on the device
               that received it.
@@ -1103,8 +1103,7 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               file containing every credential. Keep that file somewhere safe: it contains the
               raw sensitive attribute values, so treat it like a password. To restore — on a new
               browser, a new device, or after clearing site data — open the Holder page there,
-              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and paste the
-              file's contents. Restored credentials generate and submit proofs exactly like
+              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and pastethe file&apos;s contents. Restored credentials generate and submit proofs exactly like
               newly issued ones.
             </P>
             <P>
@@ -1206,7 +1205,7 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </div>
             <P>
               One nuance: while <em>stored</em> credentials never leave your device, generating a
-              proof sends your credential inputs to <Code>POST /api/witness</Code> (StellarCred's
+              proof sends your credential inputs to <Code>POST /api/witness</Code> (StellarCred&apos;s
               own server), which executes the Noir circuit and returns the witness bytes; the
               proof itself is then computed in your browser. That route is rate-limited, never
               logs the sensitive fields, and does not persist the credential — the values exist
@@ -1214,7 +1213,7 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </P>
             <P>
               On the chain side, submitting a proof writes only the public inputs — the
-              commitment (a hash), the issuer's public key, the credential type, and an expiry
+              commitment (a hash), the issuer&apos;s public key, the credential type, and an expiry
               timestamp — plus the ~14 KB proof bytes. See <em>Privacy model</em> above for the
               full breakdown.
             </P>

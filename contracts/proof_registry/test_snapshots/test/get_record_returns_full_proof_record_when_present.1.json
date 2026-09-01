@@ -89,6 +89,7 @@
                 "void",
                 {
                   "u64": "1000"
+                  "u64": "9999"
                 }
               ]
             }
@@ -283,6 +284,22 @@
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                       }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "IssuerList"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                          }
+                        ]
+                      }
                     }
                   ]
                 }
@@ -415,6 +432,7 @@
                     },
                     "val": {
                       "u64": "1000"
+                      "u64": "9999"
                     }
                   },
                   {

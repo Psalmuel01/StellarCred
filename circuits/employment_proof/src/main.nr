@@ -26,6 +26,9 @@ fn main(
     issuer_y: pub [u8; 32],
     min_seniority: pub u64,
 ) {
+    // Blocks the degenerate zero-salt case; see circuits/lib/src/lib.nr for
+    // the full rationale on why salt must be non-trivial.
+    assert(salt != 0);
     // The issuer's signature covers a commitment that includes both the
     // employment status AND the holder's tenure, so the seniority claim is
     // backed by the issuer, not self-asserted.
@@ -42,4 +45,18 @@ fn main(
     // against forged zero-tag credentials.
     assert(employment_status != 0);
     assert(seniority >= min_seniority);
+}
+
+// --- Tests ---------------------------------------------------------------
+// Run: nargo test --package employment_proof
+
+// A zero salt must be rejected outright, before any other constraint is even
+// reached - it makes the 3-arity commitment brute-forceable given the small
+// (status, seniority) domain.
+#[test(should_fail)]
+fn test_zero_salt_rejected() {
+    let zero_sig: [u8; 64] = [0; 64];
+    let zero_x: [u8; 32] = [0; 32];
+    let zero_y: [u8; 32] = [0; 32];
+    main(1, 5, 0, zero_sig, 0, zero_x, zero_y, 0);
 }

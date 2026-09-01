@@ -86,7 +86,7 @@ const DEFAULT_FUNDS_THRESHOLD = "10000";
 const DEFAULT_ACCREDITATION_THRESHOLD = "1000000";
 // Padded to RESTRICTED_LEN by the same helper the request path uses.
 const DEFAULT_RESTRICTED = normalizeRestricted(["840", "364", "408"]);
-const RESTRICTED_LEN = 8;
+const _RESTRICTED_LEN = 8;
 
 // Validation accepts a threshold as a number as well as a decimal string; the
 // circuits take field elements as strings, so normalize on the way in.

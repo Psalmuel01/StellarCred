@@ -21,14 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
       - name: Lint commits in PR
@@ -42,7 +42,7 @@ jobs:
     name: Contract tests & build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -54,7 +54,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -79,7 +79,7 @@ jobs:
           bbup -v 0.87.0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
@@ -113,7 +113,7 @@ jobs:
       run:
         working-directory: circuits
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Noir toolchain
         run: |
@@ -121,13 +121,26 @@ jobs:
           export PATH="$HOME/.nargo/bin:$PATH"
           noirup -v 1.0.0-beta.9
 
+      - name: Install Barretenberg
+        shell: bash
+        run: |
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/next/barretenberg/bbup/install | bash
+          export PATH="$HOME/.bb:$PATH"
+          source "$HOME/.bashrc" 2>/dev/null || true
+          bbup -v 0.87.0
+
       - name: Compile circuits
         run: |
           export PATH="$HOME/.nargo/bin:$PATH"
-          for dir in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof aggregate_proof; do
+          for dir in commit commit3 kyc_proof age_proof income_proof jurisdiction_proof funds_proof accreditation_proof employment_proof aggregate_proof set_membership; do
             echo "=== $dir ==="
             (cd "$dir" && nargo compile)
           done
+
+      - name: Verify deterministic VK hashes
+        run: |
+          export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
+          bash ../scripts/verify-vks.sh check
 
       - name: Check staged artifacts are current
         run: |
@@ -147,6 +160,7 @@ jobs:
               employment_proof) echo employment ;;
               accreditation_proof) echo accreditation ;;
               aggregate_proof) echo aggregate ;;
+              set_membership) echo set_membership ;;
               *) echo "$1" ;;
             esac
           }
@@ -155,7 +169,7 @@ jobs:
           VK_TMP="/tmp/vk_check"
           rm -rf "$VK_TMP"
 
-          for dir in kyc_proof age_proof income_proof jurisdiction_proof funds_proof employment_proof aggregate_proof; do
+          for dir in kyc_proof age_proof income_proof jurisdiction_proof funds_proof employment_proof aggregate_proof accreditation_proof set_membership; do
             type=$(type_of "$dir")
             json="target/${dir}.json"
             out="$VK_TMP/$type"
@@ -182,7 +196,11 @@ jobs:
             fi
 
             fixture="../fixtures/$type/vk"
-            if diff -q "$actual" "$fixture" >/dev/null 2>&1; then
+            if [ ! -f "$fixture" ]; then
+              echo "  MISSING — auto-staging fixtures/$type/vk from freshly compiled circuit"
+              mkdir -p "../fixtures/$type"
+              cp "$actual" "$fixture"
+            elif diff -q "$actual" "$fixture" >/dev/null 2>&1; then
               echo "  OK — matches fixtures/$type/vk"
             else
               echo "::error::VK mismatch for $type (fixtures/$type/vk differs from freshly compiled circuit)"
@@ -217,15 +235,15 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: pnpm
@@ -233,6 +251,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
 
       - name: Typecheck
         run: pnpm exec tsc --noEmit
@@ -269,15 +290,15 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: pnpm
@@ -321,15 +342,15 @@ jobs:
       NEXT_PUBLIC_STELLAR_NETWORK: testnet
       NEXT_PUBLIC_RPC_URL: https://soroban-testnet.stellar.org
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22.18.0
           cache: pnpm
@@ -362,7 +383,7 @@ jobs:
       - name: Report bundle size on PR
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
-        uses: andresz1/size-limit-action@f7a56ece616db5bddde81de219695c920a8ae137
+        uses: andresz1/size-limit-action@e7493a72a44b113341c0cf6186ab49c17c4b65c1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           script: pnpm size --json

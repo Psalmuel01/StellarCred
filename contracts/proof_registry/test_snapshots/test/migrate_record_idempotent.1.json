@@ -88,7 +88,7 @@
                 },
                 "void",
                 {
-                  "u64": "1000"
+                  "u64": "9999"
                 }
               ]
             }
@@ -97,7 +97,6 @@
         }
       ]
     ],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
@@ -457,7 +456,7 @@
                       "symbol": "expiry"
                     },
                     "val": {
-                      "u64": "1000"
+                      "u64": "9999"
                     }
                   },
                   {

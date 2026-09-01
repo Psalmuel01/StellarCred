@@ -13,11 +13,9 @@ import {
   IconTrash,
   IconCertificate,
   IconLoader2,
-  IconServer,
   IconCpu,
   IconCloudUpload,
   IconStack2,
-  IconInfoCircle,
   IconDownload,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
@@ -29,14 +27,17 @@ import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
 import { proofSubmissionConfigured } from "@/lib/config";
 import { truncateHash } from "@/lib/format";
 import { EXPLORER_TX } from "@/lib/stellar";
-import { computeWitness, proveWithBackend } from "@/lib/proof";
+import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "@/lib/proof";
 import { useWarmProver } from "@/lib/use-warm-prover";
 import {
   submitProof,
   submitProofs,
+  preflightSubmitProof,
+  preflightSubmitProofs,
   MAX_BATCH_SIZE,
   parseContractError,
   type ContractError,
+  type FeeEstimate,
   type ProofSubmissionParams,
 } from "@/lib/contracts";
 import {
@@ -56,7 +57,7 @@ import CopyButton from "@/components/CopyButton";
 import dynamic from "next/dynamic";
 import CredentialDetailModal from "@/components/CredentialDetailModal";
 import { useToast } from "@/components/Toast";
-import { QrScanner } from "@/components/QrScanner";
+
 import { IMPORT_PARAM } from "@/lib/transfer";
 
 // The encrypted-transfer modals are heavy (crypto.ts PBKDF2/AES-GCM, QR
@@ -103,6 +104,13 @@ function proofStatus(cred: Credential): "unproved" | "proved" | "expired" {
     : "expired";
 }
 
+function isExpiringSoon(cred: Credential, windowDays = 7): boolean {
+  if (!cred.provedAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const expiry = cred.provedAt + credTtlSecs(cred);
+  return expiry > now && expiry <= now + windowDays * 86_400;
+}
+
 function daysRemaining(cred: Credential): number {
   if (!cred.provedAt) return 0;
   const secsLeft = cred.provedAt + credTtlSecs(cred) - Math.floor(Date.now() / 1000);
@@ -144,9 +152,9 @@ function CredCard({
   address,
   onProve,
   onRemove,
-  onInspect,
+  onInspect: _onInspect,
   isPreview,
-  selection,
+  selection: _selection,
 }: {
   c: Credential;
   address: string;
@@ -219,7 +227,15 @@ function CredCard({
         <div className="card-actions">
           {isPreview && <Badge variant="pending">Preview</Badge>}
           <Badge variant="verified" dot={false}>Held</Badge>
-          {status === "proved" && <Badge variant="verified" dot={false}>On-chain</Badge>}
+          {status === "proved" && !isExpiringSoon(c) && (
+            <Badge variant="verified" dot={false}>On-chain</Badge>
+          )}
+          {status === "proved" && isExpiringSoon(c) && (
+            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+          )}
+          {status === "expired" && (
+            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+          )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
@@ -357,8 +373,12 @@ function HolderInner() {
   }, [searchParams]);
 
   const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
-  const unproved = displayCreds.filter((c) => proofStatus(c) !== "proved");
-  const proved   = displayCreds.filter((c) => proofStatus(c) === "proved");
+  const unproved = displayCreds.filter((c) => proofStatus(c) === "unproved");
+  const expiringSoon = displayCreds
+    .filter((c) => proofStatus(c) === "proved" && isExpiringSoon(c, 7))
+    .sort((a, b) => daysRemaining(a) - daysRemaining(b));
+  const activeProved = displayCreds.filter((c) => proofStatus(c) === "proved" && !isExpiringSoon(c, 7));
+  const expired = displayCreds.filter((c) => proofStatus(c) === "expired");
 
   // Warm the UltraHonk backend for whatever credential types the user still
   // needs to prove, in the background, once the wallet is actually connected
@@ -444,7 +464,16 @@ function HolderInner() {
           <span className="eyebrow">Holder</span>
           <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Your credentials</h1>
         </div>
-        <WalletButton />
+        <div className="row" style={{ gap: "0.75rem" }}>
+          {/* Selective disclosure presets (#386): a named, shareable bundle
+              of several claim types — defined and shared from its own page
+              rather than crowding this one, but linked from here since the
+              issue asks for the entry point to live on the holder page. */}
+          <a href="/presets" className="btn btn-secondary">
+            Presets
+          </a>
+          <WalletButton />
+        </div>
       </div>
 
       <ConfigBanner />
@@ -490,6 +519,40 @@ function HolderInner() {
       ) : (
         <div className="stack reveal" style={{ gap: "1.5rem" }}>
 
+          {/* ── Expiry Warning Banner ── */}
+          {(expiringSoon.length > 0 || expired.length > 0) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="card"
+              style={{
+                padding: "0.85rem 1.15rem",
+                backgroundColor: expired.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(234, 179, 8, 0.08)",
+                borderColor: expired.length > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(234, 179, 8, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
+                <IconAlertTriangle
+                  size={18}
+                  style={{ color: expired.length > 0 ? "var(--danger)" : "var(--warn)", flexShrink: 0 }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {expired.length > 0
+                    ? `${expired.length} proof${expired.length > 1 ? "s have" : " has"} expired and ${expired.length > 1 ? "need" : "needs"} re-proving.`
+                    : `${expiringSoon.length} proof${expiringSoon.length > 1 ? "s are" : " is"} expiring within 7 days.`}
+                </span>
+              </div>
+              <span className="mono faint" style={{ fontSize: "0.75rem" }}>
+                One-click re-prove available below
+              </span>
+            </div>
+          )}
+
           {/* ── Empty state ── */}
           {creds.length === 0 && !importing && (
             <div
@@ -510,7 +573,7 @@ function HolderInner() {
                 className="faint"
                 style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}
               >
-                Credentials are stored only in this browser's local storage — clearing
+                Credentials are stored only in this browser&apos;s local storage — clearing
                 site data, switching browsers/devices, or private mode erases them.{" "}
                 <Link
                   href="/docs#storage"
@@ -519,6 +582,42 @@ function HolderInner() {
                   Where your credentials live
                 </Link>
               </p>
+            </div>
+          )}
+
+          {/* ── Expiring Soon (Action Recommended) ── */}
+          {expiringSoon.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expiring soon · Re-prove recommended</SectionLabel>
+              {expiringSoon.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Expired (Action Required) ── */}
+          {expired.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expired proofs · Re-prove required</SectionLabel>
+              {expired.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => setView({ kind: "single", cred: c })}
+                  onRemove={() => setCreds(removeCredential(c.commitment))}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
             </div>
           )}
 
@@ -604,11 +703,11 @@ function HolderInner() {
             </div>
           )}
 
-          {/* ── Already proved ── */}
-          {proved.length > 0 && (
+          {/* ── Active proved ── */}
+          {activeProved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
               <SectionLabel>On-chain · active proofs</SectionLabel>
-              {proved.map((c) => (
+              {activeProved.map((c) => (
                 <CredCard
                   key={c.commitment}
                   c={c}
@@ -842,7 +941,17 @@ const ESTIMATES: Record<string, { range: string; expected: number; max: number }
   default: { range: "~10–20 seconds", expected: 15, max: 20 },
 };
 
-type Stage = "witness" | "circuit" | "proof" | "proving" | "generated" | "submitting" | "confirmed" | "error";
+type Stage =
+  | "witness"
+  | "circuit"
+  | "proof"
+  | "proving"
+  | "generated"
+  | "preflight"
+  | "readyToSign"
+  | "submitting"
+  | "confirmed"
+  | "error";
 
 function ProofFlow({
   cred,
@@ -860,10 +969,17 @@ function ProofFlow({
   const [proof, setProof] = useState<{ proof: Uint8Array; publicInputs: Uint8Array } | null>(null);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
-  const [errorPhase, setErrorPhase] = useState<"proving" | "submitting" | null>(null);
+  const [errorPhase, setErrorPhase] = useState<
+    "proving" | "preflight" | "submitting" | "timeout" | null
+  >(null);
+  /** Estimated on-chain fee reported by the preflight simulation. */
+  const [fee, setFee] = useState<FeeEstimate | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const { addEvent } = useProofTimeline(cred);
 
@@ -879,12 +995,17 @@ function ProofFlow({
           () => setElapsed(Math.floor((Date.now() - start) / 1000)),
           1000,
         );
-        // Stage 1: witness (server)
+        // Stage 1: witness (server) — wrapped with a deadline so a stalled
+        // prover fails visibly instead of spinning forever.
         setStage("witness");
-        const witness = await computeWitness(
-          cred.type,
-          cred as unknown as Record<string, unknown>,
-          signal,
+        const witness = await withTimeout(
+          (sig) =>
+            computeWitness(
+              cred.type,
+              cred as unknown as Record<string, unknown>,
+              sig,
+            ),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
         if (signal.aborted) return;
 
@@ -896,15 +1017,13 @@ function ProofFlow({
           1000,
         );
 
-        const result = await proveWithBackend(
-          cred.type,
-          witness,
-          signal,
-          (step) => {
-            if (!signal.aborted) setStage(step);
-          }
+        const result = await withTimeout(
+          (sig) =>
+            proveWithBackend(cred.type, witness, sig, (step) => {
+              if (!sig.aborted) setStage(step);
+            }),
+          { signal, timeoutMs: DEFAULT_PROOF_TIMEOUT_MS },
         );
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
 
         setProof(result);
@@ -912,13 +1031,31 @@ function ProofFlow({
         addEvent("generated");
         toast.success(`Proof generated for ${cred.title}`);
       } catch (e) {
-        clearInterval(timerRef.current!);
         if (signal.aborted) return;
+        // ProofTimeoutError gets a distinct user-visible message — half the
+        // point is that stalled provers fail visibly, not as a generic error.
+        if (e instanceof ProofTimeoutError) {
+          setError({
+            code: null,
+            friendly:
+              "Proof generation timed out. The prover took too long — this can happen on slow devices or with large circuits. Please try again.",
+            raw: e.message,
+          });
+          setErrorPhase("timeout");
+          setStage("error");
+          toast.error("Proof timed out — please try again.");
+          return;
+        }
         const parsed = parseContractError((e as Error).message);
         setError(parsed);
         setErrorPhase("proving");
         setStage("error");
         toast.error(`Proof generation failed: ${parsed.friendly}`);
+      } finally {
+        // Always clean up: timer + abort controller. The finally-style
+        // pattern guarantees no early-return can leak a pending timeout
+        // or interval.
+        clearInterval(timerRef.current!);
       }
     })();
     return () => {
@@ -927,8 +1064,70 @@ function ProofFlow({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cred]);
+  useEffect(() => {
+    switch (stage) {
+      case "generated":
+        submitButtonRef.current?.focus();
+        break;
 
+      case "confirmed":
+        successRef.current?.focus();
+        break;
+
+      case "error":
+        errorRef.current?.focus();
+        break;
+    }
+  }, [stage]);
+  /**
+   * First click on "Submit to Stellar": run a Soroban preflight simulation so
+   * a doomed submission is caught (and its human reason shown) and the fee is
+   * surfaced BEFORE the wallet signature is requested.
+   */
   async function onSubmit() {
+    if (!proof || networkMismatch) return;
+    setError(null);
+    setErrorPhase(null);
+    setFee(null);
+    setStage("preflight");
+    addEvent("preflight");
+    try {
+      const preflight = await preflightSubmitProof({
+        holder,
+        issuerId: cred.issuerId,
+        credentialType: cred.type,
+        proof: proof.proof,
+        publicInputs: proof.publicInputs,
+        ttlSecs: credTtlSecs(cred),
+      });
+      if (!preflight.ok) {
+        // Simulation says the transaction would revert — surface the mapped
+        // reason and do NOT request a signature (an override is offered).
+        setError(preflight.error);
+        setErrorPhase("preflight");
+        setStage("error");
+        toast.error(`Submission blocked — ${preflight.error.friendly}`);
+        return;
+      }
+      setFee(preflight.fee);
+      setStage("readyToSign");
+    } catch (e) {
+      // RPC/tooling failure during the simulation. Treat it like a preflight
+      // blocker (an override lets the user proceed), so we never sign blind.
+      const parsed = parseContractError((e as Error).message);
+      setError(parsed);
+      setErrorPhase("preflight");
+      setStage("error");
+      toast.error(`Preflight simulation failed: ${parsed.friendly}`);
+    }
+  }
+
+  /**
+   * Sign and send the proof-bearing transaction. Only reached after the
+   * preflight simulation succeeded (or the user chose to override a failed one)
+   * — this is the point where the wallet signature is actually requested.
+   */
+  async function doSignAndSubmit() {
     if (!proof || networkMismatch) return;
     setStage("submitting");
     addEvent("submitted");
@@ -956,15 +1155,23 @@ function ProofFlow({
     }
   }
 
-  // Re-submit an already-generated proof without re-proving.
+  // Re-submit an already-generated proof without re-proving. The proof has
+  // already passed a simulation, so skip straight to signing; a retry after a
+  // submit-phase failure doesn't need another preflight round-trip.
   async function onRetrySubmit() {
     if (!proof) return;
     setError(null);
     setErrorPhase(null);
-    await onSubmit();
+    if (fee) setStage("readyToSign");
+    await doSignAndSubmit();
   }
 
-  const proofDone = stage === "generated" || stage === "submitting" || stage === "confirmed";
+  const proofDone =
+    stage === "generated" ||
+    stage === "preflight" ||
+    stage === "readyToSign" ||
+    stage === "submitting" ||
+    stage === "confirmed";
   const submitDone = stage === "confirmed";
 
   return (
@@ -1046,12 +1253,29 @@ function ProofFlow({
             title="Submit to Stellar"
             subtitle="ProofRegistry.submit_proof · wallet signature"
             state={
-              stage === "submitting" ? "active" :
-              submitDone             ? "done"   : "idle"
+              stage === "preflight" || stage === "readyToSign" || stage === "submitting"
+                ? "active"
+                : submitDone
+                  ? "done"
+                  : "idle"
             }
             last
             detail={
-              stage === "submitting" ? (
+              stage === "preflight" ? (
+                <AnimatedDots text="Running preflight simulation" style={{ marginTop: "0.35rem" }} />
+              ) : stage === "readyToSign" ? (
+                <div
+                  className="row"
+                  style={{ gap: "0.5rem", marginTop: "0.35rem", alignItems: "center", flexWrap: "wrap" }}
+                >
+                  <span style={{ fontSize: "0.75rem", color: "var(--accent)", fontWeight: 500 }}>
+                    Estimated fee: {fee?.display ?? "—"}
+                  </span>
+                  <span className="faint" style={{ fontSize: "0.72rem" }}>
+                    Simulation passed — ready to sign
+                  </span>
+                </div>
+              ) : stage === "submitting" ? (
                 <AnimatedDots text="Writing to ProofRegistry" style={{ marginTop: "0.35rem" }} />
               ) : submitDone ? (
                 <div
@@ -1076,39 +1300,80 @@ function ProofFlow({
         </div>
 
         {/* CTA */}
-        {stage === "generated" && (
+        {(stage === "generated" || stage === "preflight" || stage === "readyToSign") && (
           <>
             {networkMismatch && (
               <div style={{ marginTop: "1.5rem" }}>
                 <NetworkMismatchBanner />
               </div>
             )}
-            <button
-              className="btn btn-primary"
-              style={{
-                marginTop: networkMismatch ? 0 : "1.5rem",
-                width: "100%",
-                opacity: networkMismatch ? 0.5 : 1,
-                cursor: networkMismatch ? "not-allowed" : "pointer",
-              }}
-              onClick={onSubmit}
-              disabled={networkMismatch || !proofSubmissionConfigured()}
-              title={
-                networkMismatch
-                  ? "Switch your wallet to the correct network to submit"
-                  : !proofSubmissionConfigured()
-                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
-                    : undefined
-              }
-            >
-              Submit to Stellar
-              <IconArrowRight size={15} />
-            </button>
+            {stage === "preflight" ? (
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: networkMismatch ? 0 : "1.5rem", width: "100%", opacity: 0.7, cursor: "progress" }}
+                disabled
+              >
+                <IconLoader2 size={15} className="spin" /> Running preflight simulation…
+              </button>
+            ) : stage === "readyToSign" ? (
+              <button
+                className="btn btn-primary"
+                ref={submitButtonRef}
+                style={
+                  {
+                    marginTop: networkMismatch ? 0 : "1.5rem",
+                    width: "100%",
+                    opacity: networkMismatch ? 0.5 : 1,
+                    cursor: networkMismatch ? "not-allowed" : "pointer",
+                  }
+                }
+                onClick={doSignAndSubmit}
+                disabled={networkMismatch || !proofSubmissionConfigured()}
+                title={
+                  networkMismatch
+                    ? "Switch your wallet to the correct network to submit"
+                    : !proofSubmissionConfigured()
+                      ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                      : undefined
+                }
+              >
+                Sign & submit{fee ? ` (${fee.display})` : ""}
+                <IconArrowRight size={15} />
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                ref={submitButtonRef}
+                style={
+                  {
+                    marginTop: networkMismatch ? 0 : "1.5rem",
+                    width: "100%",
+                    opacity: networkMismatch ? 0.5 : 1,
+                    cursor: networkMismatch ? "not-allowed" : "pointer",
+                  }
+                }
+                onClick={onSubmit}
+                disabled={networkMismatch || !proofSubmissionConfigured()}
+                title={
+                  networkMismatch
+                    ? "Switch your wallet to the correct network to submit"
+                    : !proofSubmissionConfigured()
+                      ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                      : undefined
+                }
+              >
+                Submit to Stellar
+                <IconArrowRight size={15} />
+              </button>
+            )}
           </>
         )}
 
         {error && (
           <div
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
             style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
@@ -1119,11 +1384,15 @@ function ProofFlow({
           >
             <div className="row" style={{ gap: "0.5rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.875rem" }}>
               <IconAlertTriangle size={15} />
-              {errorPhase === "proving"
-                ? "Proof generation failed"
-                : errorPhase === "submitting"
-                  ? "Submission failed — proof is ready to retry"
-                  : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
+              {errorPhase === "timeout"
+                ? "Proof timed out"
+                : errorPhase === "proving"
+                  ? "Proof generation failed"
+                  : errorPhase === "preflight"
+                    ? "Submission blocked before signing"
+                    : errorPhase === "submitting"
+                      ? "Submission failed — proof is ready to retry"
+                      : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>
@@ -1156,6 +1425,20 @@ function ProofFlow({
                 )}
               </div>
             )}
+            {/* A preflight simulation predicted the submit would fail. The
+                proof is generated and intact, so offer an explicit override to
+                sign & submit anyway (the user may know something the sim
+                doesn't, e.g. the chain state changing). */}
+            {errorPhase === "preflight" && proof && (
+              <button
+                className="btn btn-ghost"
+                style={{ marginTop: "1rem", width: "100%" }}
+                onClick={doSignAndSubmit}
+              >
+                Sign & submit anyway
+                <IconArrowRight size={15} />
+              </button>
+            )}
             {/* Retry submission without re-proving when the proof exists */}
             {errorPhase === "submitting" && proof && (
               <button
@@ -1172,6 +1455,10 @@ function ProofFlow({
 
         {stage === "confirmed" && (
           <div
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
+            aria-live="polite"
             className="reveal"
             style={{
               marginTop: "1.5rem",
@@ -1228,6 +1515,8 @@ function BatchProofFlow({
   const [txHash, setTxHash] = useState("");
   const [batchError, setBatchError] = useState<ContractError | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  /** Estimated fee reported by the batch preflight simulation. */
+  const [batchFee, setBatchFee] = useState<FeeEstimate | null>(null);
   const toast = useToast();
   const { networkMismatch } = useWallet();
   const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
@@ -1237,6 +1526,9 @@ function BatchProofFlow({
   // even if the parent re-renders between proof generation and submission.
   const credsRef = useRef(creds);
   const holderRef = useRef(holder);
+   const networkMismatchRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { credsRef.current = creds; }, [creds]);
   useEffect(() => { holderRef.current = holder; }, [holder]);
 
@@ -1362,24 +1654,42 @@ function BatchProofFlow({
 
     currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "submitted"));
 
-    toast.info(`Submitting ${currentCreds.length} proofs to Stellar…`);
-    submitProofs({ holder: currentHolder, submissions })
-      .then((hash: string) => {
-        setTxHash(hash);
-        const commitments = currentCreds.map((c) => c.commitment);
-        onProved(hash, commitments);
-        setBatchStage("confirmed");
+    setBatchFee(null);
+    toast.info(`Simulating batch of ${currentCreds.length} proofs…`);
+    (async () => {
+      // Stage 1 — preflight simulation: catch a doomed batch (invalid proof,
+      // duplicate type, untrusted issuer, paused submissions, …) and surface
+      // its mapped reason BEFORE a single Frieght/wallet signature is spent.
+      const preflight = await preflightSubmitProofs({ holder: currentHolder, submissions });
+      if (!preflight.ok) {
+        setBatchError(preflight.error);
+        setBatchStage("error");
+        toast.error(`Batch submission blocked — ${preflight.error.friendly}`);
+        return;
+      }
+      setBatchFee(preflight.fee);
 
-        currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));
-
-        toast.success(`Confirmed ${creds.length} proofs on-chain`, { txHash: hash });
-      })
-      .catch((e: any) => {
+      // Stage 2 — the simulation succeeded, so it's safe to request the
+      // signature and submit.
+      let hash: string;
+      try {
+        hash = await submitProofs({ holder: currentHolder, submissions });
+      } catch (e) {
         const parsed = parseContractError((e as Error).message);
         setBatchError(parsed);
         setBatchStage("error");
         toast.error(`Batch submission failed: ${parsed.friendly}`);
-      });
+        return;
+      }
+      setTxHash(hash);
+      const commitments = currentCreds.map((c) => c.commitment);
+      onProved(hash, commitments);
+      setBatchStage("confirmed");
+
+      currentCreds.forEach(cred => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));
+
+      toast.success(`Confirmed ${creds.length} proofs on-chain`, { txHash: hash });
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReady, networkMismatch, onProved]);
 
@@ -1387,6 +1697,22 @@ function BatchProofFlow({
   const isConfirmed = batchStage === "confirmed";
   const isError = batchStage === "error";
 
+  useEffect(() => {
+  if (blockedByNetwork) {
+    networkMismatchRef.current?.focus();
+    return;
+  }
+
+  switch (batchStage) {
+    case "confirmed":
+      successRef.current?.focus();
+      break;
+
+    case "error":
+      errorRef.current?.focus();
+      break;
+  }
+  }, [blockedByNetwork, batchStage]);
   return (
     <div className="reveal" style={{ maxWidth: 560, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
@@ -1434,7 +1760,16 @@ function BatchProofFlow({
           last
           detail={
             isSubmitting ? (
-              <AnimatedDots text="Writing all proofs to ProofRegistry" style={{ marginTop: "0.35rem" }} />
+              <div style={{ marginTop: "0.35rem" }}>
+                <AnimatedDots
+                  text={batchFee ? "Writing all proofs to ProofRegistry" : "Running preflight simulation"}
+                />
+                {batchFee && (
+                  <span style={{ fontSize: "0.72rem", color: "var(--accent)", marginLeft: "0.5rem", fontWeight: 500 }}>
+                    Estimate · {batchFee.display}
+                  </span>
+                )}
+              </div>
             ) : isConfirmed ? (
               <div
                 className="row"
@@ -1458,7 +1793,7 @@ function BatchProofFlow({
 
         {/* Network mismatch — proofs are ready but submission is blocked */}
         {blockedByNetwork && (
-          <div style={{ marginTop: "1.5rem" }}>
+          <div  ref={networkMismatchRef} tabIndex={-1} role="status" style={{ marginTop: "1.5rem" }}>
             <NetworkMismatchBanner />
           </div>
         )}
@@ -1466,7 +1801,10 @@ function BatchProofFlow({
         {/* Error banner */}
         {isError && batchError && (
           <div
-            style={{
+          ref={errorRef}
+          tabIndex={-1}
+          role="alert"  
+          style={{
               marginTop: "1.5rem",
               padding: "0.9rem 1.1rem",
               borderRadius: "var(--radius)",
@@ -1519,6 +1857,9 @@ function BatchProofFlow({
         {isConfirmed && (
           <div
             className="reveal"
+            ref={successRef}
+            tabIndex={-1}
+            role="status"
             style={{
               marginTop: "1.5rem",
               padding: "1.25rem",

@@ -402,6 +402,12 @@ fn metadata_name_over_limit_panics() {
 
     // name = 65 bytes, one over the 64-byte limit.
     client.set_issuer_metadata(&issuer, &Some(str_of_len(&env, 65)), &None, &None);
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(str_of_len(&env, 65)),
+        &None,
+        &None,
+    );
 }
 
 #[test]
@@ -417,6 +423,12 @@ fn metadata_url_over_limit_panics() {
 
     // url = 257 bytes, one over the 256-byte limit.
     client.set_issuer_metadata(&issuer, &None, &Some(str_of_len(&env, 257)), &None);
+    client.set_issuer_metadata(
+        &issuer,
+        &None,
+        &Some(str_of_len(&env, 257)),
+        &None,
+    );
 }
 
 #[test]
@@ -432,4 +444,10 @@ fn metadata_logo_over_limit_panics() {
 
     // logo = 257 bytes, one over the 256-byte limit.
     client.set_issuer_metadata(&issuer, &None, &None, &Some(str_of_len(&env, 257)));
+    client.set_issuer_metadata(
+        &issuer,
+        &None,
+        &None,
+        &Some(str_of_len(&env, 257)),
+    );
 }

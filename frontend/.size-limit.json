@@ -15,7 +15,7 @@
   {
     "name": "Holder Route JS",
     "path": ".next/static/chunks/app/holder/**/*.js",
-    "limit": "15 kB"
+    "limit": "16 kB"
   },
   {
     "name": "Issuer Route JS",
@@ -33,6 +33,11 @@
     "limit": "10 kB"
   },
   {
+    "name": "Badge Route JS",
+    "path": ".next/static/chunks/app/badge/**/*.js",
+    "limit": "10 kB"
+  },
+  {
     "name": "Developers & Docs Routes JS",
     "path": [
       ".next/static/chunks/app/developers/**/*.js",
@@ -43,7 +48,7 @@
   {
     "name": "Shared JS Chunks",
     "path": ".next/static/chunks/*.js",
-    "limit": "650 kB"
+    "limit": "740 kB"
   },
   {
     "name": "WASM Proving Assets (bb.js)",

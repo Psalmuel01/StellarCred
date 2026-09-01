@@ -32,21 +32,23 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    env:
+      VERCEL_TOKEN_SET: ${{ secrets.VERCEL_TOKEN != '' }}
     steps:
       # Default checkout: merges base into head for the PR merge-commit ref.
       # This is safe — it never checks out arbitrary fork code with secrets
       # in scope, because the fork guard above prevents this step from running
       # on fork PRs.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
@@ -55,9 +57,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Vercel CLI
+        if: env.VERCEL_TOKEN_SET == 'true'
         run: pnpm add -g vercel
 
       - name: Pull Vercel Environment Information
+        if: env.VERCEL_TOKEN_SET == 'true'
         working-directory: ./frontend
         run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
         env:
@@ -65,6 +69,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Build Project Artifacts
+        if: env.VERCEL_TOKEN_SET == 'true'
         working-directory: ./frontend
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
         env:
@@ -74,6 +79,7 @@ jobs:
           NEXT_PUBLIC_CONTRACT_ID: "CB2R3O43TX3G3N3X4Y5Z6A7B8C9D0E1F2G3H4I5J6K7L8M9N0O"
 
       - name: Deploy Project Artifacts to Vercel
+        if: env.VERCEL_TOKEN_SET == 'true'
         id: deploy
         working-directory: ./frontend
         run: |
@@ -84,7 +90,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Comment PR with Preview Link
-        uses: actions/github-script@v7
+        if: env.VERCEL_TOKEN_SET == 'true'
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
         with:
@@ -125,18 +132,22 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      VERCEL_TOKEN_SET: ${{ secrets.VERCEL_TOKEN != '' }}
     steps:
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Install Vercel CLI
+        if: env.VERCEL_TOKEN_SET == 'true'
         run: pnpm add -g vercel
 
       - name: Find Preview URL from PR Comment
+        if: env.VERCEL_TOKEN_SET == 'true'
         id: find-url
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: comments } = await github.rest.issues.listComments({
@@ -155,7 +166,7 @@ jobs:
             core.setOutput('preview_url', match ? match[1] : '');
 
       - name: Remove Preview Deployment
-        if: steps.find-url.outputs.preview_url != ''
+        if: env.VERCEL_TOKEN_SET == 'true' && steps.find-url.outputs.preview_url != ''
         run: vercel remove "$PREVIEW_URL" --yes --token=${{ secrets.VERCEL_TOKEN }}
         env:
           PREVIEW_URL: ${{ steps.find-url.outputs.preview_url }}
