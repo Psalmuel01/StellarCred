@@ -100,12 +100,11 @@ export function SiteNav() {
         <div id="mobile-nav-right" className="nav-right">
           <button
             type="button"
-            className="seg-link"
+            className="seg-link nav-reset-btn"
             onClick={() => {
               resetOnboarding();
             }}
             title="Replay onboarding tour"
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
           >
             <IconHelp size={14} stroke={1.8} />
             Tour
