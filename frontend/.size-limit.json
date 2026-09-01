@@ -30,7 +30,7 @@
   {
     "name": "Verify Route JS",
     "path": ".next/static/chunks/app/verify/**/*.js",
-    "limit": "10 kB"
+    "limit": "11 kB"
   },
   {
     "name": "Badge Route JS",

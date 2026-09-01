@@ -85,6 +85,21 @@ function VerifyInner() {
     claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
   const locked = !!requiredClaim;
 
+  // Parse and validate every verification-link parameter up front. If the link
+  // is malformed (bad claim type / bad threshold / missing return URL), render
+  // an explicit invalid-link screen instead of a blank page, a stuck spinner,
+  // or a silent proceed.
+  const verification = parseVerifyParams({
+    return_url: searchParams.get("return_url"),
+    claim: searchParams.get("claim"),
+    threshold_years: searchParams.get("threshold_years"),
+    threshold: searchParams.get("threshold"),
+    min_threshold: searchParams.get("min_threshold"),
+    restricted: searchParams.get("restricted"),
+    inquiry_id: searchParams.get("inquiry-id"),
+  });
+  const linkError: VerifyError | null = verification.ok ? null : (verification.error ?? null);
+
   // Validate all query params up-front; block the flow on any invalid value.
   const paramValidation = validateVerifyParams({
     returnUrl,
