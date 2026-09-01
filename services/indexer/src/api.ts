@@ -27,6 +27,9 @@
  *   GET /recent?limit=20&cursor=<opaque>
  *     → { claims: ClaimRow[], limit: number, nextCursor: string | null }
  *
+ *   GET /issuers/:issuer/stats
+ *     → { issuer, total, active, revoked, credential_types: string[], first_seen: number | null }
+ *
  * /recent uses keyset (cursor) pagination ordered by (ledger_sequence, id) —
  * the `nextCursor` returned with each page is an opaque token that must be
  * passed back as `?cursor=` to fetch the next page. Unlike OFFSET pagination
@@ -166,6 +169,73 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
     })
   );
 
+  // ── GET /metrics ──────────────────────────────────────────────────────────
+  // Exposes Prometheus metrics for the indexer.
+  //   - indexer_events_processed_total: total events processed since start
+  //   - indexer_fetch_errors_total: total fetch errors since start
+  //   - indexer_uptime_seconds: uptime in seconds since start
+  //   - indexer_db_write_latency_seconds: latest tick DB write latency in seconds
+  //   - indexer_ledgers_behind_head: ledgers between head and last processed
+  //
+  // This endpoint is left public (no auth required) so monitoring stacks can
+  // scrape it, but it is separate from the claim API routes so it is not
+  // colliding with public dApp/wallet endpoints. If operators want to gate it,
+  // they can add a reverse-proxy or firewall rule in front of /metrics.
+  app.get(
+    "/metrics",
+    asyncHandler(async (_req, res) => {
+      const metrics = ingester.getMetrics();
+      const lines: string[] = [];
+
+      // Events processed total
+      lines.push(
+        `# HELP indexer_events_processed_total Total number of events processed since the ingester started.`,
+      );
+      lines.push(
+        `# TYPE indexer_events_processed_total counter`,
+      );
+      lines.push(`indexer_events_processed_total ${metrics.eventsProcessedTotal}`);
+
+      // Fetch errors total
+      lines.push(
+        `# HELP indexer_fetch_errors_total Total number of fetch errors (all retries exhausted) since start.`,
+      );
+      lines.push(
+        `# TYPE indexer_fetch_errors_total counter`,
+      );
+      lines.push(`indexer_fetch_errors_total ${metrics.fetchErrorsTotal}`);
+
+      // Uptime in seconds
+      lines.push(
+        `# HELP indexer_uptime_seconds Uptime in seconds since the ingester started.`,
+      );
+      lines.push(
+        `# TYPE indexer_uptime_seconds gauge`,
+      );
+      lines.push(`indexer_uptime_seconds ${metrics.uptimeSeconds}`);
+
+      // DB write latency in seconds
+      lines.push(
+        `# HELP indexer_db_write_latency_seconds Latest tick DB write latency in seconds.`,
+      );
+      lines.push(
+        `# TYPE indexer_db_write_latency_seconds gauge`,
+      );
+      lines.push(`indexer_db_write_latency_seconds ${metrics.dbWriteLatencySeconds}`);
+
+      // Ledgers behind head
+      lines.push(
+        `# HELP indexer_ledgers_behind_head Number of ledgers between network head and last processed ledger.`,
+      );
+      lines.push(
+        `# TYPE indexer_ledgers_behind_head gauge`,
+      );
+      lines.push(`indexer_ledgers_behind_head ${metrics.lag}`);
+
+      res.type("text/plain").send(lines.join("\n") + "\n");
+    })
+  );
+
   // ── GET /claims?wallet=G… ────────────────────────────────────────────────
   app.get(
     "/claims",
@@ -220,6 +290,25 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
         limit,
         nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
       });
+    })
+  );
+
+  // ── GET /issuers/:issuer/stats ───────────────────────────────────────────
+  // Reputation stats derived entirely from indexed events (#398) — how many
+  // credentials an issuer has issued, active vs revoked, which credential
+  // types they cover, and how long they've been indexed. Public: this is the
+  // same class of aggregate chain data /stats already exposes, just sliced
+  // by issuer instead of by credential_type.
+  app.get(
+    "/issuers/:issuer/stats",
+    asyncHandler(async (req, res) => {
+      const issuer = req.params["issuer"];
+      if (typeof issuer !== "string" || issuer.trim() === "") {
+        res.status(400).json({ error: "issuer path parameter is required" });
+        return;
+      }
+      const stats = await db.issuerStats(issuer.trim());
+      res.json(stats);
     })
   );
 
