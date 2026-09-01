@@ -7,6 +7,7 @@ import {
   IconLoader2,
   IconShieldCheck,
 } from "@tabler/icons-react";
+import { useTranslations } from "next-intl";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { Badge } from "@/components/Badge";
@@ -54,6 +55,7 @@ async function readApiError(res: Response): Promise<string> {
 
 export default function IssuerPage() {
   const { address } = useWallet();
+  const t = useTranslations("issuer");
   const [issuers, setIssuers] = useState<RegisteredIssuer[]>([]);
   const [issuersLoading, setIssuersLoading] = useState(true);
   const [issuersError, setIssuersError] = useState("");
@@ -165,9 +167,9 @@ export default function IssuerPage() {
     <>
       <div className="between" style={{ marginBottom: "2rem" }}>
         <div>
-          <span className="eyebrow">Issuer admin · demo</span>
+          <span className="eyebrow">{t("eyebrow")}</span>
           <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>
-            Issue a credential
+            {t("title")}
           </h1>
         </div>
         <WalletButton />
@@ -190,11 +192,9 @@ export default function IssuerPage() {
         }}
       >
         <strong style={{ color: "var(--text)" }}>
-          Simulates the issuer&apos;s side.
+          {t("simulatesIssuerSide")}
         </strong>{" "}
-        In production this would be a separate authenticated app run by the
-        institution — KYC provider, bank, employer — after verifying the holder
-        off-chain. The holder would never see this interface.
+        {t("productionNote")}
       </div>
 
       <div
@@ -202,15 +202,15 @@ export default function IssuerPage() {
         style={{ alignItems: "start", gap: "1.5rem" }}
       >
         <div className="card">
-          <label className="field-label" htmlFor="registered-issuer">Registered issuer</label>
+          <label className="field-label" htmlFor="registered-issuer">{t("registeredIssuer")}</label>
           {issuersLoading ? (
             <p className="faint" style={{ fontSize: "0.8125rem", marginTop: "0.35rem" }}>
-              Loading issuers from IssuerRegistry…
+              {t("loadingIssuers")}
             </p>
           ) : issuers.length === 0 ? (
             <p className="faint" style={{ fontSize: "0.8125rem", marginTop: "0.35rem" }}>
               {issuersError ||
-                "No registered issuers found. Deploy contracts and register issuers on IssuerRegistry."}
+                t("noIssuersFound")}
             </p>
           ) : (
             <>
@@ -255,7 +255,7 @@ export default function IssuerPage() {
             style={{ marginTop: "1.25rem", gap: "1rem" }}
           >
             <div>
-              <label className="field-label" htmlFor="credential-type">Credential type</label>
+              <label className="field-label" htmlFor="credential-type">{t("credentialType")}</label>
               <select
                 id="credential-type"
                 value={type}
@@ -270,7 +270,7 @@ export default function IssuerPage() {
               </select>
             </div>
             <div>
-              <label className="field-label" htmlFor="issuer-expiry">Expiry</label>
+              <label className="field-label" htmlFor="issuer-expiry">{t("expiry")}</label>
               <select
                 id="issuer-expiry"
                 value={expiry}
@@ -323,8 +323,8 @@ export default function IssuerPage() {
             <IconKey size={14} />
             <span>
               {needsAttr
-                ? "The attribute is committed with Poseidon2 and stays private — the holder proves a claim about it."
-                : "A fresh secret is generated and committed with Poseidon2 — the holder proves it without revealing it."}
+                ? t("privateKeyNote")
+                : t("privateKeyNote")}
             </span>
           </div>
 
@@ -351,11 +351,11 @@ export default function IssuerPage() {
             {busy ? (
               <>
                 <IconLoader2 size={15} className="spin" />
-                Computing commitment…
+                {t("issuing")}
               </>
             ) : (
               <>
-                Sign &amp; issue
+                {t("issueButton")}
                 <IconArrowRight size={15} />
               </>
             )}
@@ -375,10 +375,10 @@ export default function IssuerPage() {
 
         <div className="card" style={{ minHeight: 280 }}>
           <div className="between" style={{ marginBottom: "1rem" }}>
-            <span className="eyebrow">Signed credential</span>
+            <span className="eyebrow">{t("title")}</span>
             {issued && (
               <div className="row" style={{ gap: "0.5rem" }}>
-                <Badge variant="verified">Saved to wallet</Badge>
+                <Badge variant="verified">{t("title")}</Badge>
                 <CopyButton value={issued} />
               </div>
             )}
@@ -411,9 +411,7 @@ export default function IssuerPage() {
                 className="faint"
                 style={{ maxWidth: 280, fontSize: "0.875rem" }}
               >
-                Issue a credential to generate signed JSON. It is saved to this
-                browser&rsquo;s wallet and ready to prove on the Holder page —
-                we never store it server-side.
+                {t("title")} {t("issued")}
               </p>
             </div>
           )}

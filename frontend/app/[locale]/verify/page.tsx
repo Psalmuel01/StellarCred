@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   IconArrowRight,
   IconLoader2,
@@ -71,6 +72,8 @@ function VerifyInner() {
   const { address } = useWallet();
   const searchParams = useSearchParams();
   const toast = useToast();
+  const t = useTranslations("verify");
+  const tc = useTranslations("common");
 
   // When a protocol redirects here it can specify where to send the user back
   // (return_url) and exactly which claim it requires (claim). A required claim
@@ -446,9 +449,9 @@ function VerifyInner() {
     <>
       <div className="between" style={{ marginBottom: "2rem" }}>
         <div>
-          <span className="eyebrow">Verify</span>
+          <span className="eyebrow">{t("eyebrow")}</span>
           <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>
-            Get verified
+            {t("title")}
           </h1>
         </div>
         <WalletButton />
@@ -484,7 +487,7 @@ function VerifyInner() {
                 className="muted"
                 style={{ marginBottom: "1.25rem", fontSize: "0.9rem" }}
               >
-                Connect your wallet to request credentials for your address.
+                {t("connectWalletPrompt")}
               </p>
               <WalletButton />
             </div>
@@ -509,16 +512,16 @@ function VerifyInner() {
               </span>
               <div style={{ fontWeight: 500 }}>
                 {requestingDomain && !urlError
-                  ? "Verified"
-                  : "Credential saved"}
+                  ? t("verified")
+                  : t("credentialSaved")}
               </div>
               <div
                 className="muted"
                 style={{ fontSize: "0.85rem", marginTop: "0.3rem" }}
               >
                 {requestingDomain && !urlError
-                  ? `Returning to ${requestingDomain}…`
-                  : "Credential saved — redirecting to your wallet…"}
+                  ? t("returningTo", { domain: requestingDomain })
+                  : t("credentialSavedRedirecting")}
               </div>
             </div>
           ) : (
@@ -558,17 +561,16 @@ function VerifyInner() {
                   </strong>
                 </div>
               )}
-              <label className="field-label" id="credential-type-label">Credential type</label>
+              <label className="field-label" id="credential-type-label">{t("credentialType")}</label>
               {locked && (
                 <p
                   className="faint"
                   style={{ fontSize: "0.8125rem", margin: "0.4rem 0 0" }}
                 >
-                  A protocol requested the{" "}
+                  {t("protocolRequested")}{" "}
                   <strong style={{ color: "var(--accent)" }}>
                     {requiredClaim}
-                  </strong>{" "}
-                  credential.
+                  </strong>{" "}                    {t("credential")}
                 </p>
               )}
               <div
@@ -930,7 +932,7 @@ function VerifyInner() {
               </div>
 
               <div style={{ marginBottom: "1.5rem" }}>
-                <label className="field-label" htmlFor="validity-period">Validity period</label>
+                <label className="field-label" htmlFor="validity-period">{t("validityPeriod")}</label>
                 <select
                   id="validity-period"
                   value={expiry}
@@ -953,7 +955,7 @@ function VerifyInner() {
                 }}
               >
                 <span className="faint" style={{ fontSize: "0.8125rem" }}>
-                  Issued to
+                  {t("issuedTo")}
                 </span>
                 <span
                   className="mono"
@@ -986,12 +988,12 @@ function VerifyInner() {
                   <>
                     <IconLoader2 size={15} className="spin" />
                     {selected === "kyc"
-                      ? "Redirecting to verification…"
-                      : "Creating credential…"}
+                      ? t("redirectingToVerification")
+                      : t("creatingCredential")}
                   </>
                 ) : (
                   <>
-                    {selected === "kyc" ? "Verify identity" : "Get credential"}
+                    {selected === "kyc" ? t("verifyIdentity") : t("getCredential")}
                     <IconArrowRight size={15} />
                   </>
                 )}
@@ -1017,8 +1019,7 @@ function VerifyInner() {
                   lineHeight: 1.6,
                 }}
               >
-                Each claim is committed with Poseidon2 and stays private. You
-                prove a statement about it — never the underlying value.
+                Each claim is committed with Poseidon2 and stays private. You prove a statement about it — never the underlying value.
               </p>
             </>
           )}

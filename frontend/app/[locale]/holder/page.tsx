@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -167,6 +168,7 @@ function CredCard({
     onToggle: () => void;
   };
 }) {
+  const t = useTranslations("holder");
   const status = proofStatus(c);
   const { events } = useProofTimeline(c);
   const [showHistory, setShowHistory] = useState(false);
@@ -182,12 +184,11 @@ function CredCard({
           </div>
           <div style={{ fontSize: "0.75rem", color: "var(--faint)", marginTop: "0.15rem" }}>
             <div>
-              {c.issuer} · <span>{truncateHash(c.commitment)}</span>
-              {status === "proved" && (
+              {c.issuer} · <span>{truncateHash(c.commitment)}</span>                  {status === "proved" && (
                 <>
                   {" · "}
                   <span style={{ color: "var(--accent)", opacity: 0.75 }}>
-                    expires in {daysRemaining(c)}d
+                    {t("expiresIn", { days: daysRemaining(c) })}
                   </span>
                   {c.provedTxHash && (
                     <>
@@ -205,15 +206,15 @@ function CredCard({
                 </>
               )}
               {status === "expired" && (
-                <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>expired</span></>
+                <> · <span style={{ color: "var(--danger)", opacity: 0.8 }}>{t("expired")}</span></>
               )}
             </div>
             <div style={{ marginTop: "0.1rem" }}>
               {credIsExpired(c) ? (
-                <span style={{ color: "var(--danger)", fontWeight: 500 }}>Expired</span>
+                <span style={{ color: "var(--danger)", fontWeight: 500 }}>{t("expired")}</span>
               ) : (
                 <span style={{ color: credExpiryWithinDays(c, 30) ? "var(--warn)" : "var(--faint)" }}>
-                  Expires {formatExpiryDate(credExpiryTimestamp(c))}
+                  {t("expiresOn", { date: formatExpiryDate(credExpiryTimestamp(c)) })}
                 </span>
               )}
             </div>
@@ -222,38 +223,38 @@ function CredCard({
 
         {/* right: badges + button + trash */}
         <div className="card-actions">
-          {isPreview && <Badge variant="pending">Preview</Badge>}
-          <Badge variant="verified" dot={false}>Held</Badge>
+          {isPreview && <Badge variant="pending">{t("preview")}</Badge>}
+          <Badge variant="verified" dot={false}>{t("held")}</Badge>
           {status === "proved" && !isExpiringSoon(c) && (
-            <Badge variant="verified" dot={false}>On-chain</Badge>
+            <Badge variant="verified" dot={false}>{t("onChain")}</Badge>
           )}
           {status === "proved" && isExpiringSoon(c) && (
-            <Badge variant="pending" dot={true}>Expiring in {daysRemaining(c)}d</Badge>
+            <Badge variant="pending" dot={true}>{t("expiringIn", { days: daysRemaining(c) })}</Badge>
           )}
           {status === "expired" && (
-            <Badge variant="denied" dot={true}>Proof Expired</Badge>
+            <Badge variant="denied" dot={true}>{t("proofExpired")}</Badge>
           )}
           <button
             className={`btn btn-sm ${status === "proved" ? "btn-secondary" : "btn-primary"}`}
             disabled={!address || credIsExpired(c) || !proofSubmissionConfigured()}
             title={
               !address
-                ? "Connect a wallet first"
+                ? t("connectWalletFirst")
                 : credIsExpired(c)
-                  ? "This credential has expired"
+                  ? t("credentialExpired")
                   : !proofSubmissionConfigured()
-                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                    ? t("appNotConfigured")
                     : undefined
             }
             onClick={onProve}
           >
-            {status === "proved"  ? "Re-prove" :
-             status === "expired" ? "Re-prove" :
-                                    "Generate proof"}
+            {status === "proved"  ? t("reProve") :
+             status === "expired" ? t("reProve") :
+                                    t("generateProof")}
           </button>
           <button
             className="btn btn-ghost btn-sm"
-            title="History"
+            title={t("history")}
             onClick={() => setShowHistory(!showHistory)}
             style={{ padding: "0.3rem 0.4rem", color: showHistory ? "var(--accent)" : "var(--faint)" }}
           >
@@ -261,7 +262,7 @@ function CredCard({
           </button>
           <button
             className="btn btn-ghost btn-sm"
-            title="Remove"
+            title={t("remove")}
             onClick={onRemove}
             style={{ padding: "0.3rem 0.4rem", color: "var(--faint)" }}
           >
@@ -316,6 +317,7 @@ type PageView =
 function HolderInner() {
   const { address, connect } = useWallet();
   const isPreview = usePreviewMode();
+  const t = useTranslations("holder");
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
@@ -458,8 +460,8 @@ function HolderInner() {
     <>
       <div className="between" style={{ marginBottom: "2.5rem" }}>
         <div>
-          <span className="eyebrow">Holder</span>
-          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Your credentials</h1>
+          <span className="eyebrow">{t("eyebrow")}</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
         </div>
         <WalletButton />
       </div>
@@ -481,10 +483,10 @@ function HolderInner() {
           }}
         >
           <span style={{ fontSize: "0.875rem", fontWeight: 500 }}>
-            Connect wallet to use your real credentials
+            {t("connectWalletPrompt")}
           </span>
           <button className="btn btn-primary btn-sm" onClick={connect}>
-            Connect Wallet
+            {t("connectWallet")}
           </button>
         </div>
       )}
@@ -548,26 +550,24 @@ function HolderInner() {
               style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
             >
               <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
-              <h3 style={{ margin: "1rem 0 0.4rem" }}>No credentials yet</h3>
+              <h3 style={{ margin: "1rem 0 0.4rem" }}>{t("noCredentialsYet")}</h3>
               <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 340, margin: "0 auto 1.5rem" }}>
-                Get a credential from a trusted issuer, then generate a
-                zero-knowledge proof to verify it on-chain.
+                {t("noCredentialsBody")}
               </p>
               <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
-                Get a credential
+                {t("getACredential")}
                 <IconArrowRight size={14} />
               </a>
               <p
                 className="faint"
                 style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}
               >
-                Credentials are stored only in this browser&apos;s local storage — clearing
-                site data, switching browsers/devices, or private mode erases them.{" "}
+                {t("credentialsStoredNote")}{" "}
                 <Link
                   href="/docs#storage"
                   style={{ color: "var(--accent)", textDecoration: "underline" }}
                 >
-                  Where your credentials live
+                  {t("whereCredentialsLive")}
                 </Link>
               </p>
             </div>
@@ -576,7 +576,7 @@ function HolderInner() {
           {/* ── Expiring Soon (Action Recommended) ── */}
           {expiringSoon.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>Expiring soon · Re-prove recommended</SectionLabel>
+              <SectionLabel>{t("expiringSoon")}</SectionLabel>
               {expiringSoon.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -594,7 +594,7 @@ function HolderInner() {
           {/* ── Expired (Action Required) ── */}
           {expired.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>Expired proofs · Re-prove required</SectionLabel>
+              <SectionLabel>{t("expiredProofs")}</SectionLabel>
               {expired.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -612,7 +612,7 @@ function HolderInner() {
           {/* ── Credentials to prove ── */}
           {unproved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>Ready to prove</SectionLabel>
+              <SectionLabel>{t("readyToProve")}</SectionLabel>
               {unproved.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -694,7 +694,7 @@ function HolderInner() {
           {/* ── Active proved ── */}
           {activeProved.length > 0 && (
             <div className="stack" style={{ gap: "0.6rem" }}>
-              <SectionLabel>On-chain · active proofs</SectionLabel>
+              <SectionLabel>{t("onChainActiveProofs")}</SectionLabel>
               {activeProved.map((c) => (
                 <CredCard
                   key={c.commitment}
@@ -711,7 +711,7 @@ function HolderInner() {
 
           {!address && creds.length > 0 && (
             <p className="faint" style={{ fontSize: "0.8125rem" }}>
-              Connect a wallet to generate and submit proofs.
+              {t("connectWalletToGenerate")}
             </p>
           )}
 
@@ -728,27 +728,25 @@ function HolderInner() {
                   onClick={() => setImporting(true)}
                 >
                   <IconPlus size={14} />
-                  Import credential JSON
+                  {t("importCredentialJSON")}
                 </button>
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={downloadBackup}
                   disabled={creds.length === 0}
-                  title={creds.length === 0 ? "No credentials to back up yet" : "Download a JSON backup of all credentials"}
+                  title={creds.length === 0 ? t("noBackupYet") : t("backupTooltip")}
                 >
                   <IconDownload size={14} />
-                  Export backup
+                  {t("exportBackup")}
                 </button>
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
-                Credentials live only in this browser (localStorage) — export a backup
-                before clearing site data or switching devices, and restore it here with{" "}
-                “Import credential JSON”.{" "}
+                {t("storageNote")}{" "}
                 <Link
                   href="/docs#storage"
                   style={{ color: "var(--accent)", textDecoration: "underline" }}
                 >
-                  Where your credentials live
+                  {t("whereCredentialsLive")}
                 </Link>
               </p>
             </div>
@@ -803,6 +801,7 @@ export default function HolderPage() {
 function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void; onCancel: () => void }) {
   const [json, setJson] = useState("");
   const [error, setError] = useState("");
+  const t = useTranslations("holder");
 
   function onAdd() {
     try { onImport(parseCredential(json)); }
@@ -811,7 +810,7 @@ function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void
 
   return (
     <div className="card reveal">
-      <span className="eyebrow">Import credential</span>
+      <span className="eyebrow">{t("importCredential")}</span>
       <textarea
         rows={5}
         placeholder='{"type":"kyc","commitment":"0x…", …}'
@@ -821,8 +820,8 @@ function ImportPanel({ onImport, onCancel }: { onImport: (c: Credential) => void
       />
       {error && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginTop: "0.5rem" }}>{error}</p>}
       <div className="row" style={{ marginTop: "1rem", gap: "0.6rem" }}>
-        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={!json.trim()}>Add credential</button>
-        <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={!json.trim()}>{t("addCredential")}</button>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>{t("cancel")}</button>
       </div>
     </div>
   );
@@ -943,6 +942,7 @@ function ProofFlow({
   onProved: (txHash: string) => void;
 }) {
   const { networkMismatch } = useWallet();
+  const t = useTranslations("holder");
   const [stage, setStage] = useState<Stage>("witness");
   const [proof, setProof] = useState<{ proof: Uint8Array; publicInputs: Uint8Array } | null>(null);
   const [txHash, setTxHash] = useState("");
@@ -1096,14 +1096,14 @@ function ProofFlow({
     <div className="reveal" style={{ maxWidth: 520, margin: "0 auto" }}>
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         <IconArrowLeft size={14} />
-        All credentials
+        {t("eyebrow")}
       </button>
 
       <div className="card" style={{ padding: "1.75rem" }}>
         {/* credential header */}
         <div style={{ marginBottom: "1.5rem" }}>
           <span className="eyebrow" style={{ marginBottom: "0.5rem", display: "block" }}>
-            Proving
+            {t("reProve")}
           </span>
           <h2 style={{ marginBottom: "0.25rem" }}>{cred.title}</h2>
           <span className="mono faint" style={{ fontSize: "0.8rem" }}>{cred.claim}</span>
@@ -1294,7 +1294,7 @@ function ProofFlow({
                 style={{ marginTop: "1rem", width: "100%" }}
                 onClick={onRetrySubmit}
               >
-                Retry submission
+                {t("retry")} submission
                 <IconArrowRight size={15} />
               </button>
             )}

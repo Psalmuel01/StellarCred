@@ -2,11 +2,13 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { IconCheck, IconX, IconLoader2 } from "@tabler/icons-react";
 import { truncateHash } from "@/lib/format";
 import { isVerified } from "@/lib/contracts";
 
 function BadgeContent() {
+  const t = useTranslations("badge");
   const searchParams = useSearchParams();
   const wallet = searchParams.get("wallet") || "";
   const claim = searchParams.get("claim") || searchParams.get("type") || "kyc";
@@ -86,10 +88,10 @@ function BadgeContent() {
         rel="noopener noreferrer"
         title={
           loading
-            ? "Verifying StellarCred claim on-chain..."
+            ? t("verifyingOnChain")
             : verified
-              ? `StellarCred: ${claimText} Verified for ${wallet}`
-              : `StellarCred: ${claimText} Not Verified`
+              ? `StellarCred: ${claimText} ${t("verified")}`
+              : `StellarCred: ${claimText} ${t("notVerified")}`
         }
         style={{
           textDecoration: "none",
@@ -148,13 +150,13 @@ function BadgeContent() {
           {!isCompact && (
             <div style={{ fontSize: "0.68rem", color: faintColor, marginTop: "0.1rem" }}>
               {loading ? (
-                "Checking on-chain..."
+                t("checkingOnChain")
               ) : verified ? (
                 <span style={{ color: "#10b981", fontWeight: 500 }}>
-                  Verified {wallet ? `(${truncateHash(wallet)})` : ""}
+                  {t("verified")} {wallet ? `(${truncateHash(wallet)})` : ""}
                 </span>
               ) : (
-                <span style={{ color: "#ef4444" }}>Not verified</span>
+                <span style={{ color: "#ef4444" }}>{t("notVerified")}</span>
               )}
             </div>
           )}
@@ -169,7 +171,7 @@ export default function BadgePage() {
     <Suspense
       fallback={
         <div style={{ padding: "0.5rem", fontSize: "0.75rem", color: "#888" }}>
-          Loading verification badge...
+          Loading verification badge…
         </div>
       }
     >

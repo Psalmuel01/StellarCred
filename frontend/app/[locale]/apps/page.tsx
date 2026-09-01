@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   IconCheck,
   IconCircle,
@@ -39,6 +40,8 @@ function ProtocolCard({
 }) {
   const router = useRouter();
   const isPreview = usePreviewMode();
+  const t = useTranslations("apps");
+  const tc = useTranslations("common");
   const { state, statuses, retry, checking } = useProtocolAccessCheck(
     protocol.requirements,
     activeWallet,
@@ -129,7 +132,7 @@ function ProtocolCard({
         </div>
       </div>
       <div className="eyebrow" style={{ marginBottom: "0.4rem" }}>
-        Requirements
+        {t("requirements")}
       </div>
       <div className="stack" style={{ marginBottom: "1rem" }}>
         {protocol.requirements.map((r, i) => (
@@ -155,16 +158,15 @@ function ProtocolCard({
               >
                 {r.label}
               </span>
-            </span>
-            {checking ? (
-              <Badge variant="pending">Checking</Badge>
-            ) : state === "error" ? (
-              <Badge variant="denied">Unavailable</Badge>
-            ) : statuses[i] ? (
-              <Badge variant="verified">Proved</Badge>
-            ) : (
-              <Badge variant="pending">Needed</Badge>
-            )}
+            </span>            {checking ? (
+                <Badge variant="pending">{t("checkingAccess")}</Badge>
+              ) : state === "error" ? (
+                <Badge variant="denied">{t("checkFailed")}</Badge>
+              ) : statuses[i] ? (
+                <Badge variant="verified">{tc("save")}</Badge>
+              ) : (
+                <Badge variant="pending">{t("requirements")}</Badge>
+              )}
           </div>
         ))}
       </div>
@@ -185,24 +187,23 @@ function ProtocolCard({
       >
         {!activeWallet ? (
           <span className="faint" style={{ fontSize: "0.75rem" }}>
-            Connect wallet to check access
+            {t("goToWallet")}
           </span>
         ) : (
-          <>
-            {state === "loading" && (
+          <>              {state === "loading" && (
               <span className="row faint" style={{ gap: "0.4rem", fontSize: "0.75rem" }}>
                 <IconLoader2 size={14} className="spin" />
-                Checking access…
+                {t("checkingAccess")}
               </span>
             )}
-            {state === "granted" && <Badge variant="verified">Access granted</Badge>}
-            {state === "denied" && <Badge variant="denied">Access denied</Badge>}
+            {state === "granted" && <Badge variant="verified">{t("accessGranted")}</Badge>}
+            {state === "denied" && <Badge variant="denied">{t("accessDenied")}</Badge>}
             {state === "error" && (
               <>
                 <span className="row" style={{ gap: "0.4rem" }}>
-                  <Badge variant="denied">Check failed</Badge>
+                  <Badge variant="denied">{t("checkFailed")}</Badge>
                   <span className="faint" style={{ fontSize: "0.72rem" }}>
-                    RPC error
+                    {t("rpcError")}
                   </span>
                 </span>
                 <button
@@ -221,7 +222,7 @@ function ProtocolCard({
                   }}
                 >
                   <IconRefresh size={12} stroke={2} />
-                  Retry
+                  {tc("retry")}
                 </button>
               </>
             )}
@@ -235,6 +236,8 @@ function ProtocolCard({
 function AppsInner() {
   const { address, networkMismatch } = useWallet();
   const searchParams = useSearchParams();
+  const t = useTranslations("apps");
+  const tc = useTranslations("common");
   const scVerified = searchParams.get("sc_verified") === "true";
   const scWallet = searchParams.get("sc_wallet");
   // `address` is "" when disconnected — use || so we fall through to scWallet/null.
@@ -272,8 +275,8 @@ function AppsInner() {
     <>
       <div className="between" style={{ marginBottom: "2rem" }}>
         <div>
-          <span className="eyebrow">Demo protocols</span>
-          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Apps</h1>
+          <span className="eyebrow">{t("eyebrow")}</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
         </div>
         <WalletButton />
       </div>
@@ -290,12 +293,12 @@ function AppsInner() {
           lineHeight: 1.6,
         }}
       >
-        <strong style={{ color: "var(--text)" }}>Any protocol, any claim.</strong>{" "}
-        Each app below gates access on a different credential type — one read-only call to{" "}
+        <strong style={{ color: "var(--text)" }}>{t("anyProtocolNote")}</strong>{" "}
+        {t("anyProtocolBody")}{" "}
         <span className="mono" style={{ fontSize: "0.75rem" }}>
           ProofRegistry.is_verified
         </span>
-        . The protocol never sees the credential, the commitment, or the proof itself.
+        . {t("protocolNeverSees")}
       </div>
 
       {scVerified && (
@@ -316,8 +319,8 @@ function AppsInner() {
         >
           <IconCheck size={18} color="var(--accent)" stroke={2.5} />
           <span>
-            <strong>Verification complete.</strong>{" "}
-            <span className="muted">You were returned here from StellarCred automatically.</span>
+            <strong>{t("verificationComplete")}</strong>{" "}
+            <span className="muted">{t("returnedHere")}</span>
           </span>
         </div>
       )}
@@ -339,8 +342,8 @@ function AppsInner() {
           />
           <input
             type="text"
-            aria-label="Search apps by name, description, or tagline"
-            placeholder="Search apps by name, description, or tagline..."
+            aria-label={t("searchPlaceholder")}
+            placeholder={t("searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -393,7 +396,7 @@ function AppsInner() {
                 cursor: "pointer",
               }}
             >
-              Clear filters
+              {tc("clearFilters")}
             </button>
           )}
         </div>
@@ -405,9 +408,9 @@ function AppsInner() {
           style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
         >
           <IconSearch size={30} stroke={1.3} color="var(--faint)" />
-          <h3 style={{ margin: "1rem 0 0.4rem" }}>No apps match</h3>
+          <h3 style={{ margin: "1rem 0 0.4rem" }}>{t("noAppsMatch")}</h3>
           <p className="muted" style={{ fontSize: "0.875rem" }}>
-            Try adjusting your search or removing claim filters.
+            {t("noAppsMatchBody")}
           </p>
         </div>
       ) : (
@@ -432,11 +435,11 @@ function AppsInner() {
           lineHeight: 1.6,
         }}
       >
-        Go to{" "}
+        {t("goToWallet")}{" "}
         <Link href="/holder" style={{ color: "var(--muted)" }}>
-          Wallet
+          {tc("wallet")}
         </Link>{" "}
-        to generate proofs from your credentials, then return here to unlock access.
+        {t("toGenerateProofs")}
       </p>
     </>
   );

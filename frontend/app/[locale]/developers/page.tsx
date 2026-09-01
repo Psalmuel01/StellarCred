@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getTranslations } from "next-intl/server";
 import { CONTRACTS } from "@/lib/stellar";
 import CopyButton from "@/components/CopyButton";
 
@@ -71,35 +72,35 @@ const ADDRESSES: [string, string][] = [
   ["NEXT_PUBLIC_GATED_POOL_ID", CONTRACTS.gatedPool],
 ];
 
-export default function DevelopersPage() {
+export default async function DevelopersPage({
+  params,
+}: {
+  params: { locale: string };
+}) {
+  const t = await getTranslations({ locale: params.locale, namespace: "developers" });
   return (
     <div style={{ maxWidth: 760, margin: "0 auto" }}>
-      <span className="eyebrow">Developers</span>
-      <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Integrate StellarCred</h1>
+      <span className="eyebrow">{t("eyebrow")}</span>
+      <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>{t("title")}</h1>
       {/* <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.95rem", lineHeight: 1.6 }}>
         One contract call. No API keys. No data handling.{" "}
         <span style={{ color: "var(--accent)" }}>Verify once, trusted everywhere.</span>
       </p> */}
 
-      <Section title="How it works">
+      <Section title={t("howItWorks")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          StellarCred stores zero-knowledge proofs on Stellar. Your protocol
-          reads them with one contract call. No API keys, no backend, no data
-          handling — the only thing you trust is the on-chain{" "}
+          {t("howItWorksBody")}{" "}
           <span className="mono">ProofRegistry</span>.
         </p>
       </Section>
 
-      <Section title="Installation">
+      <Section title={t("installation")}>
         <Code>{`npm install @stellarcred/sdk`}</Code>
       </Section>
 
-      <Section title="Checking a claim">
+      <Section title={t("checkingAClaim")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          The primary call. Returns <span className="mono">true</span> if the
-          wallet has a valid, unexpired proof of the claim. For parameterised
-          claims (age, income, funds), pass <span className="mono">minThreshold</span> to
-          enforce the threshold on-chain — trustlessly.
+          {t("checkingAClaimBody")}
         </p>
         <Code>{`import { StellarCred } from "@stellarcred/sdk";
 
@@ -113,9 +114,9 @@ const ageOk = await StellarCred.hasClaim(wallet, "age", { minThreshold: 21 });
 const fundsOk = await StellarCred.hasClaim(wallet, "funds", { minThreshold: 50000 });`}</Code>
       </Section>
 
-      <Section title="Fetching all claims">
+      <Section title={t("fetchingAllClaims")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          Protocols that gate on multiple claims simultaneously benefit from fetching everything at once rather than making N separate <span className="mono">hasClaim</span> calls.
+          {t("fetchingAllClaimsBody")}
         </p>
         <Code>{`import { StellarCred } from "@stellarcred/sdk";
 
@@ -132,10 +133,9 @@ const claims = await StellarCred.getClaims(wallet);
 const canAccess = claims.kyc.verified && claims.age.verified;`}</Code>
       </Section>
 
-      <Section title="Configuration">
+      <Section title={t("configuration")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          Call <span className="mono">configure()</span> once at startup, or set env vars.
-          Both approaches work in Node.js, Next.js, and edge runtimes.
+          {t("configurationBody")}
         </p>
         <Code>{`import { StellarCred } from "@stellarcred/sdk";
 
@@ -151,13 +151,7 @@ StellarCred.configure({
 // STELLARCRED_RPC_URL=https://soroban-testnet.stellar.org
 // (also reads NEXT_PUBLIC_PROOF_REGISTRY_ID / NEXT_PUBLIC_RPC_URL)`}</Code>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7, marginTop: "1rem" }}>
-          A missing <span className="mono">registryId</span> doesn&rsquo;t throw &mdash;
-          it makes every <span className="mono">hasClaim</span>/
-          <span className="mono">getClaims</span> call silently return{" "}
-          <span className="mono">false</span>/<span className="mono">[]</span>, which can
-          look like &ldquo;nobody is verified&rdquo; instead of &ldquo;misconfigured.&rdquo;
-          Use <span className="mono">healthCheck()</span> to diagnose it directly (a dev-only
-          console warning also fires automatically the first time this happens).
+          {t("missingRegistryNote")}
         </p>
         <Code>{`const health = StellarCred.healthCheck();
 // { configured: false, registryId: false, rpcUrl: true, networkPassphrase: true,
@@ -167,11 +161,9 @@ if (!health.configured) console.error("StellarCred misconfigured:", health.missi
 // Or just: StellarCred.isConfigured() // boolean`}</Code>
       </Section>
 
-      <Section title="Redirecting users to verify">
+      <Section title={t("redirectingUsers")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          If a user hasn&rsquo;t verified yet, send them to StellarCred and get
-          them back automatically. Use <span className="mono">claimParams</span> to
-          customise thresholds.
+          {t("redirectingUsersBody")}
         </p>
         <Code>{`import { StellarCred } from "@stellarcred/sdk";
 
@@ -199,13 +191,7 @@ const fundsUrl = StellarCred.buildVerifyUrl({
 // sc_claims contains only the claim types issued in the current session.
 const verified = await StellarCred.hasClaim(wallet, "kyc");`}</Code>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7, marginTop: "1rem" }}>
-          <strong>The return URL params are untrusted hints, not a proof.</strong>{" "}
-          Nothing binds this redirect to your session &mdash; anyone can craft a
-          URL shaped exactly like a real one and open it. Use{" "}
-          <span className="mono">parseReturnParams</span> to read them, but
-          always re-verify with <span className="mono">hasClaim</span> against
-          the on-chain ProofRegistry (ideally server-side) before granting
-          access.
+          {t("returnUrlNote")}
         </p>
         <Code>{`import { StellarCred } from "@stellarcred/sdk";
 
@@ -231,7 +217,7 @@ if (hint.state !== expectedSessionNonce) {
 }`}</Code>
       </Section>
 
-      <Section title="Available claim types">
+      <Section title={t("availableClaimTypes")}>
         <table
           style={{
             width: "100%",
@@ -243,7 +229,7 @@ if (hint.state !== expectedSessionNonce) {
         >
           <thead>
             <tr>
-              {["Claim", "What it proves", "Issued by"].map((h) => (
+              {[t("claimHeader"), t("provesHeader"), t("issuedByHeader")].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -277,9 +263,9 @@ if (hint.state !== expectedSessionNonce) {
         </table>
       </Section>
 
-      <Section title="Contract addresses">
+      <Section title={t("contractAddresses")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          The deployed StellarCred contracts on{" "}
+          {t("contractAddressesBody")}{" "}
           <span className="mono">{process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet"}</span>.
         </p>
         <table
@@ -299,7 +285,7 @@ if (hint.state !== expectedSessionNonce) {
                 </td>
                 <td style={{ padding: "0.6rem 0.75rem", borderBottom: "1px solid var(--border)", color: "var(--muted)", wordBreak: "break-all" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <span>{value || "— not configured —"}</span>
+                    <span>{value || t("notConfigured")}</span>
                     {value && <CopyButton value={value} />}
                   </div>
                 </td>
@@ -309,16 +295,9 @@ if (hint.state !== expectedSessionNonce) {
         </table>
       </Section>
 
-      <Section title="Calling the contract directly">
+      <Section title={t("callingContractDirectly")}>
         <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
-          Prefer Soroban? Call ProofRegistry from your own contract — no SDK
-          required. Use <span className="mono">is_verified</span> for binary claims
-          and <span className="mono">check_claim</span> for threshold enforcement.
-          Both take a trailing <span className="mono">trusted_issuers</span>{" "}
-          parameter — pass <span className="mono">None</span> to accept a proof
-          from any registered issuer (unchanged default), or{" "}
-          <span className="mono">Some(vec![...])</span> to restrict a claim to
-          specific issuers, e.g. accepting KYC only from Persona or Jumio.
+          {t("callingContractDirectlyBody")}
         </p>
         <Code>{`// Binary claim (kyc, jurisdiction) — any registered issuer accepted
 let registry = ProofRegistryClient::new(&env, &registry_id);

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import {
   IconArrowRight,
   IconShieldCheck,
@@ -350,6 +351,7 @@ function CredRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DocsPage() {
+  const t = useTranslations("docs");
   const [active, setActive] = useState("overview");
   const [toc, setToc] = useState<TocItem[]>(INITIAL_TOC);
   const [filterQuery, setFilterQuery] = useState("");
@@ -512,14 +514,13 @@ export default function DocsPage() {
           }}
         >
           <IconShieldCheck size={12} stroke={2} />
-          Documentation
+          {t("documentation")}
         </span>
         <h1 style={{ marginBottom: "0.6rem", fontSize: "clamp(1.8rem, 3.5vw, 2.5rem)" }}>
-          About StellarCred
+          {t("aboutStellarCred")}
         </h1>
         <p className="lead" style={{ fontSize: "0.95rem" }}>
-          Zero-knowledge credential infrastructure on Stellar. Prove facts about
-          yourself without the data ever touching the chain.
+          {t("aboutDescription")}
         </p>
       </div>
 
@@ -565,8 +566,8 @@ export default function DocsPage() {
               />
               <input
                 type="search"
-                placeholder="Filter sections..."
-                aria-label="Filter documentation sections"
+                placeholder={t("documentation") + "..."}
+                aria-label={t("documentation")}
                 value={filterQuery}
                 onChange={(e) => handleFilterChange(e.target.value)}
                 onKeyDown={(e) => {
