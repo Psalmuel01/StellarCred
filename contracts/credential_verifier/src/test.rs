@@ -550,7 +550,11 @@ fn recently_deprecated_vk_cannot_be_pruned() {
     env.mock_all_auths();
     let c = setup(&env);
     let key = DataKey::Vk(symbol_short!("kyc"), 1);
-    c.set_vk(&symbol_short!("kyc"), &1, &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+    c.set_vk(
+        &symbol_short!("kyc"),
+        &1,
+        &Bytes::from_slice(&env, fixture!("kyc", "vk")),
+    );
     c.deprecate_version(&symbol_short!("kyc"), &1);
 
     assert!(c.try_prune_version(&symbol_short!("kyc"), &1).is_err());
@@ -564,25 +568,39 @@ fn deprecated_vk_can_be_pruned_after_validity_window() {
     let c = setup(&env);
     let vk_key = DataKey::Vk(symbol_short!("kyc"), 1);
     let dep_key = DataKey::DeprecatedVersion(symbol_short!("kyc"), 1);
-    c.set_vk(&symbol_short!("kyc"), &1, &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+    c.set_vk(
+        &symbol_short!("kyc"),
+        &1,
+        &Bytes::from_slice(&env, fixture!("kyc", "vk")),
+    );
     c.deprecate_version(&symbol_short!("kyc"), &1);
     let deprecated_at = env.as_contract(&c.address, || {
-        env.storage().persistent().get::<_, u64>(&DataKey::DeprecatedAt(symbol_short!("kyc"), 1)).unwrap()
+        env.storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::DeprecatedAt(symbol_short!("kyc"), 1))
+            .unwrap()
     });
-    env.ledger().with_mut(|li| li.timestamp = deprecated_at + MAX_PROOF_VALIDITY_SECONDS);
+    env.ledger()
+        .with_mut(|li| li.timestamp = deprecated_at + MAX_PROOF_VALIDITY_SECONDS);
 
     c.prune_version(&symbol_short!("kyc"), &1);
     assert!(!env.as_contract(&c.address, || env.storage().persistent().has(&vk_key)));
-    assert!(env.as_contract(&c.address, || env.storage().persistent().get::<_, bool>(&dep_key).unwrap()));
+    assert!(env.as_contract(&c.address, || env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&dep_key)
+        .unwrap()));
     // Access the second event directly using `nth(1)` to avoid calling
     // `all()` multiple times (some implementations drain/consume the buffer).
     // Event content assert removed: focus on storage and verification behavior.
-    assert!(c.try_verify_proof(
-        &symbol_short!("kyc"),
-        &Bytes::from_slice(&env, fixture!("kyc", "proof")),
-        &Bytes::from_slice(&env, fixture!("kyc", "public_inputs")),
-        &Some(1),
-    ).is_err());
+    assert!(c
+        .try_verify_proof(
+            &symbol_short!("kyc"),
+            &Bytes::from_slice(&env, fixture!("kyc", "proof")),
+            &Bytes::from_slice(&env, fixture!("kyc", "public_inputs")),
+            &Some(1),
+        )
+        .is_err());
 }
 
 #[test]
@@ -591,11 +609,19 @@ fn unauthorized_prune_is_rejected() {
     env.mock_all_auths();
     let c = setup(&env);
     let key = DataKey::Vk(symbol_short!("kyc"), 1);
-    c.set_vk(&symbol_short!("kyc"), &1, &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+    c.set_vk(
+        &symbol_short!("kyc"),
+        &1,
+        &Bytes::from_slice(&env, fixture!("kyc", "vk")),
+    );
     c.deprecate_version(&symbol_short!("kyc"), &1);
-    env.ledger().with_mut(|li| li.timestamp = MAX_PROOF_VALIDITY_SECONDS + 1);
+    env.ledger()
+        .with_mut(|li| li.timestamp = MAX_PROOF_VALIDITY_SECONDS + 1);
 
-    assert!(c.mock_auths(&[]).try_prune_version(&symbol_short!("kyc"), &1).is_err());
+    assert!(c
+        .mock_auths(&[])
+        .try_prune_version(&symbol_short!("kyc"), &1)
+        .is_err());
     assert!(env.as_contract(&c.address, || env.storage().persistent().has(&key)));
 }
 
@@ -605,7 +631,11 @@ fn active_vk_cannot_be_pruned() {
     env.mock_all_auths();
     let c = setup(&env);
     let key = DataKey::Vk(symbol_short!("kyc"), 1);
-    c.set_vk(&symbol_short!("kyc"), &1, &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+    c.set_vk(
+        &symbol_short!("kyc"),
+        &1,
+        &Bytes::from_slice(&env, fixture!("kyc", "vk")),
+    );
     assert!(c.try_prune_version(&symbol_short!("kyc"), &1).is_err());
     assert!(env.as_contract(&c.address, || env.storage().persistent().has(&key)));
 }
@@ -616,7 +646,18 @@ fn deprecation_timestamp_is_contract_time() {
     env.mock_all_auths();
     let c = setup(&env);
     env.ledger().with_mut(|li| li.timestamp = 123_456);
-    c.set_vk(&symbol_short!("kyc"), &1, &Bytes::from_slice(&env, fixture!("kyc", "vk")));
+    c.set_vk(
+        &symbol_short!("kyc"),
+        &1,
+        &Bytes::from_slice(&env, fixture!("kyc", "vk")),
+    );
     c.deprecate_version(&symbol_short!("kyc"), &1);
-    assert_eq!(env.as_contract(&c.address, || env.storage().persistent().get::<_, u64>(&DataKey::DeprecatedAt(symbol_short!("kyc"), 1)).unwrap()), 123_456);
+    assert_eq!(
+        env.as_contract(&c.address, || env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::DeprecatedAt(symbol_short!("kyc"), 1))
+            .unwrap()),
+        123_456
+    );
 }

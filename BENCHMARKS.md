@@ -180,6 +180,13 @@ proof verifier, which runs entirely via Soroban host-native functions (no extern
 5. **All fee estimates are below 0.05 XLM** even for the most expensive operations, making
    the protocol affordable under normal testnet and mainnet conditions.
 
+6. **`aggregate_funds_proof` has identical on-chain cost to `funds_proof`.** The 8-source
+   summation constraint (~30 extra ACIR opcodes) is resolved during browser-side proving,
+   not on-chain verification. The VK and on-chain verify path are unchanged — `submit_proof`
+   and `check_claim` cost the same regardless of whether the underlying circuit is
+   `funds_proof` or `aggregate_funds_proof`. The only measurable difference is browser proving
+   time, which increases by ~200–500ms (estimated) due to the additional summation constraints.
+
 ---
 
 ## How to reproduce

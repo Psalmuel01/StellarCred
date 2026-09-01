@@ -116,7 +116,10 @@ impl CredentialVerifier {
         if env
             .storage()
             .persistent()
-            .get::<_, bool>(&DataKey::DeprecatedVersion(credential_type.clone(), version))
+            .get::<_, bool>(&DataKey::DeprecatedVersion(
+                credential_type.clone(),
+                version,
+            ))
             .unwrap_or(false)
         {
             panic_with_error!(&env, Error::VersionDeprecated);
@@ -210,7 +213,10 @@ impl CredentialVerifier {
         if !env
             .storage()
             .persistent()
-            .get::<_, bool>(&DataKey::DeprecatedVersion(credential_type.clone(), version))
+            .get::<_, bool>(&DataKey::DeprecatedVersion(
+                credential_type.clone(),
+                version,
+            ))
             .unwrap_or(false)
         {
             panic_with_error!(&env, Error::VersionDeprecated);

@@ -24,6 +24,7 @@ signature verification** → **type-specific threshold or membership check**.
 | `kyc_proof`            | 582                | 1 blackbox¹    | 4              | ~577                      | —                 | Baseline proof circuit — no threshold. |
 | `income_proof`         | 588                | 1 blackbox¹    | 4              | ~577                      | ~6 (≥ comparison) | +6 opcodes vs kyc for `income ≥ threshold`. |
 | `funds_proof`          | 588                | 1 blackbox¹    | 4              | ~577                      | ~6 (≥ comparison) | Identical profile to income_proof. |
+| `aggregate_funds_proof`| ~618               | 1 blackbox¹    | 4              | ~577                      | ~36 (8× u64 add + ≥) | +30 vs funds_proof for 8-source unrolled sum. |
 | `accreditation_proof`  | 588                | 1 blackbox¹    | 4              | ~577                      | ~6 (≥ comparison) | Identical profile to income_proof. |
 | `age_proof`            | 601                | 1 blackbox¹    | 4              | ~577                      | ~19 (sub, div, ≥) | +19 vs kyc; division by 365 is the delta. |
 | `jurisdiction_proof`   | 607                | 1 blackbox¹    | 4              | ~577                      | ~25 (8 × ≠ loop) | +25 vs kyc; unrolled loop over 8 entries. |
@@ -41,6 +42,7 @@ Each row's column breakdown adds up to its stated total:
 | `kyc_proof`          | 1 + 4 + ~577 + 0                                           | 582   |
 | `income_proof`       | 1 + 4 + ~577 + ~6                                          | 588   |
 | `funds_proof`        | 1 + 4 + ~577 + ~6                                          | 588   |
+| `aggregate_funds_proof` | 1 + 4 + ~577 + ~36                                      | ~618  |
 | `accreditation_proof`| 1 + 4 + ~577 + ~6                                          | 588   |
 | `age_proof`          | 1 + 4 + ~577 + ~19                                         | 601   |
 | `jurisdiction_proof` | 1 + 4 + ~577 + ~25                                         | 607   |
@@ -155,6 +157,20 @@ constraints.
 **Finding:** Same as income_proof.
 
 **Optimization suggestion:** See `income_proof` — merge into generic threshold circuit.
+
+### `aggregate_funds_proof` — ~618 opcodes
+
+**Purpose:** Proves aggregate balance across multiple linked accounts ≥ threshold.
+
+**Structure:** funds_proof + 8× u64 addition (unrolled loop) + threshold comparison.
+
+**Finding:** +30 opcodes vs `funds_proof` for the 8-source unrolled summation. Each u64 addition costs ~3-4 opcodes (field arithmetic + range check). The dominant cost remains ECDSA verification (~30,000 backend gates). The 30 extra ACIR opcodes translate to negligible backend gate increase (~200 gates).
+
+**Optimization suggestion:**
+1. **Short-term (current design):** The 8-source unrolled loop is straightforward and matches the `jurisdiction_proof` pattern (unrolled iteration over a fixed-size array). At ~30 extra opcodes, the cost is well within the constraint budget.
+2. **Long-term (if >8 sources needed):** Consider a Merkle-tree aggregation where the prover commits to a root of individual balance commitments and proves inclusion + aggregation in-circuit. This would support an arbitrary number of sources with O(log n) constraint growth instead of O(n). However, this adds significant complexity and is only needed if the 8-source limit proves insufficient in practice.
+
+**Privacy note:** Individual balance values are private inputs — the circuit sums them in-constraint but never reveals components. The issuer computes the sum server-side and signs the aggregate commitment. Source identity data (account IDs, Plaid item tokens) never enters the circuit or on-chain state.
 
 ### `accreditation_proof` — 588 opcodes
 

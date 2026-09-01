@@ -131,6 +131,7 @@ auditable via the Soroban transaction ledger.
 | `age` | `symbol_short!("age")` | `threshold_years` (field 66) | Age >= N years. |
 | `income` | `symbol_short!("income")` | `threshold` (field 65) | Annual income >= N. |
 | `funds` | `symbol_short!("funds")` | `threshold` (field 65) | On-chain balance >= N. |
+| `aggregate_funds` | `Symbol::new(env, "aggregate_funds")` | `threshold` (field 65) | Aggregate balance across linked accounts >= N. |
 | `jurisdiction` | `Symbol::new(env, "jurisdiction")` | None | Permitted jurisdiction check. |
 | `accreditation` | `Symbol::new(env, "accreditation")` | `threshold` (field 65) | Accredited investor threshold. |
 

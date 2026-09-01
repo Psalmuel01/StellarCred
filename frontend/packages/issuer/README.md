@@ -49,9 +49,36 @@ Each call to `issue()` produces one independent credential — its own preimage,
 | `income` | `income` (numeric string) | income > threshold |
 | `jurisdiction` | `country_code` (numeric string) | country not restricted |
 | `funds` | `balance` (numeric string) | balance > threshold |
+| `aggregate_funds` | `balances` (array of numeric strings) | aggregate balance > threshold |
 | `accreditation` | `net_worth` (numeric string) | net worth ≥ threshold |
 
 `claimParams` (optional) controls the human-readable `claim` label and the threshold a downstream verifier checks against — e.g. `{ threshold_years: "21" }` for `age`, `{ threshold: "250000" }` for `income`/`funds`.
+
+### Aggregate Funds Issuance
+
+For `aggregate_funds`, the issuer fetches balances from multiple linked accounts (e.g. several Plaid items), sums them, and signs the aggregate commitment. The individual account IDs, Plaid item tokens, and source identities remain server-side — only the aggregate balance enters the credential.
+
+```ts
+const credential = await issuer.issue({
+  type: "aggregate_funds",
+  holder: "GABC...",
+  issuerId: "did:example:bank-issuer",
+  issuerName: "My Bank Aggregator",
+  expiry: Math.floor(Date.now() / 1000) + 31536000,
+  attribute: {
+    balances: ["20000", "35000", "15000"], // from linked accounts
+  },
+  claimParams: { threshold: "50000" },
+});
+
+// The issuer sums the balances internally:
+//   aggregate_balance = 20000 + 35000 + 15000 = 70000
+// Computes: commitment = Poseidon2([70000, salt], 2)
+// Signs the commitment with secp256k1
+// Returns the credential with the aggregate commitment and signature
+```
+
+**Privacy guarantee:** Individual balance values are never stored on-chain or revealed in the proof. The circuit proves the sum meets the threshold without exposing components. Source identity data (account IDs, Plaid references) never leaves the issuer server.
 
 ## API
 

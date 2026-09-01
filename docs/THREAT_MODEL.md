@@ -28,6 +28,7 @@ This document records the assets StellarCred protects, the trust boundaries it c
 | Compromised issuer key | Mint credentials for arbitrary holders or credential values. |
 | Network MITM | Alter API responses, redirect issuance flows, or tamper with proof submission traffic. |
 | Malicious issuer | Issue false credentials, violate policy, or attempt to register unauthorized keys. |
+| Source data manipulation | tamper with individual account balances before issuer aggregation (mitigated by issuer trust boundary). |
 
 ## Threats and Mitigations
 
@@ -40,6 +41,8 @@ This document records the assets StellarCred protects, the trust boundaries it c
 | Network MITM | Keep the browser/API and API/provider interactions on authenticated TLS channels, avoid exposing server-side secrets to the client, and treat all client inputs as attacker-controlled. |
 | Malicious issuer registers the wrong public key | `IssuerRegistry` is the sole on-chain trust root for issuer binding, so issuer registration is an administrative action and contracts reject issuers that are not registered with the expected credential types. |
 | Malicious protocol infers more than the verified claim | Protocols only receive the on-chain boolean or threshold result, not raw credential data. The public interface is intentionally limited to `is_verified` / `check_claim`. |
+| Aggregate funds source manipulation | The issuer is trusted to fetch and correctly aggregate balances from linked accounts before signing the commitment. Individual source data (account IDs, Plaid item tokens) never leaves the issuer server. The circuit proves aggregate >= threshold without revealing component balances. If the issuer is compromised, false aggregates can be signed — mitigated by issuer trust and key protection. |
+| Selective source disclosure after signing | The commitment binds the exact aggregate balance, preventing the prover from omitting sources or re-aggregating after the issuer signs. The issuer's signature over the commitment ensures the prover cannot inflate or deflate the balance without detection. |
 
 ## Residual Risks and Assumptions
 
@@ -48,6 +51,7 @@ This document records the assets StellarCred protects, the trust boundaries it c
 - TLS, DNS, and the user’s network path are assumed to be available and correctly configured; transport security reduces but does not eliminate MITM risk.
 - On-chain security assumes the Soroban chain and the deployed contracts execute as intended and that contract administration keys are protected separately from issuer keys.
 - Privacy depends on the implementation continuing to avoid server-side storage of identity fields beyond the minimum data needed for issuance.
+- For aggregate funds proofs, the issuer is trusted to fetch and correctly sum balances from all linked accounts. A compromised issuer could sign an inflated aggregate commitment. This is inherent to the trust model — the issuer attests to the aggregate, and the circuit proves knowledge of the preimage. Source-level balance data (account IDs, Plaid item references) must remain server-side and never be stored on-chain.
 
 ## Reviewer Checklist
 

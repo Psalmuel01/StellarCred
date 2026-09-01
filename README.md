@@ -92,6 +92,7 @@ circuits/               Noir circuits (UltraHonk · Noir 1.0.0-beta.9 / bb 0.87.
   income_proof/           "my income exceeds T" without revealing it
   jurisdiction_proof/     "my country is not restricted" without revealing it
   funds_proof/            "my balance exceeds T" without revealing it
+  aggregate_funds_proof/  "my combined balance across linked accounts exceeds T" without revealing individual sources
   scripts/build.sh        compile + prove + stage circuit JSON for the frontend
 fixtures/<type>/        real vk / proof / public_inputs per type (contract tests)
 frontend/               Next.js 14 app (App Router)
@@ -178,6 +179,7 @@ full reference.
 | `income`       | Income ≥ threshold           | Actual income             |
 | `jurisdiction` | Country not restricted       | Country code              |
 | `funds`        | Balance ≥ threshold          | Exact balance (from Plaid)|
+| `aggregate_funds` | Aggregate balance ≥ threshold | Individual account balances across linked sources |
 
 ---
 

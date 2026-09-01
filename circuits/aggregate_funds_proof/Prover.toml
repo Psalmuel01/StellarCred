@@ -1,0 +1,44 @@
+# Aggregate Funds Proof — test witness
+#
+# Demonstrates an aggregate balance across 3 linked accounts:
+#   Account 1: $20,000 (checking)
+#   Account 2: $35,000 (savings)
+#   Account 3: $15,000 (investment)
+#   ────────────────────────
+#   Aggregate:  $70,000
+#
+# Threshold: $50,000  →  70,000 >= 50,000  ✓
+
+# Individual balances (zero-padded beyond actual sources)
+balances = [
+    "20000",
+    "35000",
+    "15000",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+]
+
+# Random salt (field element)
+salt = "1234567890123456789012345678901234567890123456789012345678901234"
+
+# 64-byte secp256k1 ECDSA signature (r ‖ s) over the commitment
+# The witness generator computes this from the issuer's private key
+signature = [
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+    "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00", "0x00",
+]
+
+# Public inputs (provided by the issuer after aggregation)
+commitment = "0x0000000000000000000000000000000000000000000000000000000000000000"
+issuer_x = "0x0000000000000000000000000000000000000000000000000000000000000000"
+issuer_y = "0x0000000000000000000000000000000000000000000000000000000000000000"
+threshold = "50000"

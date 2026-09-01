@@ -339,4 +339,3 @@ fn withdraw_emits_event() {
     // Verify balance was updated
     assert_eq!(h.pool.get_balance(&user), 300);
 }
-

@@ -47,7 +47,7 @@
                       "symbol": "expiry"
                     },
                     "val": {
-                      "u64": "1000"
+                      "u64": "0"
                     }
                   },
                   {
@@ -61,7 +61,7 @@
                       "symbol": "revoked"
                     },
                     "val": {
-                      "bool": true
+                      "bool": false
                     }
                   },
                   {
@@ -76,6 +76,14 @@
                     },
                     "val": {
                       "u64": "100"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "vk_version"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   }
                 ]
@@ -123,6 +131,18 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "Paused"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "bool": false
                       }
                     },
                     {

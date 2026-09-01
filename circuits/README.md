@@ -48,6 +48,7 @@ To securely commit to human-readable attributes, issuers must map them to `Field
 - **Age (`age_proof`)**: The value is the holder's Date of Birth (DOB) represented as **days since the Unix epoch** (e.g., `Jan 1 1990` = `7305`).
 - **Income (`income_proof`)**: The value is the holder's annual income represented as a `u64` in whole currency units (e.g., whole USD).
 - **Funds (`funds_proof`)**: The value is the holder's account balance represented as a `u64` in whole currency units.
+- **Aggregate Funds (`aggregate_funds_proof`)**: The value is the sum of the holder's balances across multiple linked accounts represented as a `u64` in whole currency units. Individual account balances are private; only the aggregate is committed and proven.
 - **Accreditation (`accreditation_proof`)**: The value is the holder's net worth represented as a `u64` in whole currency units.
 - **Jurisdiction (`jurisdiction_proof`)**: The value is the country of residence represented as its **ISO 3166-1 numeric** code (e.g., US = `840`, IR = `364`, KP = `408`). Unused slots in a restricted list are padded with `0`.
 
@@ -88,6 +89,31 @@ The following tables define the ABI order of public inputs for each credential c
 | 1 | `issuer_x` | `[u8; 32]` | Issuer secp256k1 public key X coordinate |
 | 2 | `issuer_y` | `[u8; 32]` | Issuer secp256k1 public key Y coordinate |
 | 3 | `threshold` | `u64` | Minimum required account balance |
+
+### `aggregate_funds_proof`
+
+Proves that the sum of balances across multiple linked accounts meets or exceeds a threshold, without revealing individual account balances. The issuer aggregates balances server-side (e.g. from several Plaid items) and signs the commitment to the aggregate.
+
+| Index | Name | Type | Description |
+|-------|------|------|-------------|
+| 0 | `commitment` | `Field` | `Poseidon2([aggregate_balance, salt], 2)` where `aggregate_balance` is the sum of all linked account balances |
+| 1 | `issuer_x` | `[u8; 32]` | Issuer secp256k1 public key X coordinate |
+| 2 | `issuer_y` | `[u8; 32]` | Issuer secp256k1 public key Y coordinate |
+| 3 | `threshold` | `u64` | Minimum required aggregate balance across all sources |
+
+**Private inputs** (not on-chain, never revealed):
+
+| Name | Type | Description |
+|------|------|-------------|
+| `balances` | `[u64; 8]` | Individual account balances, zero-padded beyond actual sources |
+| `salt` | `Field` | Random field element for commitment hiding |
+| `signature` | `[u8; 64]` | secp256k1 ECDSA signature (r ‖ s) over the commitment |
+
+**Design notes:**
+- The commitment binds the prover to the exact aggregate balance, preventing selective disclosure or re-aggregation after signing.
+- Individual source identities (account IDs, Plaid item IDs) remain server-side and are never stored on-chain or in the circuit.
+- The issuer fetches balances from each linked account, sums them, computes the Poseidon2 commitment, and signs it — the circuit then proves knowledge of the preimage and the issuer's attestation.
+- Supported by up to 8 balance sources per aggregate commitment (zero-padded in the witness).
 
 ### `accreditation_proof`
 | Index | Name | Type | Description |
