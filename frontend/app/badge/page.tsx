@@ -10,11 +10,26 @@ function BadgeContent() {
   const searchParams = useSearchParams();
   const wallet = searchParams.get("wallet") || "";
   const claim = searchParams.get("claim") || searchParams.get("type") || "kyc";
-  const theme = searchParams.get("theme") || "dark";
+  // "auto" (the default) matches the host page's OS-level color scheme —
+  // this badge is meant to be embedded via <iframe> on someone else's site,
+  // so it has no way to see *that* page's own light/dark toggle, but
+  // matching the visitor's OS preference is the closest reasonable default.
+  // Matches buildBadgeUrl(), which only sets ?theme= for an explicit choice.
+  const theme = searchParams.get("theme") || "auto";
   const isCompact = searchParams.get("compact") === "1" || searchParams.get("compact") === "true";
 
   const [verified, setVerified] = useState<boolean | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [prefersDark, setPrefersDark] = useState(false);
+
+  useEffect(() => {
+    if (theme !== "auto" || typeof window === "undefined") return;
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    setPrefersDark(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [theme]);
 
   useEffect(() => {
     if (!wallet) {
@@ -47,7 +62,7 @@ function BadgeContent() {
     };
   }, [wallet, claim]);
 
-  const isDark = theme === "dark" || (theme === "auto" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const isDark = theme === "dark" || (theme === "auto" && prefersDark);
 
   const bgColor = isDark ? "#0d1117" : "#f8fafc";
   const textColor = isDark ? "#f1f5f9" : "#0f172a";
@@ -77,6 +92,7 @@ function BadgeContent() {
         alignItems: "center",
         justifyContent: "flex-start",
         background: "transparent",
+        overflow: "hidden",
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
@@ -96,6 +112,8 @@ function BadgeContent() {
           display: "inline-flex",
           alignItems: "center",
           gap: isCompact ? "0.45rem" : "0.6rem",
+          minWidth: 0,
+          maxWidth: "100%",
           padding: isCompact ? "0.3rem 0.55rem" : "0.45rem 0.75rem",
           background: bgColor,
           color: textColor,
@@ -106,8 +124,17 @@ function BadgeContent() {
           fontSize: isCompact ? "0.75rem" : "0.82rem",
           userSelect: "none",
           cursor: "pointer",
+          boxSizing: "border-box",
         }}
       >
+        <img
+          src={isDark ? "/brand/mark-dark.svg" : "/brand/mark-light.svg"}
+          alt=""
+          width={isCompact ? 14 : 16}
+          height={isCompact ? 14 : 16}
+          style={{ flexShrink: 0 }}
+        />
+
         <div
           style={{
             display: "flex",
@@ -138,15 +165,36 @@ function BadgeContent() {
           )}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-            <span style={{ fontWeight: 600 }}>StellarCred</span>
-            <span style={{ color: faintColor }}>·</span>
-            <span style={{ fontWeight: 500, color: faintColor }}>{claimText}</span>
+        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2, minWidth: 0, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", minWidth: 0, overflow: "hidden" }}>
+            <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              StellarCred
+            </span>
+            <span style={{ color: faintColor, flexShrink: 0 }}>·</span>
+            <span
+              style={{
+                fontWeight: 500,
+                color: faintColor,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {claimText}
+            </span>
           </div>
 
           {!isCompact && (
-            <div style={{ fontSize: "0.68rem", color: faintColor, marginTop: "0.1rem" }}>
+            <div
+              style={{
+                fontSize: "0.68rem",
+                color: faintColor,
+                marginTop: "0.1rem",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {loading ? (
                 "Checking on-chain..."
               ) : verified ? (
@@ -166,14 +214,16 @@ function BadgeContent() {
 
 export default function BadgePage() {
   return (
-    <Suspense
-      fallback={
-        <div style={{ padding: "0.5rem", fontSize: "0.75rem", color: "#888" }}>
-          Loading verification badge...
-        </div>
-      }
-    >
-      <BadgeContent />
-    </Suspense>
+    <div id="stellarcred-embed-root" style={{ width: "100%", height: "100%" }}>
+      <Suspense
+        fallback={
+          <div style={{ padding: "0.5rem", fontSize: "0.75rem", color: "#888" }}>
+            Loading verification badge...
+          </div>
+        }
+      >
+        <BadgeContent />
+      </Suspense>
+    </div>
   );
 }

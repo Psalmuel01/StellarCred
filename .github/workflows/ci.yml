@@ -323,6 +323,186 @@ jobs:
           STELLARCRED_REGISTRY_ID: ${{ vars.STELLARCRED_REGISTRY_ID }}
           STELLARCRED_RPC_URL: ${{ vars.STELLARCRED_RPC_URL || 'https://soroban-testnet.stellar.org' }}
 
+  cli:
+    name: CLI typecheck, tests & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/packages/sdk/pnpm-lock.yaml
+            frontend/packages/cli/pnpm-lock.yaml
+
+      # stellarcred is a standalone package outside the frontend pnpm
+      # workspace, depending on @stellarcred/sdk via a local `link:` path —
+      # same reasoning as the middleware job below.
+      - name: Install and build SDK
+        working-directory: frontend/packages/sdk
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+
+      - name: Install CLI
+        working-directory: frontend/packages/cli
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: frontend/packages/cli
+        run: pnpm typecheck
+
+      - name: Test
+        working-directory: frontend/packages/cli
+        run: pnpm test
+
+      - name: Build
+        working-directory: frontend/packages/cli
+        run: pnpm build
+
+      - name: Smoke test
+        working-directory: frontend/packages/cli
+        run: |
+          node dist/cli.js --help
+          node dist/cli.js verify-url --return-url "https://example.com/vault" --claim kyc
+
+  middleware:
+    name: Middleware typecheck & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/packages/sdk/pnpm-lock.yaml
+            frontend/packages/middleware/pnpm-lock.yaml
+
+      # @stellarcred/middleware is a standalone package outside the frontend
+      # pnpm workspace, depending on @stellarcred/sdk via a local `link:`
+      # path — so unlike the frontend/sdk-integration jobs above, it can't
+      # rely on hoisting from a `frontend` workspace install and needs its
+      # own install (and the SDK it links to needs to be built first).
+      - name: Install and build SDK
+        working-directory: frontend/packages/sdk
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+
+      - name: Install middleware
+        working-directory: frontend/packages/middleware
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: frontend/packages/middleware
+        run: pnpm typecheck
+
+      - name: Test
+        working-directory: frontend/packages/middleware
+        run: pnpm test
+
+  sdk-docs:
+    name: SDK API docs (TypeDoc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same pattern as the sdk-integration job above: @stellarcred/sdk is a
+      # standalone publish-only package outside the pnpm workspace, so its
+      # script runs from its own directory but resolves shared devDependencies
+      # (typedoc, typescript) hoisted from this workspace root install.
+      - name: Build API reference
+        working-directory: frontend/packages/sdk
+        run: pnpm docs:api
+
+      - name: Upload API reference artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-api-docs
+          path: frontend/packages/sdk/docs/api
+          retention-days: 7
+
+  sdk-docs-deploy:
+    name: Publish SDK API docs to GitHub Pages
+    needs: sdk-docs
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build API reference
+        working-directory: frontend/packages/sdk
+        run: pnpm docs:api
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/packages/sdk/docs/api
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   a11y:
     name: Accessibility (axe-core)
     runs-on: ubuntu-latest

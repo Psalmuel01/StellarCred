@@ -116,6 +116,18 @@ body {
   min-height: 100dvh;
 }
 
+/* Embed routes (e.g. /badge) render bare — see AppChrome — but still inherit
+   this stylesheet, so the site's opaque background + dot-grid would
+   otherwise show through a third-party iframe instead of blending with the
+   host page. `:has()` targets the wrapper the embedded page itself renders
+   (see BadgePage) without needing route-specific body classes. */
+html:has(#stellarcred-embed-root),
+body:has(#stellarcred-embed-root) {
+  background: transparent;
+  background-image: none;
+  min-height: 0;
+}
+
 ::selection {
   background: var(--accent-soft);
   color: var(--accent);

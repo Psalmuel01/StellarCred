@@ -11,17 +11,22 @@ npm install @stellarcred/sdk
 ```
 ## API Reference
 
-Generate the SDK API documentation locally:
+Full API reference, generated from this package's TSDoc comments, is published at:
+
+**[doosewayo.github.io/StellarCred](https://doosewayo.github.io/StellarCred/)**
+
+It's rebuilt automatically on every push to `main` (see `.github/workflows/ci.yml`,
+`sdk-docs` / `sdk-docs-deploy` jobs), so it always matches the code on the
+default branch.
+
+To generate it locally instead:
 
 ```bash
 pnpm docs:api
 ```
 
-The generated documentation is written to:
-
-```
-docs/api/
-```
+This writes static HTML to `docs/api/` (git-ignored — it's a build artifact,
+not committed).
 ## Quick start
 
 ```ts

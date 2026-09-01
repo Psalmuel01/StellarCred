@@ -7,6 +7,9 @@ node_modules
 .next
 dist
 
+# Generated TypeDoc API reference (built by CI, published to GitHub Pages)
+frontend/packages/sdk/docs/api
+
 # Local settings
 .soroban
 .stellar

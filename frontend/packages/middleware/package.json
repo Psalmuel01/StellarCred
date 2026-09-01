@@ -1,0 +1,77 @@
+{
+  "name": "@stellarcred/middleware",
+  "version": "0.1.0",
+  "description": "Express and Next.js middleware that gates a request on StellarCred claims — reuses @stellarcred/sdk's batched claim check, timeouts, and fail-soft error taxonomy.",
+  "license": "MIT",
+  "author": "Samuel Dahunsi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Psalmuel01/StellarCred",
+    "directory": "frontend/packages/middleware"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "zk",
+    "credentials",
+    "middleware",
+    "express",
+    "next.js"
+  ],
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.mjs",
+      "require": "./dist/express.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.mjs",
+      "require": "./dist/next.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/express.ts src/next.ts --format cjs,esm --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "express": ">=4",
+    "next": ">=13"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@stellarcred/sdk": "link:../sdk"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20",
+    "express": "^4.21.2",
+    "next": "^14.2.15",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.1.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

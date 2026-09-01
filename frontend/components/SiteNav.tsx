@@ -19,14 +19,14 @@ function ShieldIcon() {
     <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
       <path
         d="M11 2.5L4 5.5v5.25c0 4.97 3.253 9.63 7 10.75 3.747-1.12 7-5.78 7-10.75V5.5L11 2.5z"
-        fill="rgba(62,207,142,0.12)"
-        stroke="#3ecf8e"
+        fill="var(--accent-soft)"
+        stroke="var(--accent)"
         strokeWidth="1.4"
         strokeLinejoin="round"
       />
       <path
         d="M8 11.2l2.1 2.1 4-4"
-        stroke="#3ecf8e"
+        stroke="var(--accent)"
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"

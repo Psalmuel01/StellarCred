@@ -1,8 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
-import { SiteNav } from "@/components/SiteNav";
-import { NetworkBanner } from "@/components/NetworkBanner";
+import { AppChrome } from "@/components/AppChrome";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
@@ -52,9 +51,6 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <a href="#main-content" className="skip-link">
-          Skip to main content
-        </a>
         <ToastProvider>
           <WalletProvider>
             <SiteNav />

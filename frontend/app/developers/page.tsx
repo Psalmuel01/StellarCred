@@ -335,6 +335,23 @@ let kyc_ok = registry.check_claim(&holder, &symbol_short!("kyc"), &None, &Some(t
 require!(kyc_ok, Error::KycRequired);`}</Code>
       </Section>
 
+      <Section title="Full API reference">
+        <p className="muted" style={{ fontSize: "0.95rem", lineHeight: 1.7 }}>
+          Every export, type, and option above — generated from the SDK&rsquo;s
+          TSDoc comments and rebuilt on every push to <span className="mono">main</span>,
+          so it always matches the published package.
+        </p>
+        <a
+          href="https://doosewayo.github.io/StellarCred/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-secondary"
+          style={{ marginTop: "0.75rem", display: "inline-flex" }}
+        >
+          Browse API reference
+        </a>
+      </Section>
+
       <div style={{ height: "4rem" }} />
     </div>
   );

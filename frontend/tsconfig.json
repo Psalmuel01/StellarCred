@@ -28,6 +28,14 @@
     // the app typecheck; they are typechecked by the SDK's own toolchain.
     "packages/sdk/test",
     "packages/sdk/vitest.config.ts",
+    // @stellarcred/middleware and stellarcred (packages/middleware, packages/cli)
+    // are standalone packages outside this pnpm workspace, each with its own
+    // tsconfig/toolchain and peer deps (express, next/server, commander, tsup)
+    // that aren't installed here — same reasoning as the sdk exclusions above,
+    // but for their whole `src/`, not just tests, since (unlike the SDK) their
+    // main source itself doesn't type-check against this workspace's deps.
+    "packages/middleware",
+    "packages/cli",
     // Node built-in test runner suite (pnpm test:theme), not part of app tsc.
     "lib/theme.test.ts"
   ]
