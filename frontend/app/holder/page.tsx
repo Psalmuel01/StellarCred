@@ -56,6 +56,8 @@ import CredentialDetailModal from "@/components/CredentialDetailModal";
 import { useToast } from "@/components/Toast";
 
 import { IMPORT_PARAM } from "@/lib/transfer";
+import { enqueueProof, queuedProofCount, flushQueuedProofs, queuedProofs } from "@/lib/offline-queue";
+import { IconWifi, IconWifiOff, IconClock } from "@tabler/icons-react";
 
 // The encrypted-transfer modals are heavy (crypto.ts PBKDF2/AES-GCM, QR
 // rendering) and only needed when the user actually starts a transfer — load
@@ -328,6 +330,75 @@ function HolderInner() {
 
   useEffect(() => setCreds(loadCredentials()), []);
 
+  // ── Online status (PWA) ────────────────────────────────────────────────────
+  // The holder page must work offline (issue #413): when the browser fires
+  // 'offline' we keep showing the cached credentials (already in localStorage
+  // and rendered above) and surface a status banner. Proving still requires
+  // the network for witness + RPC, so proof submissions attempted while
+  // offline are queued and flushed on 'online'.
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // Persist a counter so the status banner can show "N pending submissions".
+  // Read on mount; updated whenever the queue changes (enqueue / flush).
+  const [queueDepth, setQueueDepth] = useState<number>(queuedProofCount());
+
+  // Flush queued submissions as soon as the browser reports connectivity.
+  // Each intent is regenerated from the local credential storage (proof
+  // bytes and secrets never entered persistent storage — the queue only
+  // carried the commitment + metadata, see lib/offline-queue.ts).
+  useEffect(() => {
+    if (!isOnline || queueDepth === 0) return;
+    const intents = queuedProofs();
+    const creds = loadCredentials();
+    const byCommitment = new Map(creds.map((c) => [c.commitment, c]));
+    void (async () => {
+      for (const intent of intents) {
+        const cred = byCommitment.get(intent.commitment);
+        if (!cred) {
+          // Credential was removed while offline — drop the stale intent.
+          await enqueueProof(intent);
+          continue;
+        }
+        try {
+          const { proof, publicInputs } = await import("@/lib/proof").then((m) =>
+            m.generateProof(cred.type, cred as unknown as Record<string, unknown>),
+          );
+          const txHash = await submitProof({
+            holder: intent.holder,
+            issuerId: intent.issuerId,
+            credentialType: intent.credentialType,
+            proof,
+            publicInputs,
+            ttlSecs: intent.ttlSecs,
+          });
+          markProved(intent.commitment, txHash);
+        } catch {
+          // Leave the intent in the queue for the next reconnect.
+          return;
+        }
+      }
+      await flushQueuedProofs(async () => undefined);
+      setQueueDepth(queuedProofCount());
+      setCreds(loadCredentials());
+    })();
+    // We only want this to fire on the (isOnline) edge; queueDepth is
+    // re-read at the end so subsequent reconnects with a new queue size
+    // trigger another flush.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, queueDepth]);
+
   // Cross-tab sync: listen for storage events from other tabs
   useEffect(() => {
     if (!isStorageAvailable()) return;
@@ -475,6 +546,33 @@ function HolderInner() {
 
       <ConfigBanner />
 
+      {/* Offline status: credentials remain available from local encrypted-at-rest
+          storage; only network-dependent proof generation/submission waits. */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="card"
+        style={{
+          marginBottom: "1.5rem",
+          padding: "0.7rem 1rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.55rem",
+          color: isOnline ? "var(--faint)" : "var(--warn)",
+          borderColor: isOnline ? "var(--border)" : "rgba(234,179,8,0.35)",
+        }}
+      >
+        {isOnline ? <IconWifi size={15} /> : <IconWifiOff size={15} />}
+        <span style={{ fontSize: "0.8rem" }}>
+          {isOnline
+            ? queueDepth > 0
+              ? `Back online — flushing ${queueDepth} queued submission${queueDepth === 1 ? "" : "s"}...`
+              : "Online — credentials are available offline from this device"
+            : "Offline — cached credentials remain available; proof submissions will queue"}
+        </span>
+        {queueDepth > 0 && <IconClock size={14} style={{ marginLeft: "auto" }} />}
+      </div>
+
       {isPreview && (
         <div
           style={{
@@ -505,6 +603,8 @@ function HolderInner() {
           holder={address}
           onBack={() => setView({ kind: "list" })}
           onProved={(txHash) => setCreds(markProved(view.cred.commitment, txHash))}
+          onQueued={() => setQueueDepth(queuedProofCount())}
+          isOnline={isOnline}
         />
       ) : view.kind === "batch" ? (
         <BatchProofFlow
@@ -945,11 +1045,15 @@ function ProofFlow({
   holder,
   onBack,
   onProved,
+  onQueued,
+  isOnline,
 }: {
   cred: Credential;
   holder: string;
   onBack: () => void;
   onProved: (txHash: string) => void;
+  onQueued: () => void;
+  isOnline: boolean;
 }) {
   const { networkMismatch } = useWallet();
   const [stage, setStage] = useState<Stage>("witness");
@@ -1064,6 +1168,18 @@ function ProofFlow({
   }, [stage]);
   async function onSubmit() {
     if (!proof || networkMismatch) return;
+    if (!isOnline) {
+      await enqueueProof({
+        holder,
+        issuerId: cred.issuerId,
+        credentialType: cred.type,
+        commitment: cred.commitment,
+        ttlSecs: credTtlSecs(cred),
+      });
+      onQueued();
+      toast.info("Submission queued — it will flush when you reconnect.");
+      return;
+    }
     setStage("submitting");
     addEvent("submitted");
     toast.info(`Submitting proof for ${cred.title} to Stellar…`);

@@ -6,6 +6,16 @@ import { NetworkBanner } from "@/components/NetworkBanner";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+
+export const metadata: Metadata = {
+  title: "StellarCred — Prove anything. Reveal nothing.",
+  description:
+    "Zero-knowledge credentials on Stellar. Prove facts about yourself without the data ever touching the chain.",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#3ecf8e",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "StellarCred" },
+};
 
 const body = Inter({
   subsets: ["latin"],
@@ -24,12 +34,6 @@ const mono = JetBrains_Mono({
   weight: ["400", "500"],
   variable: "--font-mono",
 });
-
-export const metadata: Metadata = {
-  title: "StellarCred — Prove anything. Reveal nothing.",
-  description:
-    "Zero-knowledge credentials on Stellar. Prove facts about yourself without the data ever touching the chain.",
-};
 
 export default function RootLayout({
   children,
@@ -54,6 +58,7 @@ export default function RootLayout({
         <a href="#main-content" className="skip-link">
           Skip to main content
         </a>
+        <ServiceWorkerRegister />
         <ToastProvider>
           <WalletProvider>
             <SiteNav />
