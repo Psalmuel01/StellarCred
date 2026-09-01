@@ -60,6 +60,9 @@ function makeConfig(sqlitePath: string): Config {
     rateLimitWindowMs: 60000,
     rateLimitMax: 120,
     rateLimitEnabled: true,
+    webhookUrls: [],
+    webhookSecret: undefined,
+    webhookTimeoutMs: 5000,
   };
 }
 

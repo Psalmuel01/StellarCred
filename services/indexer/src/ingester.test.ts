@@ -13,6 +13,7 @@ import { createIngester } from "./ingester";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
+import type { ClaimRow } from "./db";
 import { xdr } from "@stellar/stellar-sdk";
 
 import os from "os";
@@ -34,6 +35,13 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     startLedger: 0,
     port: 3001,
     finalityLag: 6,
+    corsOrigins: [],
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 120,
+    rateLimitEnabled: true,
+    webhookUrls: [],
+    webhookSecret: undefined,
+    webhookTimeoutMs: 1_000,
     corsOrigins: ["http://localhost:3000"],
     rateLimitWindowMs: 60000,
     rateLimitMax: 120,
@@ -60,9 +68,16 @@ function fakeEvent(opts: {
   sourceAccount?: string;
   txHash?: string;
 }) {
+  // Horizon returns topics as base64-encoded XDR ScVals; encode plain
+  // symbol strings the same way the real contract events look.
+  const { xdr } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
   return {
     paging_token: `${opts.ledger * 100_000}`,
     contract_id: "CTEST",
+    topic: opts.topic.map((t) =>
+      xdr.ScVal.scvSymbol(t).toXDR("base64")
+    ),
+    value: opts.value,
     topic: ["proof", "verified"].map((s) =>
       scValBase64(xdr.ScVal.scvSymbol(s))
     ),
@@ -319,6 +334,15 @@ describe("Ingester reconcile", () => {
     const a1 = db.claimsByWallet("GA1");
     expect(a1).toHaveLength(1);
 
+    // GA2 was deleted (ledger 20 > 15), but the mock re-emits its event at
+    // ledger 25 (within ceiling 44), so it gets re-indexed at ledger 25.
+    const a2 = (await db.claimsByWallet("GA2")) as ClaimRow[];
+    expect(a2).toHaveLength(1);
+    expect(a2[0].ledger_sequence).toBe(25);
+    const a3 = await db.claimsByWallet("GA3");
+    expect(a3).toHaveLength(0);
+
+    // Cursor advanced to 25 after re-indexing the event at ledger 25.
     // GA3 (ledger 30, above the reorg point) is deleted by the rollback…
     const a3 = db.claimsByWallet("GA3");
     expect(a3).toHaveLength(0);

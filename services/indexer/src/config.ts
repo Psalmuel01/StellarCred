@@ -26,6 +26,15 @@ export interface Config {
   rateLimitWindowMs: number;
   rateLimitMax: number;
   rateLimitEnabled: boolean;
+  /**
+   * Outbound webhook endpoints that receive verification/revocation events.
+   * Empty array = webhook delivery disabled.
+   */
+  webhookUrls: string[];
+  /** Shared secret for the HMAC-SHA256 signature header. Undefined = unsigned. */
+  webhookSecret: string | undefined;
+  /** Per-attempt timeout for webhook POSTs (ms). */
+  webhookTimeoutMs: number;
 }
 
 function required(name: string): string {
@@ -36,6 +45,18 @@ function required(name: string): string {
 
 function optional(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
+}
+
+/**
+ * Parse a comma-separated list of webhook endpoint URLs.
+ * Empty/undefined input → empty array (delivery disabled).
+ */
+export function parseWebhookUrls(raw?: string): string[] {
+  if (!raw || raw.trim() === "") return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && /^https?:\/\//.test(s));
 }
 
 export function parseCorsOrigins(raw?: string): string[] {
@@ -68,6 +89,10 @@ export function loadConfig(): Config {
   const rateLimitEnabled =
     optional("RATE_LIMIT_ENABLED", "true").toLowerCase() !== "false";
 
+  const rawWebhooks =
+    process.env["WEBHOOK_URLS"] ?? process.env["WEBHOOK_URL"];
+  const webhookTimeoutMs = Number(optional("WEBHOOK_TIMEOUT_MS", "5000"));
+
   return {
     stellarNetwork: optional("STELLAR_NETWORK", "testnet"),
     horizonUrl: optional(
@@ -88,5 +113,11 @@ export function loadConfig(): Config {
     rateLimitWindowMs: (Number.isFinite(windowSec) && windowSec > 0 ? windowSec : 60) * 1000,
     rateLimitMax: Number.isFinite(maxReq) && maxReq > 0 ? maxReq : 120,
     rateLimitEnabled,
+    webhookUrls: parseWebhookUrls(rawWebhooks),
+    webhookSecret: process.env["WEBHOOK_SECRET"] || undefined,
+    webhookTimeoutMs:
+      Number.isFinite(webhookTimeoutMs) && webhookTimeoutMs > 0
+        ? webhookTimeoutMs
+        : 5_000,
   };
 }
