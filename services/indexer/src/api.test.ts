@@ -11,7 +11,7 @@ import { buildApp } from "./api";
 import { createSqliteDb } from "./db";
 import type { Db } from "./db";
 import type { Config } from "./config";
-import type { Ingester, IngesterHealth } from "./ingester";
+import type { Ingester, IngesterHealth, IngesterMetrics } from "./ingester";
 
 import os from "os";
 import path from "path";
@@ -34,12 +34,21 @@ function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
     fetchFailures: 0,
     ...overrides,
   };
+  const metrics: IngesterMetrics = {
+    eventsProcessedTotal: 0,
+    fetchErrorsTotal: 0,
+    uptimeSeconds: 0,
+    dbWriteLatencySeconds: 0,
+    lag: -1,
+    ...overrides,
+  };
   return {
     tick: async () => 0,
     reconcile: async () => 0,
     start: () => {},
     stop: () => {},
     getHealth: () => ({ ...health }),
+    getMetrics: () => ({ ...metrics }),
   };
 }
 
