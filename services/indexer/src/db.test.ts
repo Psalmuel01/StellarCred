@@ -21,7 +21,7 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { createDb, type ClaimRow, type Db } from "./db";
+import { createDb, type ClaimInput, type Db } from "./db";
 import type { Config } from "./config";
 
 // Connection used by the Postgres leg. In CI this is provided by the
@@ -53,7 +53,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
   } as Config;
 }
 
-function makeClaim(overrides: Partial<ClaimRow> = {}): ClaimRow {
+function makeClaim(overrides: Partial<ClaimInput> = {}): ClaimInput {
   return {
     wallet: "GALICE",
     credential_type: "kyc",
@@ -178,22 +178,33 @@ function registerSuite(
 
     it("recent returns non-revoked claims newest-first with pagination", async () => {
       await db.upsertClaim(
-        makeClaim({ credential_type: "kyc", verified_at: 100, wallet: "GA" }),
+        makeClaim({ credential_type: "kyc", ledger_sequence: 100, wallet: "GA" }),
       );
       await db.upsertClaim(
-        makeClaim({ credential_type: "age", verified_at: 300, wallet: "GB" }),
+        makeClaim({ credential_type: "age", ledger_sequence: 300, wallet: "GB" }),
       );
       await db.upsertClaim(
-        makeClaim({ credential_type: "income", verified_at: 200, wallet: "GC" }),
+        makeClaim({ credential_type: "income", ledger_sequence: 200, wallet: "GC" }),
+      );
+      await db.upsertClaim(
+        makeClaim({ credential_type: "funds", ledger_sequence: 150, wallet: "GD" }),
       );
       // Revoked claims never appear in recent.
       await db.revokeClaim("GA", "kyc");
 
-      const firstPage = await db.recent(2, 0);
-      expect(firstPage.map((r) => r.credential_type)).toEqual(["age", "income"]);
+      // First page: newest (highest ledger) first, revoked claim excluded.
+      const firstPage = await db.recent(2, null);
+      expect(firstPage.claims.map((r) => r.credential_type)).toEqual([
+        "age",
+        "income",
+      ]);
+      expect(firstPage.nextCursor).not.toBeNull();
 
-      const secondPage = await db.recent(2, 2);
-      expect(secondPage).toHaveLength(0); // the revoked kyc is excluded
+      // Second page via the keyset cursor: the revoked kyc is still excluded,
+      // so only funds remains and the cursor is exhausted.
+      const secondPage = await db.recent(2, firstPage.nextCursor);
+      expect(secondPage.claims.map((r) => r.credential_type)).toEqual(["funds"]);
+      expect(secondPage.nextCursor).toBeNull();
     });
 
     it("deleteClaimsAfter rolls back un-final claims", async () => {
