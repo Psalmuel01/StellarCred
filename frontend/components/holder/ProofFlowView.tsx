@@ -8,6 +8,7 @@ import {
   IconCpu,
   IconCloudUpload,
   IconAlertTriangle,
+  IconLoader2,
 } from "@tabler/icons-react";
 import { NetworkMismatchBanner } from "@/components/NetworkMismatchBanner";
 import CopyButton from "@/components/CopyButton";
@@ -23,7 +24,7 @@ import { ProofStep } from "./ProofStep";
 import { ProofProgress, ProvingBar, AnimatedDots, toHex } from "./ProgressWidgets";
 
 const ESTIMATES: Record<string, { range: string; expected: number; max: number }> = {
-  default: { range: "~10-20 seconds", expected: 15, max: 20 },
+  default: { range: "~10–20 seconds", expected: 15, max: 20 },
 };
 
 export function ProofFlowView({
@@ -45,7 +46,7 @@ export function ProofFlowView({
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const { stage, proof, txHash, error, errorPhase, elapsed, onSubmit, onRetrySubmit } = useProofFlow(cred, submitFn);
+  const { stage, proof, txHash, error, errorPhase, fee, elapsed, onSubmit, doSignAndSubmit, onRetrySubmit } = useProofFlow(cred, submitFn);
 
   // Focus management
   useEffect(() => {
@@ -63,7 +64,13 @@ export function ProofFlowView({
   }, [stage]);
 
   const handleSubmit = async () => {
-    const hash = await onSubmit(holder, networkMismatch);
+    // First click: run preflight simulation
+    await onSubmit(holder, networkMismatch);
+  };
+
+  const handleSignAndSubmit = async () => {
+    // Second click after preflight passed: sign and submit
+    const hash = await doSignAndSubmit(holder, networkMismatch);
     if (hash) onProved(hash);
   };
 
@@ -73,7 +80,7 @@ export function ProofFlowView({
   };
 
   const isGenerating = stage === "witness" || stage === "proving" || stage === "circuit" || stage === "proof";
-  const proofDone = stage === "generated" || stage === "submitting" || stage === "confirmed";
+  const proofDone = stage === "generated" || stage === "preflight" || stage === "readyToSign" || stage === "submitting" || stage === "confirmed";
   const submitDone = stage === "confirmed";
 
   return (
@@ -109,9 +116,9 @@ export function ProofFlowView({
                   <ProvingBar progress={Math.min((elapsed / ESTIMATES.default.expected) * 80, 80)} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                      {elapsed > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual..." :
-                       stage === "witness" ? "Generating witness..." :
-                       elapsed < 2 ? "Loading circuit..." : "Proving..."}
+                      {elapsed > ESTIMATES.default.max * 1.5 ? "Taking a bit longer than usual…" :
+                       stage === "witness" ? "Generating witness…" :
+                       elapsed < 2 ? "Loading circuit…" : "Proving…"}
                     </span>
                     <span className="mono" style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
                       {elapsed} s elapsed
@@ -130,13 +137,13 @@ export function ProofFlowView({
                     ]} />
                   </div>
                   <span style={{ fontSize: "0.72rem", color: "var(--faint)" }}>
-                    First run loads the WASM prover (~5-15 s)
+                    First run loads the WASM prover (~5–15 s)
                   </span>
                 </div>
               ) : proofDone && proof ? (
                 <div style={{ marginTop: "0.4rem" }}>
                   <span className="mono" style={{ fontSize: "0.75rem", color: "var(--accent)" }}>
-                    &pi; {truncateHash("0x" + toHex(proof.proof))}
+                    π {truncateHash("0x" + toHex(proof.proof))}
                   </span>
                   <span className="mono faint" style={{ fontSize: "0.72rem", marginLeft: "0.5rem" }}>
                     {proof.proof.length.toLocaleString()} bytes
@@ -149,14 +156,26 @@ export function ProofFlowView({
           <ProofStep
             icon={<IconCloudUpload size={14} stroke={1.8} />}
             title="Submit to Stellar"
-            subtitle="ProofRegistry.submit_proof &middot; wallet signature"
+            subtitle="ProofRegistry.submit_proof · wallet signature"
             state={
-              stage === "submitting" ? "active" :
-              submitDone ? "done" : "idle"
+              stage === "preflight" || stage === "readyToSign" || stage === "submitting"
+                ? "active"
+                : submitDone ? "done" : "idle"
             }
             last
             detail={
-              stage === "submitting" ? (
+              stage === "preflight" ? (
+                <AnimatedDots text="Running preflight simulation" style={{ marginTop: "0.35rem" }} />
+              ) : stage === "readyToSign" ? (
+                <div className="row" style={{ gap: "0.5rem", marginTop: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--accent)", fontWeight: 500 }}>
+                    Estimated fee: {fee?.display ?? "—"}
+                  </span>
+                  <span className="faint" style={{ fontSize: "0.72rem" }}>
+                    Simulation passed — ready to sign
+                  </span>
+                </div>
+              ) : stage === "submitting" ? (
                 <AnimatedDots text="Writing to ProofRegistry" style={{ marginTop: "0.35rem" }} />
               ) : submitDone ? (
                 <div className="row" style={{ gap: "0.5rem", marginTop: "0.3rem", alignItems: "center" }}>
@@ -178,35 +197,68 @@ export function ProofFlowView({
         </div>
 
         {/* CTA */}
-        {stage === "generated" && (
+        {(stage === "generated" || stage === "preflight" || stage === "readyToSign") && (
           <>
             {networkMismatch && (
               <div style={{ marginTop: "1.5rem" }}>
                 <NetworkMismatchBanner />
               </div>
             )}
-            <button
-              className="btn btn-primary"
-              ref={submitButtonRef}
-              style={{
-                marginTop: networkMismatch ? 0 : "1.5rem",
-                width: "100%",
-                opacity: networkMismatch ? 0.5 : 1,
-                cursor: networkMismatch ? "not-allowed" : "pointer",
-              }}
-              onClick={handleSubmit}
-              disabled={networkMismatch || !proofSubmissionConfigured()}
-              title={
-                networkMismatch
-                  ? "Switch your wallet to the correct network to submit"
-                  : !proofSubmissionConfigured()
-                    ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
-                    : undefined
-              }
-            >
-              Submit to Stellar
-              <IconArrowRight size={15} />
-            </button>
+            {stage === "preflight" ? (
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: networkMismatch ? 0 : "1.5rem", width: "100%", opacity: 0.7, cursor: "progress" }}
+                disabled
+              >
+                <IconLoader2 size={15} className="spin" /> Running preflight simulation…
+              </button>
+            ) : stage === "readyToSign" ? (
+              <button
+                className="btn btn-primary"
+                ref={submitButtonRef}
+                style={{
+                  marginTop: networkMismatch ? 0 : "1.5rem",
+                  width: "100%",
+                  opacity: networkMismatch ? 0.5 : 1,
+                  cursor: networkMismatch ? "not-allowed" : "pointer",
+                }}
+                onClick={handleSignAndSubmit}
+                disabled={networkMismatch || !proofSubmissionConfigured()}
+                title={
+                  networkMismatch
+                    ? "Switch your wallet to the correct network to submit"
+                    : !proofSubmissionConfigured()
+                      ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                      : undefined
+                }
+              >
+                Sign & submit{fee ? ` (${fee.display})` : ""}
+                <IconArrowRight size={15} />
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                ref={submitButtonRef}
+                style={{
+                  marginTop: networkMismatch ? 0 : "1.5rem",
+                  width: "100%",
+                  opacity: networkMismatch ? 0.5 : 1,
+                  cursor: networkMismatch ? "not-allowed" : "pointer",
+                }}
+                onClick={handleSubmit}
+                disabled={networkMismatch || !proofSubmissionConfigured()}
+                title={
+                  networkMismatch
+                    ? "Switch your wallet to the correct network to submit"
+                    : !proofSubmissionConfigured()
+                      ? "App not configured — NEXT_PUBLIC_PROOF_REGISTRY_ID missing"
+                      : undefined
+                }
+              >
+                Submit to Stellar
+                <IconArrowRight size={15} />
+              </button>
+            )}
           </>
         )}
 
@@ -229,9 +281,11 @@ export function ProofFlowView({
                 ? "Proof timed out"
                 : errorPhase === "proving"
                   ? "Proof generation failed"
-                  : errorPhase === "submitting"
-                    ? "Submission failed — proof is ready to retry"
-                    : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
+                  : errorPhase === "preflight"
+                    ? "Submission blocked before signing"
+                    : errorPhase === "submitting"
+                      ? "Submission failed — proof is ready to retry"
+                      : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>
@@ -263,6 +317,17 @@ export function ProofFlowView({
                   </pre>
                 )}
               </div>
+            )}
+            {/* Preflight failed — offer override to sign & submit anyway */}
+            {errorPhase === "preflight" && proof && (
+              <button
+                className="btn btn-ghost"
+                style={{ marginTop: "1rem", width: "100%" }}
+                onClick={handleSignAndSubmit}
+              >
+                Sign & submit anyway
+                <IconArrowRight size={15} />
+              </button>
             )}
             {errorPhase === "submitting" && proof && (
               <button

@@ -40,6 +40,7 @@ export function BatchProofFlowView({
     batchStage,
     txHash,
     batchError,
+    batchFee,
     blockedByNetwork,
   } = useBatchProofFlow(creds, holder, networkMismatch, onProved);
 
@@ -102,7 +103,7 @@ export function BatchProofFlowView({
         <ProofStep
           icon={<IconCloudUpload size={14} stroke={1.8} />}
           title="Submit batch to Stellar"
-          subtitle={`ProofRegistry.submit_proofs \u00b7 ${creds.length} credentials \u00b7 single Freighter signature`}
+          subtitle={`ProofRegistry.submit_proofs · ${creds.length} credentials · single Freighter signature`}
           state={
             isSubmitting ? "active" :
             isConfirmed ? "done" : "idle"
@@ -110,7 +111,16 @@ export function BatchProofFlowView({
           last
           detail={
             isSubmitting ? (
-              <AnimatedDots text="Writing all proofs to ProofRegistry" style={{ marginTop: "0.35rem" }} />
+              <div style={{ marginTop: "0.35rem" }}>
+                <AnimatedDots
+                  text={batchFee ? "Writing all proofs to ProofRegistry" : "Running preflight simulation"}
+                />
+                {batchFee && (
+                  <span style={{ fontSize: "0.72rem", color: "var(--accent)", marginLeft: "0.5rem", fontWeight: 500 }}>
+                    Estimate · {batchFee.display}
+                  </span>
+                )}
+              </div>
             ) : isConfirmed ? (
               <div className="row" style={{ gap: "0.5rem", marginTop: "0.3rem", alignItems: "center" }}>
                 <a

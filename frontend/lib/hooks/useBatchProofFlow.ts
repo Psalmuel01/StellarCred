@@ -12,7 +12,14 @@ import { useEffect, useRef, useState } from "react";
 import type { Credential } from "../credential";
 import { proofSubmissionConfigured } from "../config";
 import { computeWitness, proveWithBackend } from "../proof";
-import { submitProofs, parseContractError, type ContractError, type ProofSubmissionParams } from "../contracts";
+import {
+  submitProofs,
+  preflightSubmitProofs,
+  parseContractError,
+  type ContractError,
+  type FeeEstimate,
+  type ProofSubmissionParams,
+} from "../contracts";
 import { credTtlSecs } from "../proof-helpers";
 import { addTimelineEvent } from "../useProofTimeline";
 import { useToast } from "@/components/Toast";
@@ -38,6 +45,8 @@ export function useBatchProofFlow(
   const [batchStage, setBatchStage] = useState<BatchStage>("generating");
   const [txHash, setTxHash] = useState("");
   const [batchError, setBatchError] = useState<ContractError | null>(null);
+  /** Estimated fee reported by the batch preflight simulation. */
+  const [batchFee, setBatchFee] = useState<FeeEstimate | null>(null);
   const toast = useToast();
   const generatedProofs = useRef<Array<{ proof: Uint8Array; publicInputs: Uint8Array } | null>>(
     creds.map(() => null),
@@ -54,7 +63,7 @@ export function useBatchProofFlow(
   // overloading the WASM worker pool.
   useEffect(() => {
     let cancelled = false;
-    toast.info(`Generating ${creds.length} proofs...`);
+    toast.info(`Generating ${creds.length} proofs…`);
 
     (async () => {
       for (let i = 0; i < creds.length; i++) {
@@ -140,8 +149,7 @@ export function useBatchProofFlow(
 
   // ── Auto-submit when all proofs are ready ──────────────────────────────────
   // Fires once when every credential has status "ready" and the wallet is on
-  // the correct network. Re-fires if networkMismatch clears (no separate retry
-  // button needed).
+  // the correct network. Includes a preflight simulation before submission.
   const allReady =
     batchStage === "generating" &&
     credStates.length > 0 &&
@@ -170,23 +178,37 @@ export function useBatchProofFlow(
     });
 
     currentCreds.forEach((cred) => addTimelineEvent(cred.commitment, "submitted"));
-    toast.info(`Submitting ${currentCreds.length} proofs to Stellar...`);
 
-    submitProofs({ holder: currentHolder, submissions })
-      .then((hash: string) => {
+    // Stage 1 — preflight simulation: catch a doomed batch before a wallet
+    // signature is spent.
+    setBatchFee(null);
+    toast.info(`Simulating batch of ${currentCreds.length} proofs…`);
+    (async () => {
+      const preflight = await preflightSubmitProofs({ holder: currentHolder, submissions });
+      if (!preflight.ok) {
+        setBatchError(preflight.error);
+        setBatchStage("error");
+        toast.error(`Batch submission blocked — ${preflight.error.friendly}`);
+        return;
+      }
+      setBatchFee(preflight.fee);
+
+      // Stage 2 — simulation succeeded, sign and submit.
+      try {
+        const hash = await submitProofs({ holder: currentHolder, submissions });
         setTxHash(hash);
         const commitments = currentCreds.map((c) => c.commitment);
         onProvedRef.current(hash, commitments);
         setBatchStage("confirmed");
         currentCreds.forEach((cred) => addTimelineEvent(cred.commitment, "verified", { txHash: hash }));
         toast.success(`Confirmed ${currentCreds.length} proofs on-chain`, { txHash: hash });
-      })
-      .catch((e: unknown) => {
+      } catch (e) {
         const parsed = parseContractError((e as Error).message);
         setBatchError(parsed);
         setBatchStage("error");
         toast.error(`Batch submission failed: ${parsed.friendly}`);
-      });
+      }
+    })();
   }, [allReady, networkMismatch, toast]); // eslint-disable-line react-hooks/exhaustive-deps -- allReady is the trigger; refs avoid stale closures
 
   return {
@@ -194,6 +216,7 @@ export function useBatchProofFlow(
     batchStage,
     txHash,
     batchError,
+    batchFee,
     blockedByNetwork,
   };
 }

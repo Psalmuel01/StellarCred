@@ -4,7 +4,7 @@
  * useProofFlow — manages the state machine for a single credential's
  * proof generation and submission lifecycle.
  *
- * Stages: idle -> witness -> circuit -> proof -> generated -> submitting -> confirmed | error
+ * Stages: idle → witness → circuit → proof → generated → preflight → readyToSign → submitting → confirmed | error
  *
  * No exhaustive-deps hacks: every effect dependency is explicit and minimal.
  */
@@ -13,7 +13,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Credential } from "../credential";
 
 import { computeWitness, proveWithBackend, withTimeout, ProofTimeoutError, DEFAULT_PROOF_TIMEOUT_MS } from "../proof";
-import { submitProof as defaultSubmitProof, parseContractError, type ContractError } from "../contracts";
+import {
+  submitProof as defaultSubmitProof,
+  preflightSubmitProof,
+  parseContractError,
+  type ContractError,
+  type FeeEstimate,
+} from "../contracts";
 import { credTtlSecs } from "../proof-helpers";
 import { useProofTimeline } from "../useProofTimeline";
 import { useToast } from "@/components/Toast";
@@ -25,11 +31,13 @@ export type Stage =
   | "proof"
   | "proving"
   | "generated"
+  | "preflight"
+  | "readyToSign"
   | "submitting"
   | "confirmed"
   | "error";
 
-export type ErrorPhase = "proving" | "submitting" | "timeout" | null;
+export type ErrorPhase = "proving" | "preflight" | "submitting" | "timeout" | null;
 
 /** Custom submission function signature — injected by the page for sponsored mode. */
 export type SubmitFn = (params: {
@@ -51,6 +59,8 @@ export function useProofFlow(
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState<ContractError | null>(null);
   const [errorPhase, setErrorPhase] = useState<ErrorPhase>(null);
+  /** Estimated on-chain fee reported by the preflight simulation. */
+  const [fee, setFee] = useState<FeeEstimate | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toast = useToast();
@@ -76,9 +86,10 @@ export function useProofFlow(
     setTxHash("");
     setError(null);
     setErrorPhase(null);
+    setFee(null);
     setElapsed(0);
 
-    toast.info(`Generating proof for ${cred.title}...`);
+    toast.info(`Generating proof for ${cred.title}…`);
 
     (async () => {
       try {
@@ -158,14 +169,56 @@ export function useProofFlow(
     };
   }, [cred]); // eslint-disable-line react-hooks/exhaustive-deps -- cred is the sole trigger; addEvent/toast are stable refs
 
-  // ── Submission ─────────────────────────────────────────────────────────────
+  // ── Preflight simulation ─────────────────────────────────────────────────
+  // Runs a Soroban preflight so a doomed submission is caught before the
+  // wallet signature is requested. On success, surfaces the fee estimate.
 
-  const onSubmit = useCallback(
+  const onPreflight = useCallback(
+    async (holder: string) => {
+      if (!proof || !cred) return;
+      setError(null);
+      setErrorPhase(null);
+      setFee(null);
+      setStage("preflight");
+      addEvent("preflight");
+      try {
+        const preflight = await preflightSubmitProof({
+          holder,
+          issuerId: cred.issuerId,
+          credentialType: cred.type,
+          proof: proof.proof,
+          publicInputs: proof.publicInputs,
+          ttlSecs: credTtlSecs(cred),
+        });
+        if (!preflight.ok) {
+          setError(preflight.error);
+          setErrorPhase("preflight");
+          setStage("error");
+          toast.error(`Submission blocked — ${preflight.error.friendly}`);
+          return;
+        }
+        setFee(preflight.fee);
+        setStage("readyToSign");
+      } catch (e) {
+        const parsed = parseContractError((e as Error).message);
+        setError(parsed);
+        setErrorPhase("preflight");
+        setStage("error");
+        toast.error(`Preflight simulation failed: ${parsed.friendly}`);
+      }
+    },
+    [proof, cred, addEvent, toast],
+  );
+
+  // ── Sign and submit ─────────────────────────────────────────────────────
+  // Only reached after the preflight simulation succeeded (or user override).
+
+  const doSignAndSubmit = useCallback(
     async (holder: string, networkMismatch: boolean) => {
       if (!proof || !cred || networkMismatch) return;
       setStage("submitting");
       addEvent("submitted");
-      toast.info(`Submitting proof for ${cred.title} to Stellar...`);
+      toast.info(`Submitting proof for ${cred.title} to Stellar…`);
       try {
         const hash = await submitFn({
           holder,
@@ -192,13 +245,30 @@ export function useProofFlow(
     [proof, cred, submitFn, addEvent, toast],
   );
 
+  // ── Combined: preflight → sign ───────────────────────────────────────────
+  // Convenience for the "Submit to Stellar" button (before preflight is run).
+
+  const onSubmit = useCallback(
+    async (holder: string, _networkMismatch: boolean) => {
+      await onPreflight(holder);
+    },
+    [onPreflight],
+  );
+
+  // Retry submission without re-proving when the proof already exists.
+
   const onRetrySubmit = useCallback(
     async (holder: string, networkMismatch: boolean) => {
       setError(null);
       setErrorPhase(null);
-      return onSubmit(holder, networkMismatch);
+      if (fee) {
+        // Already passed preflight; skip straight to signing.
+        return doSignAndSubmit(holder, networkMismatch);
+      }
+      // No fee cached; run preflight then sign.
+      await onPreflight(holder);
     },
-    [onSubmit],
+    [fee, doSignAndSubmit, onPreflight],
   );
 
   const reset = useCallback(() => {
@@ -207,6 +277,7 @@ export function useProofFlow(
     setTxHash("");
     setError(null);
     setErrorPhase(null);
+    setFee(null);
     setElapsed(0);
   }, []);
 
@@ -216,8 +287,11 @@ export function useProofFlow(
     txHash,
     error,
     errorPhase,
+    fee,
     elapsed,
     onSubmit,
+    onPreflight,
+    doSignAndSubmit,
     onRetrySubmit,
     reset,
   };
