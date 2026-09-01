@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload redacted E2E log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stellarcred-e2e-log
           path: e2e.log
