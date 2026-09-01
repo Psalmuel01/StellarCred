@@ -22,7 +22,7 @@ jobs:
       group: stellarcred-e2e-testnet
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust and wasm target
         uses: dtolnay/rust-toolchain@stable
