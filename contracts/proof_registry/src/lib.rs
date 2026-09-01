@@ -354,6 +354,14 @@ impl ProofRegistry {
         );
     }
 
+    /// One event is emitted per successfully verified credential.
+    /// Topics: ("proof_reg", "submitted", credential_type)
+    /// Data:   EventProofSubmitted { holder, issuer, verified_at, expiry }
+    // NOTE: We suppress the deprecation warning for `env.events().publish` here.
+    // The idiomatic Soroban v26 replacement is to define a typed event struct using the
+    // `#[contractevent]` macro; however, since the existing codebase uniformly uses the
+    // value-based `publish` API, we maintain consistency with other modules to avoid
+    // introducing architectural mismatch.
     /// Batch submission - one event per credential.
     #[allow(deprecated)]
     pub fn submit_proofs(
@@ -672,6 +680,8 @@ impl ProofRegistry {
         }
     }
 
+    /// Returns the stored `ProofRecord` as-is (no validity computation), or `None`
+    /// if absent. Pure read: does not extend TTL.
     pub fn get_record(env: Env, holder: Address, credential_type: Symbol) -> Option<ProofRecord> {
         env.storage()
             .persistent()
@@ -790,6 +800,7 @@ impl ProofRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
 
         if raw_map.len() == 4 {
+            // Legacy 4-field record — safe to deserialise as LegacyProofRecord.
             let legacy: LegacyProofRecord = env.storage().persistent().get(&key).unwrap();
 
             let record = ProofRecord {
@@ -813,6 +824,7 @@ impl ProofRegistry {
         Self::issuer_registry(&env)
     }
 
+    /// Extract the numeric threshold from the proof's public inputs.
     fn validate_expiry(env: &Env, expiry: u64) {
         let now = env.ledger().timestamp();
         if expiry <= now {
@@ -848,6 +860,15 @@ impl ProofRegistry {
             b[i as usize] = public_inputs.get(base + 24 + i).unwrap_or(0);
         }
         u64::from_be_bytes(b)
+    }
+    fn validate_expiry(env: &Env, expiry: u64) {
+        let now = env.ledger().timestamp();
+        if expiry <= now {
+            panic_with_error!(env, Error::InvalidExpiry);
+        }
+        if expiry > now.saturating_add(MAX_CREDENTIAL_TTL_SECS) {
+            panic_with_error!(env, Error::InvalidExpiry);
+        }
     }
 
     /// True iff the secp256k1 public key embedded in `public_inputs` (fields

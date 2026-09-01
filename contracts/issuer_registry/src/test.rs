@@ -401,6 +401,7 @@ fn metadata_name_over_limit_panics() {
     client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
 
     // name = 65 bytes, one over the 64-byte limit.
+    client.set_issuer_metadata(&issuer, &Some(str_of_len(&env, 65)), &None, &None);
     client.set_issuer_metadata(
         &issuer,
         &Some(str_of_len(&env, 65)),
@@ -421,6 +422,7 @@ fn metadata_url_over_limit_panics() {
     client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
 
     // url = 257 bytes, one over the 256-byte limit.
+    client.set_issuer_metadata(&issuer, &None, &Some(str_of_len(&env, 257)), &None);
     client.set_issuer_metadata(
         &issuer,
         &None,
@@ -441,6 +443,7 @@ fn metadata_logo_over_limit_panics() {
     client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
 
     // logo = 257 bytes, one over the 256-byte limit.
+    client.set_issuer_metadata(&issuer, &None, &None, &Some(str_of_len(&env, 257)));
     client.set_issuer_metadata(
         &issuer,
         &None,

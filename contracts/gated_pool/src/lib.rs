@@ -11,6 +11,8 @@
 //! the demo self-contained; swap in a token client for production.
 
 use soroban_sdk::{
+    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error, Address,
+    Env, Symbol, Vec,
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
     symbol_short, Address, Env, Symbol, Vec,
 };
