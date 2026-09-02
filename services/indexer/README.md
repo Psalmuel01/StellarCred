@@ -8,11 +8,17 @@ The indexer continuously polls Soroban contract events emitted by `ProofRegistry
 
 ## Features
 
-- **Soroban Contract Event Ingestion**: Monitors ledger events (`submitted`, `revoked`) and maintains verified claim state per wallet.
+- **Soroban Contract Event Ingestion**: Monitors ledger events (`submitted`, `revoked`, `paused`, `unpaused`) according to the authoritative [EVENTS.md](../../EVENTS.md) schema and maintains verified claim state per wallet.
 - **Pluggable Database Storage**: Supports SQLite (for local development and single-instance deployments) and PostgreSQL (for production multi-instance deployments).
 - **CORS Policy**: Configurable origin allowlisting (`CORS_ORIGIN` / `CORS_ALLOWED_ORIGINS`) with secure default-deny in production.
 - **Per-IP Rate Limiting**: Built-in fixed-window rate limiting responding with HTTP `429 Too Many Requests` and `Retry-After` headers.
 - **Zero Identity Exposure**: Ingests and stores only public on-chain commitments and verification metadata. No user identity fields are stored or processed.
+
+---
+
+## Contract Events Reference
+
+For the authoritative specification of all contract events, topic tuples, payload structures, and drift-prevention guarantees across all StellarCred contracts, see [EVENTS.md](../../EVENTS.md) (or [docs/EVENTS.md](../../docs/EVENTS.md)).
 
 ---
 
@@ -87,13 +93,21 @@ Returns aggregated claim counts grouped by credential type.
 }
 ```
 
-### 4. `GET /recent?limit=20&page=1`
-Returns recent active (non-revoked) verified claims. Supports pagination via `limit` (max 100) and `page`.
+### 4. `GET /recent?limit=20&cursor=<opaque>`
+Returns recent active (non-revoked) verified claims, newest first.
+
+Pagination is **keyset (cursor) based** — ordered by `(ledger_sequence, id)` and
+driven by the opaque `nextCursor` returned with each page, so the feed stays
+stable (no duplicates or skipped rows) while new claims are ingested between
+requests, and there is no OFFSET skip cost on large tables. Omit `cursor` for
+the first page; a `null` `nextCursor` means there are no more claims. `limit`
+(default `20`, clamped to a max of `100`) controls the page size.
+
 ```json
 {
   "claims": [...],
   "limit": 20,
-  "page": 1
+  "nextCursor": "MTA6MTI="
 }
 ```
 

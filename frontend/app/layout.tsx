@@ -8,6 +8,7 @@ import { Footer } from "@/components/Footer";
 import { LocaleMetaTags } from "@/components/LocaleMetaTags";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
+import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 
 const body = Inter({
@@ -65,6 +66,7 @@ export default function RootLayout({
           <WalletProvider>
             <SiteNav />
             <NetworkBanner />
+            <OnboardingWizard />
             <main id="main-content" tabIndex={-1} className="container">
               {children}
             </main>

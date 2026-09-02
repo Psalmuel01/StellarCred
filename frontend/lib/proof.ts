@@ -76,6 +76,13 @@ export function withTimeout<T>(
   });
 }
 
+/** The compiled Noir circuit artifact emitted by circuits/scripts/build.sh to
+ * /public/circuits/<type>.json.
+ */
+export interface CircuitArtifact {
+  bytecode: string;
+}
+
 export interface GeneratedProof {
   /** Raw proof bytes (456 fields × 32 = 14592 bytes), as the contract expects. */
   proof: Uint8Array;
@@ -163,7 +170,7 @@ async function buildBackend(type: CredentialType): Promise<Backend> {
       `Compiled circuit "${type}" not found. Run the circuit build to emit /public/circuits/${type}.json.`,
     );
   }
-  const circuit = (await circuitRes.json()) as { bytecode: string };
+  const circuit = (await circuitRes.json()) as CircuitArtifact;
   const { UltraHonkBackend } = await loadBb();
   return new UltraHonkBackend(circuit.bytecode, backendOptions());
 }
@@ -219,6 +226,14 @@ export async function destroyBackend(type: CredentialType): Promise<void> {
     // Construction itself failed, or destroy() threw -- either way there's
     // nothing left to clean up.
   }
+}
+
+// Reports whether a backend for `type` is already cached (or warming in
+// flight). Used by proof telemetry (lib/proof-perf.ts) to distinguish cold
+// vs. warm prove timings so the debug view can separate first-run costs from
+// expected reuse.
+export function isProverWarm(type: CredentialType): boolean {
+  return backendCache.has(type);
 }
 
 // Destroys every cached backend. Intended for page unmount / navigating away
