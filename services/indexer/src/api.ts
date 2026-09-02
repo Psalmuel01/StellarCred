@@ -19,13 +19,13 @@
  *         consecutiveErrors, fetchAttempts, fetchFailures }
  *
  *   GET /claims?wallet=G…
- *     → { wallet: string, claims: ClaimRow[] }
+ *     → { wallet: string, claims: SerializedClaim[] }
  *
  *   GET /stats
  *     → { stats: StatsRow[] }
  *
  *   GET /recent?limit=20&cursor=<opaque>
- *     → { claims: ClaimRow[], limit: number, nextCursor: string | null }
+ *     → { claims: SerializedClaim[], limit: number, nextCursor: string | null }
  *
  *   GET /issuers/:issuer/stats
  *     → { issuer, total, active, revoked, credential_types: string[], first_seen: number | null }
@@ -38,6 +38,22 @@
  *
  * All responses are JSON. No write endpoints exist.
  * No identity fields are stored, so all data here is public chain data.
+ *
+ * SerializedClaim response schema (pinned by tests in api.test.ts, identical
+ * across both DB_DRIVER backends — see serializeClaim below):
+ *
+ *   id               number   insertion cursor; the /recent tiebreaker
+ *   wallet           string
+ *   credential_type  string
+ *   issuer           string
+ *   verified_at      number   unix seconds
+ *   expiry           number   unix seconds
+ *   ledger_sequence  number
+ *   threshold        number | null
+ *   revoked          number   0 or 1 — intentionally not a boolean; this is
+ *                             the shape existing consumers (SDK/UI) already
+ *                             code against, so it's pinned as-is rather than
+ *                             changed to avoid a breaking wire-format change.
  */
 
 import express, {
@@ -46,7 +62,7 @@ import express, {
   NextFunction,
   RequestHandler,
 } from "express";
-import type { Db } from "./db";
+import type { Db, ClaimRow } from "./db";
 import type { Ingester } from "./ingester";
 import type { Config } from "./config";
 import { parseCorsOrigins } from "./config";
@@ -56,6 +72,47 @@ import type { RecentCursor } from "./db";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+
+// ── Response schema (#349) ──────────────────────────────────────────────────
+//
+// `ClaimRow` (db.ts) is the internal row shape the two DB adapters happen to
+// hand back — on Postgres, `pg` parses BIGINT columns (id, verified_at,
+// expiry, ledger_sequence, threshold) as strings by default to avoid silent
+// precision loss, while better-sqlite3 hands back plain JS numbers for the
+// same INTEGER columns. Left unhandled, a consumer coding against one
+// backend's shape breaks against the other's. `serializeClaim` is the one
+// place that boundary gets normalized, and its explicit field list also
+// means a future internal-only column added to the `claims` table can't
+// leak into the API response by accident the way a bare `...row` spread
+// would allow.
+
+/** The wire shape every claim-bearing endpoint (/claims, /recent) returns. */
+export interface SerializedClaim {
+  id: number;
+  wallet: string;
+  credential_type: string;
+  issuer: string;
+  verified_at: number;
+  expiry: number;
+  ledger_sequence: number;
+  threshold: number | null;
+  /** 0 or 1 — see the module doc comment for why this isn't a boolean. */
+  revoked: number;
+}
+
+export function serializeClaim(row: ClaimRow): SerializedClaim {
+  return {
+    id: Number(row.id),
+    wallet: row.wallet,
+    credential_type: row.credential_type,
+    issuer: row.issuer,
+    verified_at: Number(row.verified_at),
+    expiry: Number(row.expiry),
+    ledger_sequence: Number(row.ledger_sequence),
+    threshold: row.threshold === null ? null : Number(row.threshold),
+    revoked: Number(row.revoked),
+  };
+}
 
 // ── Opaque cursor encoding ───────────────────────────────────────────────────
 // The nextCursor token is the base64url form of "<ledgerSequence>:<id>" — the
@@ -249,7 +306,7 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
       }
 
       const claims = await db.claimsByWallet(wallet.trim());
-      res.json({ wallet: wallet.trim(), claims });
+      res.json({ wallet: wallet.trim(), claims: claims.map(serializeClaim) });
     })
   );
 
@@ -286,7 +343,7 @@ export function buildApp(db: Db, ingester: Ingester, config?: Partial<Config>): 
 
       const { claims, nextCursor } = await db.recent(limit, cursor);
       res.json({
-        claims,
+        claims: claims.map(serializeClaim),
         limit,
         nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
       });
