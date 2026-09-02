@@ -307,35 +307,6 @@ impl ProofRegistry {
         CONTRACT_VERSION
     }
 
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
-        admin.require_auth();
-        
-        // Emit upgrade event before executing the upgrade
-        let from_version = CONTRACT_VERSION;
-        // Note: to_version would be known only after deployment; for now we emit the from_version
-        // as both from and to, understanding that actual to_version will be different after WASM update
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("proof_reg"), symbol_short!("upgraded")),
-            EventContractUpgraded {
-                admin: admin.clone(),
-                new_wasm_hash: new_wasm_hash.clone(),
-                upgraded_at: env.ledger().timestamp(),
-                from_version,
-                to_version: from_version, // Will be different after WASM replacement
-            },
-        );
-        
-        // Record migration timestamp for audit trail
-        env.storage()
-            .instance()
-            .set(&DataKey::LastMigrationTimestamp, &env.ledger().timestamp());
-        
     /// Replace the contract wasm. Upgrader-role only — the holder of the
     /// `upgrader` role may be a different key than the root admin, so upgrade
     /// power can be delegated or rotated independently of other governance.
