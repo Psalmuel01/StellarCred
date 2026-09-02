@@ -26,6 +26,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     stellarNetwork: "testnet",
     horizonUrl: "https://horizon-testnet.stellar.org",
     rpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
     proofRegistryContractId: "CTEST",
     dbDriver: "sqlite",
     sqlitePath: path.join(os.tmpdir(), `ingester-test-${Date.now()}.db`),
@@ -42,11 +43,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-/** Build a fake Horizon contract event record. */
-function fakeEvent(opts: {
-  ledger: number;
-  topic: string[];
-  value: string;
 /**
  * Encode an ScVal as XDR base64 (what Horizon returns for event topics/values).
  */
@@ -68,8 +64,6 @@ function fakeEvent(opts: {
   return {
     paging_token: `${opts.ledger * 100_000}`,
     contract_id: "CTEST",
-    topic: opts.topic,
-    value: opts.value,
     topic: ["proof", "verified"].map((s) =>
       scValBase64(xdr.ScVal.scvSymbol(s))
     ),
@@ -132,18 +126,6 @@ describe("Ingester finality lag", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 90,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==", // u64 = 1
-                sourceAccount: "GALICE",
-              }),
-              fakeEvent({
-                ledger: 96,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GBOB",
-              }),
               fakeEvent({ ledger: 90, sourceAccount: "GALICE" }),
               fakeEvent({ ledger: 96, sourceAccount: "GBOB" }),
             ],
@@ -238,12 +220,6 @@ describe("Ingester reorg detection", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 42,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GNEW",
-              }),
               fakeEvent({ ledger: 42, sourceAccount: "GNEW" }),
             ],
           },
@@ -327,12 +303,6 @@ describe("Ingester reconcile", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 25,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GA2",
-              }),
               fakeEvent({ ledger: 25, sourceAccount: "GA2" }),
             ],
           },
@@ -346,19 +316,6 @@ describe("Ingester reconcile", () => {
     // Reconcile from ledger 15
     const processed = await ingester.reconcile(15);
 
-    // GA1 (ledger 10) should still exist
-    const a1 = db.claimsByWallet("GA1");
-    expect(a1).toHaveLength(1);
-
-    // GA2 (ledger 20) and GA3 (ledger 30) should be deleted (both > 15)
-    const a2 = db.claimsByWallet("GA2");
-    expect(a2).toHaveLength(0);
-    const a3 = db.claimsByWallet("GA3");
-    expect(a3).toHaveLength(0);
-
-    // Cursor should be at 15 (the reorg point)
-    const cursor = db.getLastLedger();
-    expect(cursor).toBe(15);
     // GA1 (ledger 10, below the reorg point) should still exist
     const a1 = db.claimsByWallet("GA1");
     expect(a1).toHaveLength(1);
@@ -413,12 +370,6 @@ describe("Ingester finalize lag with HEAD_LEDGER override", () => {
         json: async () => ({
           _embedded: {
             records: [
-              fakeEvent({
-                ledger: 100,
-                topic: ["proof", "verified"],
-                value: "AAAAAQ==",
-                sourceAccount: "GALICE",
-              }),
               fakeEvent({ ledger: 100, sourceAccount: "GALICE" }),
             ],
           },

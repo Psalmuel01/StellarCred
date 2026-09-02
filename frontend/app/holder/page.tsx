@@ -8,6 +8,7 @@ import {
   IconCertificate,
   IconPlus,
   IconDownload,
+  IconChartBar,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet, usePreviewMode } from "@/lib/wallet-context";
@@ -25,6 +26,10 @@ const TransferExportModal = dynamic(
 );
 const TransferImportModal = dynamic(
   () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
+  { ssr: false },
+);
+const ProofPerfPanel = dynamic(
+  () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
   { ssr: false },
 );
 
@@ -105,6 +110,7 @@ function HolderInner() {
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [showPerf, setShowPerf] = useState(false);
 
   // ── QR transfer import ─────────────────────────────────────────────────────
 
@@ -176,12 +182,26 @@ function HolderInner() {
           <a href="/presets" className="btn btn-secondary">
             Presets
           </a>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPerf((v) => !v)}
+            title="Proving performance &amp; telemetry debug view"
+            aria-expanded={showPerf}
+          >
+            <IconChartBar size={14} />
+            {showPerf ? "Hide perf" : "Perf"}
+          </button>
           <WalletButton />
         </div>
       </div>
 
       <ConfigBanner />
       <SponsorBanner />
+
+      {/* Proving performance & telemetry debug view (GitHub #432). Lazily
+          loaded so it stays out of the holder route's initial bundle. Rendered
+          above the credential list when opened. */}
+      {showPerf && <ProofPerfPanel />}
 
       {isPreview && (
         <div

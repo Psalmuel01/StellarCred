@@ -37,6 +37,19 @@ use soroban_sdk::{
     symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Val, Vec,
 };
 
+// ── Contract versioning ──────────────────────────────────────────────────────
+// Semantic version: MAJOR.MINOR.PATCH
+// Increment MAJOR on breaking changes (new entry points, changed ABI)
+// Increment MINOR on additive changes (new events, new query endpoints)
+// Increment PATCH on bug fixes with no ABI changes
+const CONTRACT_VERSION: u32 = 1_000_000; // 1.0.0 encoded as (major * 1000000) + (minor * 1000) + patch
+
+// ── Data schema versioning ──────────────────────────────────────────────────────
+// ProofRecord schema versions: used for forward-compatible migrations.
+// Increment when ProofRecord structure changes (fields added, removed, or reordered).
+// Current schema: includes vk_version, issuer, threshold, revoked, verified_at, expiry.
+const PROOF_RECORD_SCHEMA_VERSION: u32 = 1;
+
 // ── Event topic constants ────────────────────────────────────────────────────
 
 // NOTE: `#[contractevent]` (the newer Soroban SDK macro for typed events) is
@@ -50,7 +63,7 @@ use soroban_sdk::{
 
 /// Payload emitted when a proof is successfully verified and stored.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventProofSubmitted {
     pub holder: Address,
     pub issuer: Address,
@@ -60,7 +73,7 @@ pub struct EventProofSubmitted {
 
 /// Payload emitted when an issuer revokes a holder's proof.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventProofRevoked {
     pub holder: Address,
     pub issuer: Address,
@@ -75,7 +88,7 @@ pub struct EventProofRevoked {
 /// admin. The field name is kept as `admin` to preserve the event ABI that
 /// existing indexers parse.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventPaused {
     pub admin: Address,
     pub paused_at: u64,
@@ -87,10 +100,24 @@ pub struct EventPaused {
 /// The `admin` field carries the address that performed the unpause — under
 /// RBAC this is the holder of the `pauser` role (see [`EventPaused`]).
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventUnpaused {
     pub admin: Address,
     pub unpaused_at: u64,
+}
+
+/// Payload emitted when the contract is upgraded (new WASM deployed).
+/// Topics: ("proof_reg", "upgraded")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub upgraded_at: u64,
+    /// Previous contract version (encoded as major * 1000000 + minor * 1000 + patch)
+    pub from_version: u32,
+    /// New contract version (encoded as major * 1000000 + minor * 1000 + patch)
+    pub to_version: u32,
 }
 
 /// Payload emitted when a holder grants a verifier delegated read access
@@ -207,6 +234,11 @@ pub enum DataKey {
     IssuerRegistry,
     Paused,
     Proof(Address, Symbol),
+    /// Tracks the schema version of stored ProofRecords.
+    /// Used for forward-compatible migrations when ProofRecord shape changes.
+    ProofRecordSchemaVersion,
+    /// Timestamp of the last data migration (for audit trail).
+    LastMigrationTimestamp,
     /// (holder, verifier, credential_type) -> expiry (unix seconds). A
     /// scoped, time-boxed grant letting `verifier` read `holder`'s
     /// `credential_type` result via `check_delegated_verification` (#396).
@@ -267,11 +299,37 @@ impl ProofRegistry {
         env.storage().instance().set(&DataKey::Roles, &roles);
     }
 
+    /// Returns the contract version as an encoded u32.
+    /// Encoding: (major * 1000000) + (minor * 1000) + patch
+    /// Example: 1.2.3 -> 1002003
+    pub fn version(env: Env) -> u32 {
+        let _ = env; // Silence unused warning
+        CONTRACT_VERSION
+    }
+
     /// Replace the contract wasm. Upgrader-role only — the holder of the
     /// `upgrader` role may be a different key than the root admin, so upgrade
     /// power can be delegated or rotated independently of other governance.
+    #[allow(deprecated)]
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         Self::require_role(&env, &symbol_short!("upgrader"));
+
+        let from_version = CONTRACT_VERSION;
+        env.events().publish(
+            (symbol_short!("proof_reg"), symbol_short!("upgraded")),
+            EventContractUpgraded {
+                admin: Self::roles(&env).get(symbol_short!("upgrader")).unwrap(),
+                new_wasm_hash: new_wasm_hash.clone(),
+                upgraded_at: env.ledger().timestamp(),
+                from_version,
+                to_version: from_version,
+            },
+        );
+
+        env.storage()
+            .instance()
+            .set(&DataKey::LastMigrationTimestamp, &env.ledger().timestamp());
+
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
@@ -905,6 +963,56 @@ impl ProofRegistry {
         Self::issuer_registry(&env)
     }
 
+    /// Returns the current ProofRecord schema version.
+    /// Used to detect when data migrations are needed.
+    pub fn proof_record_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ProofRecordSchemaVersion)
+            .unwrap_or(PROOF_RECORD_SCHEMA_VERSION)
+    }
+
+    /// Returns the timestamp of the last data migration, or 0 if none has occurred.
+    /// Useful for audit trails and monitoring schema evolution.
+    pub fn last_migration_timestamp(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LastMigrationTimestamp)
+            .unwrap_or(0)
+    }
+
+    /// Admin-only: triggers a data migration (for future schema changes).
+    /// This is a placeholder that can be extended when ProofRecord structure changes.
+    /// Currently, this function:
+    /// 1. Records the current schema version
+    /// 2. Emits an event for audit trail purposes
+    /// 3. Can be extended to transform existing ProofRecords if needed
+    #[allow(deprecated)]
+    pub fn migrate_data(env: Env) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+
+        // Ensure schema version is recorded
+        let current_version = Self::proof_record_schema_version(env.clone());
+        if current_version != PROOF_RECORD_SCHEMA_VERSION {
+            env.storage()
+                .instance()
+                .set(&DataKey::ProofRecordSchemaVersion, &PROOF_RECORD_SCHEMA_VERSION);
+        }
+
+        // Record migration timestamp
+        env.storage()
+            .instance()
+            .set(&DataKey::LastMigrationTimestamp, &env.ledger().timestamp());
+
+        // Future: Add ProofRecord transformation logic here if structure changes
+        // For now, this serves as a checkpoint for audit trail
+    }
+
     fn validate_expiry(env: &Env, expiry: u64) {
         let now = env.ledger().timestamp();
         if expiry <= now {
@@ -1088,4 +1196,5 @@ impl ProofRegistry {
     }
 }
 
+#[cfg(test)]
 mod test;
