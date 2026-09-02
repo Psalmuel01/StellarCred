@@ -91,6 +91,21 @@ const envSchema = z
       z.string().regex(HEX_64, "must be a 64-character hex secp256k1 private key").optional(),
     ),
 
+    // Signing backend selector: "env" (local private key) or "kms" (AWS KMS).
+    // Default is "env" for local dev; production deployments should set "kms"
+    // and provide KMS_KEY_ID.
+    ISSUER_SIGNER: z
+      .preprocess(emptyToUndefined, z.enum(["env", "kms"]))
+      .default("env"),
+
+    // AWS KMS key ID — required when ISSUER_SIGNER=kms.  Accepts a key ID,
+    // key ARN, or alias ARN.
+    KMS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+
+    // AWS region for KMS — optional; falls back to the standard AWS_REGION /
+    // AWS_DEFAULT_REGION env vars via the AWS SDK credential chain.
+    KMS_REGION: z.preprocess(emptyToUndefined, z.string().optional()),
+
     // --- Deployed contract IDs (scripts/deploy.sh output) ---------------------
     NEXT_PUBLIC_ISSUER_REGISTRY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     NEXT_PUBLIC_CREDENTIAL_VERIFIER_ID: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -119,6 +134,13 @@ const envSchema = z
     // in-memory store is per-isolate, so limits are not enforced across cold
     // starts or concurrent instances. Replace lib/rate-limit.ts's `checkLimit`
     // with a shared atomic store (Upstash Redis / Vercel KV) for those targets.
+    // Rate-limit backend: "memory" (single-instance dev) or "redis"
+    // (production / multi-replica). When redis is selected, the
+    // RATE_LIMIT_REDIS_URL env var must also be set.
+    RATELIMIT_BACKEND: z.preprocess(emptyToUndefined, z.enum(["memory", "redis"])).default("memory"),
+    // Upstash Redis URL — required when RATELIMIT_BACKEND=redis.
+    RATE_LIMIT_REDIS_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+
     RATE_LIMIT_WINDOW_SECONDS: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().positive().optional(),
@@ -128,6 +150,12 @@ const envSchema = z
       z.coerce.number().int().positive().optional(),
     ),
     RATE_LIMIT_ISSUE_WALLET: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().optional(),
+    ),
+    // Per-wallet window in seconds (default 3600 = 1 hour).  The IP window
+    // is controlled by RATE_LIMIT_WINDOW_SECONDS (default 60s = 1 minute).
+    RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().positive().optional(),
     ),

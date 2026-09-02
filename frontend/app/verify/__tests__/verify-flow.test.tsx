@@ -141,6 +141,58 @@ describe("verify -> issue -> redirect", () => {
   }, 10_000);
 });
 
+describe("429 rate-limit handling", () => {
+  beforeEach(() => {
+    push.mockClear();
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a friendly rate-limit message when POST /api/issue returns 429", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockJsonResponse(
+        { error: "Too many requests. Please slow down.", code: "rate_limited", retryAfterSeconds: 55 },
+        {
+          status: 429,
+          headers: { "Retry-After": "55", "X-RateLimit-Reset": String(Math.ceil(Date.now() / 1000) + 55) },
+        },
+      ),
+    );
+
+    render(<VerifyPage />);
+
+    const button = await screen.findByRole("button", { name: /get credential/i });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    // The user sees a clear, actionable message — not a raw HTTP status or stack trace.
+    await screen.findByText(/try again in 55 seconds/);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("shows a generic try-again message when Retry-After header is missing", async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockJsonResponse(
+        { error: "Too many requests.", code: "rate_limited" },
+        { status: 429 },
+      ),
+    );
+
+    render(<VerifyPage />);
+
+    const button = await screen.findByRole("button", { name: /get credential/i });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    await screen.findByText(/try again shortly/);
+  });
+});
+
 describe("prove(mock) -> submit(mock) pipeline", () => {
   beforeEach(() => {
     vi.resetModules();

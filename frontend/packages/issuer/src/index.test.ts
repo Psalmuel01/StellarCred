@@ -15,9 +15,8 @@ function be32(v: bigint): Uint8Array {
 }
 
 describe("IssuerClient constructor", () => {
-  it("throws on a missing private key", () => {
-    // @ts-expect-error — exercising the runtime guard for a missing key
-    expect(() => new IssuerClient({})).toThrow(/64-character hex/);
+  it("throws when neither privateKey nor signer is provided", () => {
+    expect(() => new IssuerClient({})).toThrow(/requires either a signer or/);
   });
 
   it("throws on a malformed private key", () => {
@@ -122,7 +121,7 @@ describe("IssuerClient.issue — pipeline round-trip", () => {
 describe("IssuerClient.publicKey", () => {
   it("matches the public key embedded in an issued credential", async () => {
     const issuer = new IssuerClient({ privateKey: TEST_PRIVATE_KEY_64 });
-    const { x, y } = issuer.publicKey();
+    const { x, y } = await issuer.publicKey();
     const credential = await issuer.issue({
       type: "kyc",
       holder: "G...",
@@ -180,5 +179,72 @@ describe("CREDENTIAL_TYPES", () => {
       "accreditation",
       "employment",
     ]);
+  });
+});
+
+describe("IssuerClient with IssuerSigner", () => {
+  it("produces a verifiable signature when given a custom signer", async () => {
+    const privKey = Uint8Array.from(Buffer.from(TEST_PRIVATE_KEY_64, "hex"));
+    const expectedPub = secp256k1.getPublicKey(privKey, false);
+
+    const signer = {
+      async sign(digest: Uint8Array): Promise<number[]> {
+        const sig = secp256k1.sign(digest, privKey, { prehash: false });
+        return Array.from(sig);
+      },
+      async publicKey() {
+        return {
+          x: Array.from(expectedPub.slice(1, 33)),
+          y: Array.from(expectedPub.slice(33, 65)),
+        };
+      },
+    };
+
+    const issuer = new IssuerClient({ signer });
+    const credential = await issuer.issue({
+      type: "kyc",
+      holder: "GABCDEXAMPLEHOLDERADDRESS",
+      issuerId: "test-issuer",
+      issuerName: "Test Issuer",
+      expiry: "90 days",
+      attribute: {},
+    });
+
+    const digest = be32(BigInt(credential.commitment));
+    const ok = secp256k1.verify(
+      Uint8Array.from(credential.sig),
+      digest,
+      expectedPub,
+      { prehash: false },
+    );
+    expect(ok).toBe(true);
+    expect(credential.issuerPubX).toEqual(Array.from(expectedPub.slice(1, 33)));
+    expect(credential.issuerPubY).toEqual(Array.from(expectedPub.slice(33, 65)));
+  });
+
+  it("publicKey() delegates to the signer", async () => {
+    const privKey = Uint8Array.from(Buffer.from(TEST_PRIVATE_KEY_64, "hex"));
+    const expectedPub = secp256k1.getPublicKey(privKey, false);
+
+    const signer = {
+      async sign(digest: Uint8Array): Promise<number[]> {
+        return Array.from(secp256k1.sign(digest, privKey, { prehash: false }));
+      },
+      async publicKey() {
+        return {
+          x: Array.from(expectedPub.slice(1, 33)),
+          y: Array.from(expectedPub.slice(33, 65)),
+        };
+      },
+    };
+
+    const issuer = new IssuerClient({ signer });
+    const { x, y } = await issuer.publicKey();
+    expect(x).toEqual(Array.from(expectedPub.slice(1, 33)));
+    expect(y).toEqual(Array.from(expectedPub.slice(33, 65)));
+  });
+
+  it("throws when neither privateKey nor signer is provided", () => {
+    expect(() => new IssuerClient({})).toThrow(/requires either a signer or/);
   });
 });

@@ -8,6 +8,7 @@ import {
   rateLimitClear,
   rateLimitSize,
   rateLimitCleanup,
+  LIMITS,
 } from "../rate-limit";
 
 // ---------------------------------------------------------------------------
@@ -303,6 +304,65 @@ describe("rate limit integration", () => {
       expect(checkLimit("key:B", 3, 1_000).throttled).toBe(false);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIMITS — wallet window and backend selector
+// ---------------------------------------------------------------------------
+
+describe("LIMITS", () => {
+  it("walletWindowMs defaults to 3600000 (1 hour)", () => {
+    const saved = process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS;
+    try {
+      delete process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS;
+      expect(LIMITS.walletWindowMs()).toBe(3_600_000);
+    } finally {
+      if (saved !== undefined) process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS = saved;
+    }
+  });
+
+  it("walletWindowMs respects RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS", () => {
+    const saved = process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS;
+    try {
+      process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS = "1800";
+      expect(LIMITS.walletWindowMs()).toBe(1_800_000);
+    } finally {
+      if (saved !== undefined) process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS = saved;
+      else delete process.env.RATE_LIMIT_ISSUE_WALLET_WINDOW_SECONDS;
+    }
+  });
+
+  it("backend() defaults to memory", () => {
+    const saved = process.env.RATELIMIT_BACKEND;
+    try {
+      delete process.env.RATELIMIT_BACKEND;
+      expect(LIMITS.backend()).toBe("memory");
+    } finally {
+      if (saved !== undefined) process.env.RATELIMIT_BACKEND = saved;
+    }
+  });
+
+  it("backend() returns redis when RATELIMIT_BACKEND=redis", () => {
+    const saved = process.env.RATELIMIT_BACKEND;
+    try {
+      process.env.RATELIMIT_BACKEND = "redis";
+      expect(LIMITS.backend()).toBe("redis");
+    } finally {
+      if (saved !== undefined) process.env.RATELIMIT_BACKEND = saved;
+      else delete process.env.RATELIMIT_BACKEND;
+    }
+  });
+
+  it("backend() falls back to memory for unknown values", () => {
+    const saved = process.env.RATELIMIT_BACKEND;
+    try {
+      process.env.RATELIMIT_BACKEND = "unknown";
+      expect(LIMITS.backend()).toBe("memory");
+    } finally {
+      if (saved !== undefined) process.env.RATELIMIT_BACKEND = saved;
+      else delete process.env.RATELIMIT_BACKEND;
     }
   });
 });

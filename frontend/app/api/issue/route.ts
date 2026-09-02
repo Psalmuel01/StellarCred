@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sha256 } from "@noble/hashes/sha2.js";
 import {
   IssuerClient,
   CREDENTIAL_TYPES,
@@ -14,6 +13,7 @@ import {
   resolveRequestId,
 } from "../../../lib/logger";
 import { env } from "../../../lib/env";
+import { getSigner } from "../../../lib/signer";
 import { fetchPlaidBalance } from "../../../lib/plaid";
 import {
   checkLimit,
@@ -40,25 +40,18 @@ import {
 } from "../../../lib/audit-log";
 
 // Server-side only — never shipped to the browser.
-// Set ISSUER_PRIVATE_KEY in .env.local to the 64-char hex secp256k1 private
-// key whose public key was registered in IssuerRegistry. The registered pubkey
-// and the signing key must match or ProofRegistry will reject every proof.
-// Falls back to a deterministic demo key so the app runs without one set —
-// this fallback is intentionally app-specific and not part of @stellarcred/issuer.
-const DEMO_SK_HEX =
-  env.ISSUER_PRIVATE_KEY ||
-  Buffer.from(
-    sha256(new TextEncoder().encode("stellarcred-demo-issuer")),
-  ).toString("hex");
-
-if (!env.ISSUER_PRIVATE_KEY) {
+// Signing is delegated to an IssuerSigner — either EnvSigner (local dev,
+// using ISSUER_PRIVATE_KEY) or KmsSigner (production, using KMS_KEY_ID).
+// The raw private key never enters the process when ISSUER_SIGNER=kms.
+const signer = getSigner();
+if (!env.ISSUER_PRIVATE_KEY && env.ISSUER_SIGNER !== "kms") {
   logger.warn(
     stripSensitiveFields({ event: "demo_issuer_key_active" }),
-    "USING PUBLIC DEMO ISSUER KEY — not for production. Set ISSUER_PRIVATE_KEY to use a real issuer key.",
+    "USING PUBLIC DEMO ISSUER KEY — not for production. Set ISSUER_PRIVATE_KEY or ISSUER_SIGNER=kms to use a real issuer key.",
   );
 }
 
-const issuer = new IssuerClient({ privateKey: DEMO_SK_HEX });
+const issuer = new IssuerClient({ signer });
 const SIM_ACCOUNT =
   env.NEXT_PUBLIC_ISSUER_ADDRESS ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
@@ -66,8 +59,8 @@ const SIM_ACCOUNT =
 // `issuer` signs with, via the package's publicKey(), not re-derived locally.
 // Used to confirm the selected issuerId's on-chain registered key actually
 // matches this server's signing key before issuing.
-function localIssuerPubkeyBytes(): Buffer {
-  const { x, y } = issuer.publicKey();
+async function localIssuerPubkeyBytes(): Promise<Buffer> {
+  const { x, y } = await issuer.publicKey();
   return Buffer.from([...x, ...y]);
 }
 
@@ -389,11 +382,13 @@ async function executeRequest(
   // ── Per-wallet rate limit ────────────────────────────────────────────────
   // Checked here (after body parse) because the wallet address lives in the
   // body. Returns 429 before any provider call or signing work is started.
+  // The wallet window is longer (default 1 hour) than the IP window (default
+  // 1 minute) to prevent credential-spam while still allowing normal usage.
   if (holder) {
     const walletResult = checkLimit(
       `issue:wallet:${holder}`,
       LIMITS.issuePerWallet(),
-      LIMITS.windowMs(),
+      LIMITS.walletWindowMs(),
     );
     if (walletResult.throttled) {
       logger.warn(
@@ -487,7 +482,7 @@ async function executeRequest(
         ),
       );
     }
-    const localKey = localIssuerPubkeyBytes();
+    const localKey = await localIssuerPubkeyBytes();
     if (!Buffer.from(registered).equals(localKey)) {
       return sendResponse(
         NextResponse.json(
