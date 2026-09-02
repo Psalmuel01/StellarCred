@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
-import { type Locale } from "@/i18n.config";
+import { useTranslations } from "next-intl";
 
 interface ContractVersion {
   address: string;
@@ -18,7 +17,6 @@ interface VersionInfo {
 }
 
 export function Footer() {
-  const locale = useLocale() as Locale;
   const t = useTranslations();
   const [versionInfo, setVersionInfo] = useState<VersionInfo>({
     loading: true,
