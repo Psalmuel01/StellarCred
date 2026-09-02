@@ -663,6 +663,7 @@ fn prune_version_emits_expected_event() {
                 EventVkPruned {
                     admin: admin.clone(),
                     version: 1,
+                    contract_version: 1_000_000,
                 }
                 .into_val(&env),
             ),
@@ -691,6 +692,8 @@ fn deprecate_version_emits_no_events() {
                 .into_val(&env),
             EventVkSet {
                 admin,
+                version: 1,
+                contract_version: 1_000_000,
             }
             .into_val(&env),
         ),
