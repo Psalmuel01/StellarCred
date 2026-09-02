@@ -29,6 +29,8 @@ const mono = JetBrains_Mono({
   variable: "--font-mono",
 });
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "StellarCred — Prove anything. Reveal nothing.",
   description:
