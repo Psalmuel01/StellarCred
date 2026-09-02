@@ -54,7 +54,6 @@ export function Footer() {
       <div className="site-footer-inner">
         <span className="faint" style={{ fontSize: "0.8125rem" }}>
           {t("footer.copyright", { year: new Date().getFullYear() })}
-          © {new Date().getFullYear()} StellarCred
         </span>
         <div className="row" style={{ gap: "1.5rem" }}>
           <a
@@ -105,10 +104,6 @@ export function Footer() {
           >
             <span className="mono" style={{ fontSize: "0.75rem" }}>
               {versionInfo.app_version || t("footer.app")}
-            title="Click to show version information"
-          >
-            <span className="mono" style={{ fontSize: "0.75rem" }}>
-              {versionInfo.app_version || "app"}
             </span>
           </button>
         </div>
@@ -126,21 +121,17 @@ export function Footer() {
           >
             <div style={{ marginBottom: "0.5rem", fontWeight: 500 }}>
               {t("footer.deploymentVersions")}
-              Deployment Versions
             </div>
 
             {/* App Version */}
             <div style={{ marginBottom: "0.5rem" }}>
               <span className="faint">{t("footer.app")}:</span>{" "}
               <span className="mono">{versionInfo.app_version || t("footer.unknown")}</span>
-              <span className="faint">App:</span>{" "}
-              <span className="mono">{versionInfo.app_version || "unknown"}</span>
             </div>
 
             {/* SDK Version */}
             <div style={{ marginBottom: "0.5rem" }}>
               <span className="faint">{t("footer.sdk_label")}:</span>{" "}
-              <span className="faint">SDK:</span>{" "}
               <span className="mono">{sdkVersion}</span>
             </div>
 
@@ -160,7 +151,6 @@ export function Footer() {
                       }}
                     >
                       {cv.version || t("footer.unknown")}
-                      {cv.version || "unknown"}
                       {cv.status === "error" && ` (${cv.message})`}
                     </span>
                   </div>
@@ -187,7 +177,6 @@ export function Footer() {
                 }}
               >
                 {t("common.close")}
-                Close
               </button>
             </div>
           </div>
