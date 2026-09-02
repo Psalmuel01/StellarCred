@@ -226,7 +226,7 @@ jobs:
         run: bash -n ../scripts/benchmark.sh
 
   frontend:
-    name: Frontend typecheck & build
+    name: Frontend lint, test & build
     runs-on: ubuntu-latest
     permissions:
       contents: read
