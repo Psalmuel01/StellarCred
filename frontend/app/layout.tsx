@@ -35,13 +35,13 @@ export const metadata: Metadata = {
     "Zero-knowledge credentials on Stellar. Prove facts about yourself without the data ever touching the chain.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   // Get locale on server-side for HTML lang attribute
-  const locale = getLocale();
+  const locale = await getLocale();
 
   return (
     <html
