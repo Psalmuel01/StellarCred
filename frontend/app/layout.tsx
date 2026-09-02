@@ -1,9 +1,11 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { getLocale } from "next-intl/server";
 import { SiteNav } from "@/components/SiteNav";
 import { NetworkBanner } from "@/components/NetworkBanner";
 import { Footer } from "@/components/Footer";
+import { LocaleMetaTags } from "@/components/LocaleMetaTags";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
@@ -37,9 +39,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Get locale on server-side for HTML lang attribute
+  const locale = getLocale();
+
   return (
     <html
-      lang="en"
+      lang={locale}
       className={`${body.variable} ${display.variable} ${mono.variable}`}
       // Omit `data-theme` so the blocking boot script owns first paint
       // (avoids flashing the wrong palette before hydration).
@@ -50,6 +55,7 @@ export default function RootLayout({
           id="theme-detection"
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
+        <LocaleMetaTags />
       </head>
       <body>
         <a href="#main-content" className="skip-link">

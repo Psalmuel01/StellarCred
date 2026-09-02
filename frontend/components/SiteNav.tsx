@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { IconBook2, IconCode, IconMenu2, IconX } from "@tabler/icons-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 const LINKS = [
   { href: "/holder", label: "Wallet" },
@@ -112,6 +113,7 @@ export function SiteNav() {
             Developers
           </Link>
           <ThemeToggle />
+          <LanguageSwitcher />
         </div>
       </div>
     </header>
