@@ -28,6 +28,10 @@ const TransferImportModal = dynamic(
   () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
   { ssr: false },
 );
+const ProofPerfPanel = dynamic(
+  () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
+  { ssr: false },
+);
 
 // Extracted hooks
 import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
@@ -106,6 +110,7 @@ function HolderInner() {
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [showPerf, setShowPerf] = useState(false);
 
   // ── QR transfer import ─────────────────────────────────────────────────────
 
