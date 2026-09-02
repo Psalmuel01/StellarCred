@@ -494,6 +494,17 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      if (res.status === 404) return [];
+      throw new Error(`Horizon responded ${res.status}: ${await res.text()}`);
+    }
+    const page = (await res.json()) as HorizonEventsPage;
+    const records = page._embedded?.records ?? [];
+
+    // Filter out events beyond the finality boundary
+    return records.filter((ev) => {
+      const evLedger = typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
     // Fetch head ledger (best-effort) so lag is visible in /health.
     // We fire this in parallel with the events fetch so we don't add
     // serial latency to every tick.
@@ -604,6 +615,38 @@ let lastTickEnd = Date.now();
     if (finalityCeiling <= lastLedger) {
       // Head hasn't advanced past our cursor + lag yet — nothing to do.
       return 0;
+    }
+
+    // 2. Detect potential reorg: if our cursor claims to have ingested
+    //    a ledger that is now beyond the network head, the chain was
+    //    likely reorged past our last checkpoint.
+    if (lastLedger > headLedger) {
+      console.warn(
+        `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
+          `Rolling back to head and re-scanning.`
+      );
+      return reconcile(headLedger);
+    }
+
+    // 3. Build the Horizon cursor. For a fresh start with startLedger
+    //    configured, begin there; otherwise resume from lastLedger.
+    const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
+    const cursor =
+      config.startLedger > 0 && lastLedger === 0
+        ? String(config.startLedger * 100_000)
+        : cursorNum > 0
+        ? String(cursorNum)
+        : undefined;
+
+    // 4. Fetch events up to the finality ceiling.
+    let events: HorizonContractEvent[];
+    try {
+      events = await fetchEvents(cursor, finalityCeiling);
+    } catch (err) {
+      console.warn("[indexer] Horizon fetch error:", (err as Error).message);
+      return 0;
+    }
+
     }
 
     // 3. Build the Horizon cursor. For a fresh start with startLedger
