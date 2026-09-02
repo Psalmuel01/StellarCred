@@ -23,6 +23,16 @@ const intlMiddleware = createMiddleware({
   localePrefix: 'as-needed', // Only prefix non-default locales (/es/*, not /en/*)
 });
 
+function resolveRequestId(inbound: string | null | undefined): string {
+  const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+  if (inbound && REQUEST_ID_RE.test(inbound)) return inbound;
+  
+  // Use Web Crypto API (available in edge runtime) instead of Node.js crypto
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function middleware(request: NextRequest) {
   // Handle i18n routing first
   if (!request.nextUrl.pathname.startsWith("/api")) {

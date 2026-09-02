@@ -118,6 +118,8 @@ pub struct EventContractUpgraded {
     pub from_version: u32,
     /// New contract version (encoded as major * 1000000 + minor * 1000 + patch)
     pub to_version: u32,
+}
+
 /// Payload emitted when a holder grants a verifier delegated read access
 /// (#396). `credential_type` is already in the event topic tuple, matching
 /// `EventProofSubmitted`'s convention, so it isn't repeated here.
@@ -337,8 +339,26 @@ impl ProofRegistry {
     /// Replace the contract wasm. Upgrader-role only — the holder of the
     /// `upgrader` role may be a different key than the root admin, so upgrade
     /// power can be delegated or rotated independently of other governance.
+    #[allow(deprecated)]
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         Self::require_role(&env, &symbol_short!("upgrader"));
+
+        let from_version = CONTRACT_VERSION;
+        env.events().publish(
+            (symbol_short!("proof_reg"), symbol_short!("upgraded")),
+            EventContractUpgraded {
+                admin: Self::roles(&env).get(symbol_short!("upgrader")).unwrap(),
+                new_wasm_hash: new_wasm_hash.clone(),
+                upgraded_at: env.ledger().timestamp(),
+                from_version,
+                to_version: from_version,
+            },
+        );
+
+        env.storage()
+            .instance()
+            .set(&DataKey::LastMigrationTimestamp, &env.ledger().timestamp());
+
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
