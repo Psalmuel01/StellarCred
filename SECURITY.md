@@ -30,7 +30,7 @@ Areas of particular interest:
 
 ## Security model notes
 
-- `ISSUER_PRIVATE_KEY` must never have a `NEXT_PUBLIC_` prefix — it is server-side only.
+- `ISSUER_PRIVATE_KEY` must never have a `NEXT_PUBLIC_` prefix — it is server-side only.  For production, prefer `ISSUER_SIGNER=kms` with a KMS-hosted key so the raw private key never enters the process.
 - The issuer's secp256k1 signature is verified **inside** the ZK proof (`std::ecdsa_secp256k1`), and the contract checks the public key from public inputs matches the registered issuer key. A valid proof requires a registered issuer to have signed the credential.
 - `prehash: false` is required when signing — Noir uses the raw 32-byte commitment as the message digest. Changing this breaks all existing proofs.
 - Identity fields from KYC providers are used only to derive credential values and are never stored or logged after the API call completes.
@@ -47,7 +47,8 @@ Before deploying StellarCred to the Stellar mainnet, verify that all security pa
 - [ ] **Upgrade Authorization:** If the contract is upgradeable, confirm that upgrade authority is assigned to a multisig wallet or a community-controlled DAO address.
 
 ### 2. Issuer Cryptographic Keys (Issuer Key)
-- [ ] **Secret Key Protection:** The `ISSUER_PRIVATE_KEY` must be securely stored in production-grade environment secrets (e.g., AWS Secrets Manager, GCP Secret Manager, or Vercel Encrypted Environment Variables). It must never be checked into git or exposed to the client-side (do not prefix with `NEXT_PUBLIC_`).
+- [ ] **KMS/HSM Signing (Preferred):** Set `ISSUER_SIGNER=kms` and `KMS_KEY_ID` to delegate signing to AWS KMS (secp256k1, ECDSA_SHA_256). The raw private key never enters the Node.js process — KMS holds the key and returns signatures via the `Sign` API with `MessageType=DIGEST` (preserving `prehash: false` semantics). The KMS returns DER-encoded signatures, which are converted to the raw `(r, s)` 64-byte form Noir expects.
+- [ ] **Secret Key Protection (Env fallback):** If using `ISSUER_SIGNER=env` (the default), the `ISSUER_PRIVATE_KEY` must be securely stored in production-grade environment secrets (e.g., AWS Secrets Manager, GCP Secret Manager, or Vercel Encrypted Environment Variables). It must never be checked into git or exposed to the client-side (do not prefix with `NEXT_PUBLIC_`).
 - [ ] **Key Rotation Procedures:** Test and document the key rotation procedure. Registering a new issuer key in `IssuerRegistry` must be validated, and the corresponding private key updated in the API environment without service disruption.
 - [ ] **Revocation:** Ensure compromised issuer keys can be immediately removed or revoked in `IssuerRegistry` by the admin.
 

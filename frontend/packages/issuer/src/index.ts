@@ -80,9 +80,52 @@ export interface IssueParams {
   claimParams?: ClaimParams;
 }
 
+// ---------------------------------------------------------------------------
+// IssuerSigner abstraction
+// ---------------------------------------------------------------------------
+// Pluggable signing backend so production issuers can delegate to a KMS/HSM
+// instead of loading a raw private key into the process.  Two built-in
+// implementations live in the app layer (lib/signer.ts):
+//
+//   - EnvSigner  — signs with a local secp256k1 private key (dev/mock only)
+//   - KmsSigner  — delegates to AWS KMS via Sign(KeyId, Digest)
+//
+// The key never leaves the HSM; the KmsSigner holds only a key ID.
+// prehash: false semantics are preserved: the KMS must sign the raw 32-byte
+// digest directly, NOT re-hash it (use DIGEST message type, not RAW).
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal signing interface that IssuerClient delegates to.  Implementations
+ * live outside this package so the issuer SDK stays free of cloud SDK
+ * dependencies.
+ */
+export interface IssuerSigner {
+  /**
+   * Sign a raw 32-byte commitment digest (prehash: false).
+   * Returns the 64-byte compact signature (r ‖ s, each 32 bytes, big-endian)
+   * as a number array — the form Noir's `std::ecdsa_secp256k1` verifier
+   * expects.
+   */
+  sign(digest: Uint8Array): Promise<number[]>;
+
+  /** The issuer's secp256k1 public key (x || y, each 32 bytes). */
+  publicKey(): Promise<{ x: number[]; y: number[] }>;
+}
+
 export interface IssuerClientOptions {
-  /** 64-character hex secp256k1 private key. Server-side only — never NEXT_PUBLIC_. */
-  privateKey: string;
+  /**
+   * 64-character hex secp256k1 private key. Server-side only — never
+   * NEXT_PUBLIC_.  Used only when no `signer` is provided (legacy path).
+   */
+  privateKey?: string;
+
+  /**
+   * Pluggable signing backend (e.g. KmsSigner for production).  When
+   * provided, `privateKey` is ignored and the raw key bytes never enter
+   * the process.
+   */
+  signer?: IssuerSigner;
 }
 
 function be32(v: bigint): Uint8Array {
@@ -93,6 +136,8 @@ function be32(v: bigint): Uint8Array {
   }
   return b;
 }
+
+export { be32 };
 
 function randomField(): string {
   // 31 bytes = 248 bits, always fits in BN254 scalar field.
@@ -241,15 +286,33 @@ function parsePrivateKey(privateKey: string): Uint8Array {
 }
 
 export class IssuerClient {
-  private readonly privateKey: Uint8Array;
+  private readonly privateKey: Uint8Array | null;
+  private readonly signer: IssuerSigner | null;
 
   constructor(opts: IssuerClientOptions) {
-    this.privateKey = parsePrivateKey(opts?.privateKey);
+    if (opts.signer) {
+      this.signer = opts.signer;
+      this.privateKey = null;
+    } else if (opts.privateKey) {
+      this.privateKey = parsePrivateKey(opts.privateKey);
+      this.signer = null;
+    } else {
+      throw new Error(
+        "IssuerClient requires either a signer or a 64-character hex secp256k1 private key",
+      );
+    }
   }
 
-  /** The issuer's secp256k1 public key — register this with IssuerRegistry. */
-  publicKey(): { x: number[]; y: number[] } {
-    return issuerPublicKey(this.privateKey);
+  /**
+   * The issuer's secp256k1 public key — register this with IssuerRegistry.
+   * When using a signer (e.g. KmsSigner), this is async because the public
+   * key must be fetched from the KMS.
+   */
+  async publicKey(): Promise<{ x: number[]; y: number[] }> {
+    if (this.signer) {
+      return this.signer.publicKey();
+    }
+    return issuerPublicKey(this.privateKey!);
   }
 
   /**
@@ -273,7 +336,27 @@ export class IssuerClient {
       type === "employment"
         ? await poseidonCommit3(value, attribute.seniority ?? "0", salt)
         : await poseidonCommit(value, salt);
-    const { sig, issuerX, issuerY } = signCommitment(commitment, this.privateKey);
+
+    let sig: number[];
+    let issuerX: number[];
+    let issuerY: number[];
+
+    if (this.signer) {
+      // Delegate signing to the pluggable signer (e.g. KMS).
+      // The digest is the raw 32-byte big-endian commitment — prehash: false.
+      const digest = be32(BigInt(commitment));
+      sig = await this.signer.sign(digest);
+      const pub = await this.signer.publicKey();
+      issuerX = pub.x;
+      issuerY = pub.y;
+    } else {
+      // Legacy path: sign with the in-process private key.
+      const result = signCommitment(commitment, this.privateKey!);
+      sig = result.sig;
+      issuerX = result.issuerX;
+      issuerY = result.issuerY;
+    }
+
     const employmentExtra =
       type === "employment" && attribute.seniority
         ? { seniority: attribute.seniority }
