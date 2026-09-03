@@ -53,6 +53,10 @@ export function useCredentialStore() {
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
 
+  const reload = useCallback(() => {
+    setCreds(loadCredentials());
+  }, []);
+
   const save = useCallback((cred: Credential) => {
     setCreds(saveCredential(cred));
   }, []);
@@ -71,8 +75,7 @@ export function useCredentialStore() {
 
   return {
     creds,
-    /** Raw setter — for edge cases the helpers don't cover. */
-    setCreds,
+    reload,
     save,
     remove,
     markCredentialProved,

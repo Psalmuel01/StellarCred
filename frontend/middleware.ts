@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getCorsHeaders, isOriginAllowed } from "@/lib/cors";
-import { logger, stripSensitiveFields, resolveRequestId } from "@/lib/logger";
+import { logger, stripSensitiveFields } from "@/lib/logger";
 import { reportError } from "@/lib/error-reporting";
+
+function resolveRequestId(inbound: string | null | undefined): string {
+  const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+  if (inbound && REQUEST_ID_RE.test(inbound)) return inbound;
+  
+  // Use Web Crypto API (available in edge runtime) instead of Node.js crypto
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function middleware(request: NextRequest) {
   const requestId = resolveRequestId(request.headers.get("x-request-id"));

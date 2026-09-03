@@ -21,7 +21,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    Bytes, Env, Map, Symbol,
+    Bytes, BytesN, Env, Map, Symbol,
 };
 use ultrahonk_soroban_verifier::{UltraHonkVerifier, PROOF_BYTES};
 
@@ -32,20 +32,42 @@ use ultrahonk_soroban_verifier::{UltraHonkVerifier, PROOF_BYTES};
 /// Payload emitted when a verification key is registered or replaced.
 /// Topics: ("cred_ver", "vk_set", credential_type)
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventVkSet {
     /// The admin address that performed the update.
     pub admin: Address,
+    /// The VK version being registered.
+    pub version: u32,
+    /// Contract version at time of VK registration (for audit trail).
+    pub contract_version: u32,
 }
 
 /// Payload emitted when an obsolete verification key is removed.
 /// Topics: ("cred_ver", "vk_pruned", credential_type)
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventVkPruned {
     pub admin: Address,
     pub version: u32,
+    /// Contract version at time of VK pruning (for audit trail).
+    pub contract_version: u32,
 }
+
+/// Payload emitted when the contract is upgraded (new WASM deployed).
+/// Topics: ("cred_ver", "upgraded")
+#[contracttype]
+#[derive(Clone)]
+pub struct EventContractUpgraded {
+    pub admin: Address,
+    pub upgraded_at: u64,
+}
+
+// ── Contract versioning ──────────────────────────────────────────────────────
+// Semantic version: MAJOR.MINOR.PATCH
+// Increment MAJOR on breaking changes (new entry points, changed ABI)
+// Increment MINOR on additive changes (new events, new query endpoints)
+// Increment PATCH on bug fixes with no ABI changes
+const CONTRACT_VERSION: u32 = 1_000_000; // 1.0.0 encoded as (major * 1000000) + (minor * 1000) + patch
 
 // Persistent-entry lifetime management (~5s ledgers). VKs are long-lived.
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -69,6 +91,8 @@ pub enum DataKey {
     DeprecatedVersion(Symbol, u32),
     /// Contract-controlled timestamp at which a version was deprecated.
     DeprecatedAt(Symbol, u32),
+    /// Timestamp of the last upgrade (for audit trail).
+    LastUpgradeTimestamp,
 }
 
 #[contracterror]
@@ -106,6 +130,15 @@ impl CredentialVerifier {
         env.storage().instance().set(&DataKey::Roles, &roles);
     }
 
+    /// Returns the contract version as an encoded u32.
+    /// Encoding: (major * 1000000) + (minor * 1000) + patch
+    /// Example: 1.2.3 -> 1002003
+    pub fn version(env: Env) -> u32 {
+        let _ = env; // Silence unused warning
+        CONTRACT_VERSION
+    }
+
+    /// Register the verification key for a credential circuit. Admin-only.
     /// Register the verification key for a credential circuit. Admin-role only.
     /// A version's VK is immutable once set — re-registering an existing
     /// (credential_type, version) panics with `VkAlreadySet`; register a new
@@ -170,14 +203,18 @@ impl CredentialVerifier {
             .extend_ttl(&latest_key, VK_BUMP_THRESHOLD, VK_TTL);
 
         // Emit: topics = ("cred_ver", "vk_set", credential_type)
-        //       data   = EventVkSet { admin }
+        //       data   = EventVkSet { admin, version, contract_version }
         env.events().publish(
             (
                 symbol_short!("cred_ver"),
                 symbol_short!("vk_set"),
                 credential_type,
             ),
-            EventVkSet { admin },
+            EventVkSet {
+                admin,
+                version,
+                contract_version: CONTRACT_VERSION,
+            },
         );
     }
 
@@ -250,7 +287,11 @@ impl CredentialVerifier {
                 symbol_short!("vk_pruned"),
                 credential_type,
             ),
-            EventVkPruned { admin, version },
+            EventVkPruned {
+                admin,
+                version,
+                contract_version: CONTRACT_VERSION,
+            },
         );
     }
 
@@ -423,6 +464,37 @@ impl CredentialVerifier {
         admin.require_auth();
         admin
     }
+
+    /// Admin-only: upgrade contract to new WASM, emitting an upgrade event.
+    #[allow(deprecated)]
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin = Self::require_admin(&env);
+
+        // Emit upgrade event before executing the upgrade
+        env.events().publish(
+            (symbol_short!("cred_ver"), symbol_short!("upgraded")),
+            EventContractUpgraded {
+                admin,
+                upgraded_at: env.ledger().timestamp(),
+            },
+        );
+
+        // Record upgrade timestamp for audit trail
+        env.storage()
+            .instance()
+            .set(&DataKey::LastUpgradeTimestamp, &env.ledger().timestamp());
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Returns the timestamp of the last upgrade, or 0 if none has occurred.
+    pub fn last_upgrade_timestamp(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LastUpgradeTimestamp)
+            .unwrap_or(0)
+    }
 }
 
+#[cfg(test)]
 mod test;

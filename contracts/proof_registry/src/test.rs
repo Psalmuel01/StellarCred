@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 extern crate std;
 
 use super::*;
@@ -7,8 +5,16 @@ use credential_verifier::{CredentialVerifier, CredentialVerifierClient};
 use issuer_registry::{IssuerRegistry, IssuerRegistryClient};
 use soroban_sdk::{
     symbol_short,
+
     testutils::{storage::Persistent as _, Address as _, Ledger as _},
     vec, Address, Bytes, BytesN, Env,
+
+    testutils::{
+        storage::Persistent as _, Address as _, Events as _, Ledger as _, MockAuth,
+        MockAuthInvoke,
+    },
+    vec, Address, Bytes, BytesN, Env, IntoVal, Symbol,
+
 };
 
 // Real UltraHonk artifacts from existing circuits.
@@ -863,6 +869,302 @@ fn aggregate_rejects_over_max_expiry_in_any_slot() {
             .0
     );
 }
+
+// ── Event schema & drift tests (Issue #429) ──────────────────────────────────
+
+#[test]
+fn submit_proof_emits_expected_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&h.registry_id),
+        vec![
+            &env,
+            (
+                h.registry_id.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 1000,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn submit_proofs_batch_emits_expected_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let h = deploy_multi(&env);
+    let holder = Address::generate(&env);
+
+    let submissions = vec![
+        &env,
+        kyc_submission(&env, &h.kyc_issuer, 1000),
+        ProofSubmission {
+            credential_type: symbol_short!("funds"),
+            proof: Bytes::from_slice(&env, FUNDS_PROOF),
+            public_inputs: u8_slice_to_vec_u32(&env, FUNDS_PUBLIC_INPUTS),
+            issuer_id: h.funds_issuer.clone(),
+            expiry: 2000,
+            vk_version: None,
+        },
+    ];
+
+    h.registry.submit_proofs(&holder, &submissions);
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&h.registry.address),
+        vec![
+            &env,
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.kyc_issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 1000,
+                }
+                .into_val(&env),
+            ),
+            (
+                h.registry.address.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("funds"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: h.funds_issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 2000,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn submit_aggregate_proof_emits_expected_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let admin = Address::generate(&env);
+
+    let ir_id = env.register(IssuerRegistry, (admin.clone(),));
+    let ir = IssuerRegistryClient::new(&env, &ir_id);
+    let issuer = Address::generate(&env);
+    ir.register_issuer(
+        &issuer,
+        &demo_pubkey(&env),
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+    );
+
+    let v_id = env.register(CredentialVerifier, (admin.clone(),));
+    CredentialVerifierClient::new(&env, &v_id).set_vk(
+        &symbol_short!("aggregate"),
+        &1u32,
+        &Bytes::from_slice(&env, AGGREGATE_VK),
+    );
+
+    let pr_id = env.register(ProofRegistry, (admin, v_id, ir_id));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+    let holder = Address::generate(&env);
+
+    registry.submit_aggregate_proof(
+        &holder,
+        &vec![&env, issuer.clone(), issuer.clone()],
+        &vec![&env, symbol_short!("kyc"), symbol_short!("age")],
+        &Bytes::from_slice(&env, AGGREGATE_PROOF),
+        &Bytes::from_slice(&env, AGGREGATE_PUBLIC_INPUTS),
+        &vec![&env, 1000u64, 2000u64],
+    );
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&pr_id),
+        vec![
+            &env,
+            (
+                pr_id.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 1000,
+                }
+                .into_val(&env),
+            ),
+            (
+                pr_id.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("submitted"),
+                    symbol_short!("age"),
+                )
+                    .into_val(&env),
+                EventProofSubmitted {
+                    holder: holder.clone(),
+                    issuer: issuer.clone(),
+                    verified_at: env.ledger().timestamp(),
+                    expiry: 2000,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn issuer_revoke_emits_expected_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    // Drain submit event
+    let _ = env.events().all();
+
+    h.registry.revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+    let all_events = env.events().all().filter_by_contract(&h.registry_id);
+    assert_eq!(
+        all_events,
+        vec![
+            &env,
+            (
+                h.registry_id.clone(),
+                (
+                    symbol_short!("proof_reg"),
+                    symbol_short!("revoked"),
+                    symbol_short!("kyc"),
+                )
+                    .into_val(&env),
+                EventProofRevoked {
+                    holder,
+                    issuer: h.issuer.clone(),
+                    revoked_at: env.ledger().timestamp(),
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn pause_and_unpause_emit_expected_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let dummy = Address::generate(&env);
+
+    let pr_id = env.register(ProofRegistry, (admin.clone(), dummy.clone(), dummy));
+    let registry = ProofRegistryClient::new(&env, &pr_id);
+
+    registry.pause();
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&pr_id),
+        vec![
+            &env,
+            (
+                pr_id.clone(),
+                (symbol_short!("proof_reg"), symbol_short!("paused")).into_val(&env),
+                EventPaused {
+                    admin: admin.clone(),
+                    paused_at: env.ledger().timestamp(),
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+
+    registry.unpause();
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&pr_id),
+        vec![
+            &env,
+            (
+                pr_id.clone(),
+                (symbol_short!("proof_reg"), symbol_short!("unpaused")).into_val(&env),
+                EventUnpaused {
+                    admin,
+                    unpaused_at: env.ledger().timestamp(),
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn holder_self_revoke_emits_no_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    submit(&env, &h, &holder, 1000);
+
+    let expected = vec![
+        &env,
+        (
+            h.registry_id.clone(),
+            (
+                symbol_short!("proof_reg"),
+                symbol_short!("submitted"),
+                symbol_short!("kyc"),
+            )
+                .into_val(&env),
+            EventProofSubmitted {
+                holder: holder.clone(),
+                issuer: h.issuer.clone(),
+                verified_at: env.ledger().timestamp(),
+                expiry: 1000,
+            }
+                .into_val(&env),
+        ),
+    ];
+    assert_eq!(env.events().all().filter_by_contract(&h.registry_id), expected);
+
+    // Holder self-revocation removes storage key directly and emits no new event
+    h.registry.revoke_proof(&holder, &symbol_short!("kyc"));
+
+    assert_eq!(env.events().all().filter_by_contract(&h.registry_id), vec![&env]);
+}
+
 // ── Delegated verification (#396) ────────────────────────────────────────────
 
 #[test]
