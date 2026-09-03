@@ -1116,6 +1116,22 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               device, scan the QR and enter the same passphrase to import.
             </P>
 
+            <SubHeading>Guardian Secret Sharing (Social & Device Recovery)</SubHeading>
+            <P>
+              Beyond a single passphrase or plain JSON backup, StellarCred offers{" "}
+              <strong style={{color:"var(--text)"}}>Guardian recovery</strong> using Shamir Secret Sharing
+              over GF(256) (see <Code>lib/shamir.ts</Code> and <Code>lib/guardian.ts</Code>).
+              A holder can split their 256-bit AES credential encryption key among <Code>N</Code> chosen
+              guardians (friends, family, or secondary hardware devices) such that any <Code>K</Code>{" "}
+              (threshold) shares can restore the key and decrypt their credentials.
+            </P>
+            <P>
+              The entire process runs client-side. Guardians receive only their assigned key shares
+              (as JSON files, armored share codes, or QR codes) and never see any credential data.
+              During recovery, entering any <Code>K</Code> guardian shares reconstructs the encryption key,
+              authenticates against the encrypted backup, and safely restores credentials back into local storage.
+            </P>
+
             <SubHeading>What is stored, and where</SubHeading>
             <div
               style={{

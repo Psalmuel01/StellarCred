@@ -32,7 +32,6 @@ const ProofPerfPanel = dynamic(
   () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
   { ssr: false },
 );
-
 // Extracted hooks
 import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
 import { useBatchSelection } from "@/lib/hooks/useBatchSelection";
@@ -51,6 +50,7 @@ import { ImportPanel } from "@/components/holder/ImportPanel";
 import { ProofFlowView } from "@/components/holder/ProofFlowView";
 import { BatchProofFlowView } from "@/components/holder/BatchProofFlowView";
 import { SponsorBanner } from "@/components/holder/SponsorBanner";
+import { GuardianRecoveryControl } from "@/components/holder/GuardianRecoveryControl";
 
 // Sponsored submission
 import { isSponsorAvailable, submitSponsoredProof } from "@/lib/sponsor";
@@ -77,6 +77,7 @@ function HolderInner() {
 
   const {
     creds,
+    reload: reloadCreds,
     save: saveCred,
     remove: removeCred,
     markCredentialProved,
@@ -408,10 +409,24 @@ function HolderInner() {
                 >
                   <IconDownload size={14} /> Export backup
                 </button>
+                <GuardianRecoveryControl
+                  hasCredentials={creds.length > 0}
+                  onRestored={(recovered) => {
+                    reloadCreds();
+                    toast.success(
+                      `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
+                    );
+                  }}
+                />
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
-                Credentials live only in this browser (localStorage). Export a backup before clearing site data.{" "}
-                <Link href="/docs#storage" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                Credentials live only in this browser (localStorage) — export a backup
+                or set up <strong>Guardian recovery</strong> (Shamir Secret Sharing) before
+                clearing site data or switching devices.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
                   Where your credentials live
                 </Link>
               </p>
@@ -439,6 +454,7 @@ function HolderInner() {
           onClose={() => setImportPayload(null)}
         />
       )}
+
     </>
   );
 }
