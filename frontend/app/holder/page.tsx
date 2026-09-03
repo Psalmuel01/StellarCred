@@ -9,7 +9,6 @@ import {
   IconPlus,
   IconDownload,
   IconChartBar,
-  IconShieldLock,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet, usePreviewMode } from "@/lib/wallet-context";
@@ -33,11 +32,6 @@ const ProofPerfPanel = dynamic(
   () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
   { ssr: false },
 );
-const GuardianRecoveryModal = dynamic(
-  () => import("@/components/GuardianRecoveryModal").then((m) => m.GuardianRecoveryModal),
-  { ssr: false },
-);
-
 // Extracted hooks
 import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
 import { useBatchSelection } from "@/lib/hooks/useBatchSelection";
@@ -56,6 +50,7 @@ import { ImportPanel } from "@/components/holder/ImportPanel";
 import { ProofFlowView } from "@/components/holder/ProofFlowView";
 import { BatchProofFlowView } from "@/components/holder/BatchProofFlowView";
 import { SponsorBanner } from "@/components/holder/SponsorBanner";
+import { GuardianRecoveryControl } from "@/components/holder/GuardianRecoveryControl";
 
 // Sponsored submission
 import { isSponsorAvailable, submitSponsoredProof } from "@/lib/sponsor";
@@ -82,6 +77,7 @@ function HolderInner() {
 
   const {
     creds,
+    reload: reloadCreds,
     save: saveCred,
     remove: removeCred,
     markCredentialProved,
@@ -116,7 +112,6 @@ function HolderInner() {
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
   const [showPerf, setShowPerf] = useState(false);
-  const [guardianModalTab, setGuardianModalTab] = useState<"setup" | "recover" | null>(null);
 
   // ── QR transfer import ─────────────────────────────────────────────────────
 
@@ -414,14 +409,15 @@ function HolderInner() {
                 >
                   <IconDownload size={14} /> Export backup
                 </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setGuardianModalTab(creds.length > 0 ? "setup" : "recover")}
-                  title="Split encryption key among guardians with Shamir secret sharing, or recover credentials"
-                >
-                  <IconShieldLock size={14} />
-                  Guardian recovery
-                </button>
+                <GuardianRecoveryControl
+                  hasCredentials={creds.length > 0}
+                  onRestored={(recovered) => {
+                    reloadCreds();
+                    toast.success(
+                      `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
+                    );
+                  }}
+                />
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
                 Credentials live only in this browser (localStorage) — export a backup
@@ -459,19 +455,6 @@ function HolderInner() {
         />
       )}
 
-      {guardianModalTab && (
-        <GuardianRecoveryModal
-          initialTab={guardianModalTab}
-          onClose={() => setGuardianModalTab(null)}
-          onRestored={(recovered: Credential[]) => {
-            setCreds(loadCredentials());
-            setGuardianModalTab(null);
-            toast.success(
-              `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
-            );
-          }}
-        />
-      )}
     </>
   );
 }

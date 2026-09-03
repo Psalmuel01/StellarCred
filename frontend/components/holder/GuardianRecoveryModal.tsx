@@ -11,9 +11,9 @@ import {
   IconQrcode,
   IconUpload,
 } from "@tabler/icons-react";
-import { QrCodeModal } from "./QrCodeModal";
-import CopyButton from "./CopyButton";
-import { Badge } from "./Badge";
+import { QrCodeModal } from "../QrCodeModal";
+import CopyButton from "../CopyButton";
+import { Badge } from "../Badge";
 import type { Credential } from "@/lib/credential";
 import { loadCredentials, saveCredential } from "@/lib/credential";
 import {
