@@ -21,6 +21,8 @@ export interface TextProps extends React.HTMLAttributes<HTMLParagraphElement> {
   gradient?: boolean;
   /** Render as a different element */
   as?: "p" | "span" | "div" | "h1" | "h2" | "h3" | "h4" | "small" | "label";
+  /** Font weight override (defaults to 600 when eyebrow is set) */
+  fontWeight?: React.CSSProperties["fontWeight"];
   /** Additional className */
   className?: string;
 }
@@ -53,12 +55,18 @@ export function Text({
   color: colorName = "text",
   eyebrow = false,
   gradient = false,
-  as: Tag = "p",
+  as = "p",
   className = "",
   children,
   style,
+  fontWeight,
   ...props
 }: TextProps) {
+  // Polymorphic tag: typing the dynamic element as a union of intrinsic tags
+  // makes the JSX checker instantiate every member (e.g. <label>, <symbol>),
+  // so we widen to ElementType where the spread is accepted.
+  const tagName = as as string;
+  const Tag = tagName as React.ElementType;
   const classes = [
     eyebrow ? "eyebrow" : "",
     gradient ? "gradient-text" : "",
@@ -73,11 +81,11 @@ export function Text({
       style={{
         fontSize: variantFontSize[variant],
         color: colorMap[colorName],
-        fontWeight: eyebrow ? 600 : undefined,
+        fontWeight: eyebrow ? 600 : fontWeight,
         letterSpacing: eyebrow ? "0.07em" : undefined,
         textTransform: eyebrow ? "uppercase" : undefined,
         margin: 0,
-        lineHeight: Tag.startsWith("h") ? 1.1 : 1.6,
+        lineHeight: tagName.startsWith("h") ? 1.1 : 1.6,
         ...style,
       }}
       {...props}
@@ -103,7 +111,10 @@ export function Heading({
   style,
   ...props
 }: HeadingProps) {
-  const Tag = `h${level}` as keyof JSX.IntrinsicElements;
+  // Narrow to heading tags only — `keyof JSX.IntrinsicElements` would make the
+  // JSX checker instantiate the spread against every intrinsic element (e.g.
+  // <symbol>), which fails for heading attributes.
+  const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4";
   return (
     <Tag
       className={`heading-group ${className}`.trim()}

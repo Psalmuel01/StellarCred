@@ -75,14 +75,8 @@ export function ConfigBanner({ requireIssuance = false }: { requireIssuance?: bo
       <IconInfoCircle size={16} className="config-banner__icon" />
       <span className="config-banner__text">
         <strong className="config-banner__strong">App not fully configured.</strong>{" "}
-        {requireIssuance ? "Credential issuance and " : "On-chain submission is "}
-
-      <IconInfoCircle size={16} className="muted" style={{ flexShrink: 0, marginTop: 2 }} />
-      <span className="muted">
-        <strong style={{ color: "var(--text)" }}>App not fully configured.</strong>{" "}
         Active network: <strong>{NETWORK}</strong>.{" "}
         {requireIssuance ? "Credential issuance and " : ""}On-chain submission is
-
         disabled — missing env vars:{" "}
         <span className="config-banner__code">{allMissing.join(", ")}</span>. Run{" "}
         <span className="config-banner__code">./scripts/deploy.sh</span> and set them in{" "}

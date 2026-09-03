@@ -9,8 +9,9 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   label?: string;
   /** Helper/error text below the input */
   helper?: string;
-  /** If true, renders in error state */
-  error?: boolean;
+  /** Renders in error state. Pass `true` for the styled state, or a string to
+   *  also show that message below the input in the danger color. */
+  error?: boolean | string;
   /** Additional className for the wrapper */
   wrapperClassName?: string;
 }
@@ -25,6 +26,8 @@ export function Input({
   ...props
 }: InputProps) {
   const inputId = id || props.name || label?.toLowerCase().replace(/\s+/g, "-");
+  const hasError = Boolean(error);
+  const errorMessage = typeof error === "string" ? error : undefined;
 
   return (
     <div className={`input-field ${wrapperClassName}`.trim()}>
@@ -46,12 +49,12 @@ export function Input({
       )}
       <input
         id={inputId}
-        className={`input-field__input ${className} ${error ? "input-field__input--error" : ""}`.trim()}
+        className={`input-field__input ${className} ${hasError ? "input-field__input--error" : ""}`.trim()}
         style={{
           width: "100%",
           backgroundColor: "var(--input)",
           color: "var(--text)",
-          border: `1px solid ${error ? "var(--danger)" : "var(--border)"}`,
+          border: `1px solid ${hasError ? "var(--danger)" : "var(--border)"}`,
           borderRadius: "var(--radius-sm)",
           padding: "var(--spacing-md, 0.625rem) var(--spacing-lg, 0.8rem)",
           fontFamily: "var(--font-mono), monospace",
@@ -61,15 +64,15 @@ export function Input({
         }}
         {...props}
       />
-      {helper && (
+      {(errorMessage || helper) && (
         <div
           style={{
             fontSize: "var(--type-xs, 0.72rem)",
-            color: error ? "var(--danger)" : "var(--faint)",
+            color: hasError ? "var(--danger)" : "var(--faint)",
             marginTop: "var(--spacing-xs, 0.25rem)",
           }}
         >
-          {helper}
+          {errorMessage || helper}
         </div>
       )}
     </div>

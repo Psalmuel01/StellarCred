@@ -71,6 +71,7 @@ export function Button({
   children,
   disabled,
   style,
+  ref,
   ...props
 }: ButtonProps) {
   const classes = [
@@ -90,9 +91,10 @@ export function Button({
     return (
       <a
         href={href}
+        ref={ref as React.Ref<HTMLAnchorElement>}
         className={classes}
         style={geometryStyle}
-        {...props}
+        {...(props as unknown as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
       >
         {children}
       </a>
@@ -104,6 +106,7 @@ export function Button({
       className={classes}
       style={geometryStyle}
       disabled={disabled}
+      ref={ref as React.Ref<HTMLButtonElement>}
       {...props}
     >
       {children}

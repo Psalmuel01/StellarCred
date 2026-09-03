@@ -1,14 +1,15 @@
+"use client";
+
 import React from "react";
 import Link from "next/link";
 import {
   IconSitemap,
   IconPalette,
-  IconType,
+  IconTypography,
   IconDeviceMobile,
 } from "@tabler/icons-react";
 import { Badge } from "@/components/Badge";
-import { Modal } from "@/components/Modal";
-import { ToastProvider, useToast } from "@/components/Toast";
+import { useToast } from "@/components/Toast";
 import { Input } from "@/components/primitives/Input";
 import { CodeBlock } from "@/components/primitives/CodeBlock";
 import { Text, Heading } from "@/components/primitives/Text";
@@ -45,12 +46,12 @@ export default function ComponentShowcasePage() {
           style={{ gap: "1rem" }}
         >
           {[
-            { name: "Badge", desc: "Status chip with dot + label", icon: <IconType size={18} stroke={1.6} color="var(--accent)" /> },
+            { name: "Badge", desc: "Status chip with dot + label", icon: <IconTypography size={18} stroke={1.6} color="var(--accent)" /> },
             { name: "Button", desc: "Primary / secondary / ghost / link", icon: <IconDeviceMobile size={18} stroke={1.6} color="var(--accent)" /> },
             { name: "Card", desc: "Raised surface with optional hover", icon: <IconSitemap size={18} stroke={1.6} color="var(--accent)" /> },
             { name: "Modal", desc: "Focus-trapped dialog with backdrop", icon: <IconPalette size={18} stroke={1.6} color="var(--accent)" /> },
-            { name: "Toast", desc: "Auto-dismissing notification stack", icon: <IconType size={18} stroke={1.6} color="var(--accent)" /> },
-            { name: "Input", desc: "Consistent form field with label", icon: <IconType size={18} stroke={1.6} color="var(--accent)" /> },
+            { name: "Toast", desc: "Auto-dismissing notification stack", icon: <IconTypography size={18} stroke={1.6} color="var(--accent)" /> },
+            { name: "Input", desc: "Consistent form field with label", icon: <IconTypography size={18} stroke={1.6} color="var(--accent)" /> },
           ].map((item) => (
             <div
               key={item.name}

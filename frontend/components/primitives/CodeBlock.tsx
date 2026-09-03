@@ -10,9 +10,11 @@ export interface CodeBlockProps {
   className?: string;
   /** Optional language label shown at top */
   label?: string;
+  /** Optional style overrides, merged over the token-driven defaults */
+  style?: React.CSSProperties;
 }
 
-export function CodeBlock({ children, className = "", label }: CodeBlockProps) {
+export function CodeBlock({ children, className = "", label, style }: CodeBlockProps) {
   return (
     <pre
       className={`code-block ${className}`.trim()}
@@ -28,6 +30,7 @@ export function CodeBlock({ children, className = "", label }: CodeBlockProps) {
         color: "var(--muted)",
         margin: 0,
         whiteSpace: "pre",
+        ...style,
       }}
     >
       {label && (
