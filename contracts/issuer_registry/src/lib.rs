@@ -21,6 +21,13 @@ use soroban_sdk::{
     BytesN, Env, Map, String, Symbol, Vec,
 };
 
+// ── Contract versioning ──────────────────────────────────────────────────────
+// Semantic version: MAJOR.MINOR.PATCH
+// Increment MAJOR on breaking changes (new entry points, changed ABI)
+// Increment MINOR on additive changes (new events, new query endpoints)
+// Increment PATCH on bug fixes with no ABI changes
+const CONTRACT_VERSION: u32 = 1_000_000; // 1.0.0 encoded as (major * 1000000) + (minor * 1000) + patch
+
 // ── Event types ──────────────────────────────────────────────────────────────
 // Topics follow the convention: (contract, action, credential_type_or_unit).
 // `contract` is always `symbol_short!("iss_reg")` for IssuerRegistry events.
@@ -31,7 +38,7 @@ use soroban_sdk::{
 /// Payload emitted when an issuer is registered or updated.
 /// Topics: ("iss_reg", "register")
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventIssuerRegistered {
     /// The address of the newly registered issuer.
     pub issuer: Address,
@@ -42,7 +49,7 @@ pub struct EventIssuerRegistered {
 /// Payload emitted when an issuer is revoked.
 /// Topics: ("iss_reg", "revoked")
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventIssuerRevoked {
     /// The address of the revoked issuer.
     pub issuer: Address,
@@ -125,6 +132,15 @@ impl IssuerRegistry {
         env.storage().instance().set(&DataKey::Roles, &roles);
     }
 
+    /// Returns the contract version as an encoded u32.
+    /// Encoding: (major * 1000000) + (minor * 1000) + patch
+    /// Example: 1.2.3 -> 1002003
+    pub fn version(env: Env) -> u32 {
+        let _ = env; // Silence unused warning
+        CONTRACT_VERSION
+    }
+
+    /// Register (or overwrite) a trusted issuer. Admin-only.
     /// Register (or overwrite) a trusted issuer. Admin-role only.
     // NOTE: We suppress the deprecation warning for `env.events().publish` here.
     // The idiomatic Soroban v26 replacement is `#[contractevent]`; we use
@@ -421,4 +437,5 @@ impl IssuerRegistry {
     }
 }
 
+#[cfg(test)]
 mod test;

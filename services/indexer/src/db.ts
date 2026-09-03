@@ -390,17 +390,6 @@ export function createSqliteDb(config: Config): Db {
       return row?.max_ledger ?? 0;
     },
 
-    deleteClaimsAfter(fromLedger: number) {
-      raw.prepare("DELETE FROM claims WHERE ledger_sequence > ?").run(fromLedger);
-    },
-
-    getMaxClaimLedger() {
-      const row = raw
-        .prepare("SELECT MAX(ledger_sequence) AS max_ledger FROM claims")
-        .get() as { max_ledger: number | null } | undefined;
-      return row?.max_ledger ?? 0;
-    },
-
     close() {
       raw.close();
     },
@@ -601,20 +590,6 @@ export function createPostgresDb(config: Config): Db {
             [limit + 1]
           );
       return toRecentPage(res.rows, limit);
-    },
-
-    async deleteClaimsAfter(fromLedger: number) {
-      await pool.query(
-        "DELETE FROM claims WHERE ledger_sequence > $1",
-        [fromLedger]
-      );
-    },
-
-    async getMaxClaimLedger() {
-      const res = await pool.query<{ max_ledger: string | null }>(
-        "SELECT MAX(ledger_sequence) AS max_ledger FROM claims"
-      );
-      return Number(res.rows[0]?.max_ledger ?? 0);
     },
 
     async deleteClaimsAfter(fromLedger: number) {
