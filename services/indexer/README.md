@@ -8,11 +8,17 @@ The indexer continuously polls Soroban contract events emitted by `ProofRegistry
 
 ## Features
 
-- **Soroban Contract Event Ingestion**: Monitors ledger events (`submitted`, `revoked`) and maintains verified claim state per wallet.
+- **Soroban Contract Event Ingestion**: Monitors ledger events (`submitted`, `revoked`, `paused`, `unpaused`) according to the authoritative [EVENTS.md](../../EVENTS.md) schema and maintains verified claim state per wallet.
 - **Pluggable Database Storage**: Supports SQLite (for local development and single-instance deployments) and PostgreSQL (for production multi-instance deployments).
 - **CORS Policy**: Configurable origin allowlisting (`CORS_ORIGIN` / `CORS_ALLOWED_ORIGINS`) with secure default-deny in production.
 - **Per-IP Rate Limiting**: Built-in fixed-window rate limiting responding with HTTP `429 Too Many Requests` and `Retry-After` headers.
 - **Zero Identity Exposure**: Ingests and stores only public on-chain commitments and verification metadata. No user identity fields are stored or processed.
+
+---
+
+## Contract Events Reference
+
+For the authoritative specification of all contract events, topic tuples, payload structures, and drift-prevention guarantees across all StellarCred contracts, see [EVENTS.md](../../EVENTS.md) (or [docs/EVENTS.md](../../docs/EVENTS.md)).
 
 ---
 
