@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { OnboardingTour } from "@/components/OnboardingTour";
 import { SiteNav } from "@/components/SiteNav";
 import { NetworkBanner } from "@/components/NetworkBanner";
 import { Footer } from "@/components/Footer";
@@ -42,8 +43,6 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${body.variable} ${display.variable} ${mono.variable}`}
-      // Omit `data-theme` so the blocking boot script owns first paint
-      // (avoids flashing the wrong palette before hydration).
       suppressHydrationWarning
     >
       <head>
@@ -58,6 +57,7 @@ export default function RootLayout({
         </a>
         <ToastProvider>
           <WalletProvider>
+            <OnboardingTour />
             <SiteNav />
             <NetworkBanner />
             <OnboardingWizard />
