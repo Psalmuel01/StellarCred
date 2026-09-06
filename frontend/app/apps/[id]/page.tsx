@@ -1,18 +1,20 @@
-import type { Metadata } from "next";
+import { Metadata } from "next";
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
 import { getProtocol } from "@/lib/protocols";
+import ProtocolDetailClient from "./ProtocolDetailClient";
 
-export const metadata: Metadata = {
-  title: "StellarCred — Protocol not found",
-  description: "The requested StellarCred protocol could not be found.",
-};
-
-export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
   const { id } = await params;
   const protocol = getProtocol(id);
   if (!protocol) {
-    notFound();
+    return {
+      title: "StellarCred — Protocol not found",
+      description: "The requested StellarCred protocol could not be found.",
+    };
   }
 
   return {
@@ -32,9 +34,11 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   };
 }
 
-import ProtocolDetailClient from "./ProtocolDetailClient";
-
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
   return (
     <Suspense fallback={null}>
