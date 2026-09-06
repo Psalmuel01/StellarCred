@@ -77,6 +77,7 @@ fn get_test_wasm(env: &Env) -> Bytes {
 struct Harness {
     registry: ProofRegistryClient<'static>,
     registry_id: Address,
+    issuer_registry: IssuerRegistryClient<'static>,
     issuer: Address,
     admin: Address,
 }
@@ -100,6 +101,7 @@ fn deploy(env: &Env) -> Harness {
     Harness {
         registry: ProofRegistryClient::new(env, &pr_id),
         registry_id: pr_id,
+        issuer_registry: ir,
         issuer,
         admin,
     }
@@ -391,6 +393,51 @@ fn issuer_revoke_rejects_wrong_issuer() {
         .registry
         .try_revoke(&stranger, &holder, &symbol_short!("kyc"));
     assert!(res.is_err());
+}
+
+#[test]
+fn issuer_revoke_rejects_different_trusted_issuer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+    let other_issuer = Address::generate(&env);
+
+    h.issuer_registry.register_issuer(
+        &other_issuer,
+        &demo_pubkey(&env),
+        &vec![&env, symbol_short!("kyc")],
+    );
+    submit(&env, &h, &holder, 9999);
+
+    let result = h
+        .registry
+        .try_revoke(&other_issuer, &holder, &symbol_short!("kyc"));
+
+    assert!(result.is_err());
+    assert!(
+        h.registry
+            .is_verified(&holder, &symbol_short!("kyc"), &None)
+            .0
+    );
+}
+
+#[test]
+fn issuer_revoke_rejects_missing_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let h = deploy(&env);
+    let holder = Address::generate(&env);
+
+    let result = h
+        .registry
+        .try_revoke(&h.issuer, &holder, &symbol_short!("kyc"));
+
+    assert!(result.is_err());
+    assert!(h
+        .registry
+        .get_record(&holder, &symbol_short!("kyc"))
+        .is_none());
 }
 
 #[test]
