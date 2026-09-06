@@ -282,6 +282,56 @@ jobs:
       - name: Run issuer tests (incl. cross-boundary circuit test)
         run: pnpm --filter @stellarcred/issuer test
 
+  indexer:
+    # The indexer's DB layer supports BOTH SQLite and Postgres, so the same
+    # test matrix must run against both backends or one silently rots. This job
+    # spins up a Postgres 16 service container so the parameterized DB suite
+    # (services/indexer/src/db.test.ts) exercises migrations, upserts, revokes,
+    # cursor updates, etc. on Postgres while also still running the SQLite leg.
+    name: Indexer tests (SQLite + Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/indexer
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: indexer
+          POSTGRES_PASSWORD: indexer
+          POSTGRES_DB: indexer
+        ports:
+          - 5432:5432
+        # Gate job steps until Postgres is accepting connections.
+        options: >-
+          --health-cmd "pg_isready -U indexer -d indexer"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/indexer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run DB test matrix (SQLite + Postgres) and unit tests
+        run: npm test
+        env:
+          # Dummy contract ID / RPC so the ingester tests run headlessly.
+          PROOF_REGISTRY_CONTRACT_ID: C000000000000000000000000000000000000000000000000000000000000001
+          RPC_URL: https://soroban-testnet.stellar.org
+          # Point the Postgres leg of the DB matrix at the service container.
+          TEST_POSTGRES_URL: postgres://indexer:indexer@localhost:5432/indexer
+
   sdk-integration:
     name: SDK integration tests (testnet)
     runs-on: ubuntu-latest
