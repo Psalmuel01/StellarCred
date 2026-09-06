@@ -47,6 +47,7 @@ function makeIngester(overrides?: Partial<IngesterHealth>): Ingester {
     reconcile: async () => 0,
     start: () => {},
     stop: () => {},
+    shutdown: async () => {},
     getHealth: () => ({ ...health }),
     getMetrics: () => ({ ...metrics }),
   };
@@ -57,6 +58,7 @@ function makeConfig(sqlitePath: string): Config {
     stellarNetwork: "testnet",
     horizonUrl: "https://horizon-testnet.stellar.org",
     rpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
     proofRegistryContractId: "CTEST",
     dbDriver: "sqlite",
     sqlitePath,

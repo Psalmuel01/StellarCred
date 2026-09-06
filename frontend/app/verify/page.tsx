@@ -9,10 +9,12 @@ import {
   IconBuildingBank,
   IconQrcode,
 } from "@tabler/icons-react";
+import { VerifyLinkError } from "@/app/verify/VerifyLinkError";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
+import { parseVerifyParams, type VerifyError } from "@/lib/verifyParams";
 import { useToast } from "@/components/Toast";
 import { validateVerifyParams } from "@/lib/verifyParams";
 import { QrScanner } from "@/components/QrScanner";
@@ -82,6 +84,21 @@ function VerifyInner() {
   const requiredClaim =
     claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
   const locked = !!requiredClaim;
+
+  // Parse and validate every verification-link parameter up front. If the link
+  // is malformed (bad claim type / bad threshold / missing return URL), render
+  // an explicit invalid-link screen instead of a blank page, a stuck spinner,
+  // or a silent proceed.
+  const verification = parseVerifyParams({
+    return_url: searchParams.get("return_url"),
+    claim: searchParams.get("claim"),
+    threshold_years: searchParams.get("threshold_years"),
+    threshold: searchParams.get("threshold"),
+    min_threshold: searchParams.get("min_threshold"),
+    restricted: searchParams.get("restricted"),
+    inquiry_id: searchParams.get("inquiry-id"),
+  });
+  const linkError: VerifyError | null = verification.ok ? null : (verification.error ?? null);
 
   // Validate all query params up-front; block the flow on any invalid value.
   const paramValidation = validateVerifyParams({
@@ -320,6 +337,10 @@ function VerifyInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personaInquiryId, address]);
 
+  const handleBack = () => {
+    router.push("/");
+  };
+
   function setAttr(key: string, val: string) {
     setAttributes((a: Record<string, string>) => ({ ...a, [key]: val }));
   }
@@ -478,7 +499,9 @@ function VerifyInner() {
         )}
 
         <div className="card">
-          {!address ? (
+          {linkError ? (
+            <VerifyLinkError error={linkError} onBack={handleBack} />
+          ) : !address ? (
             <div style={{ textAlign: "center", padding: "2rem 0" }}>
               <p
                 className="muted"

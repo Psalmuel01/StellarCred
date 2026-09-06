@@ -8,6 +8,7 @@ import {
   IconCertificate,
   IconPlus,
   IconDownload,
+  IconChartBar,
 } from "@tabler/icons-react";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet, usePreviewMode } from "@/lib/wallet-context";
@@ -27,7 +28,10 @@ const TransferImportModal = dynamic(
   () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
   { ssr: false },
 );
-
+const ProofPerfPanel = dynamic(
+  () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
+  { ssr: false },
+);
 // Extracted hooks
 import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
 import { useBatchSelection } from "@/lib/hooks/useBatchSelection";
@@ -46,6 +50,7 @@ import { ImportPanel } from "@/components/holder/ImportPanel";
 import { ProofFlowView } from "@/components/holder/ProofFlowView";
 import { BatchProofFlowView } from "@/components/holder/BatchProofFlowView";
 import { SponsorBanner } from "@/components/holder/SponsorBanner";
+import { GuardianRecoveryControl } from "@/components/holder/GuardianRecoveryControl";
 
 // Sponsored submission
 import { isSponsorAvailable, submitSponsoredProof } from "@/lib/sponsor";
@@ -72,6 +77,7 @@ function HolderInner() {
 
   const {
     creds,
+    reload: reloadCreds,
     save: saveCred,
     remove: removeCred,
     markCredentialProved,
@@ -105,6 +111,7 @@ function HolderInner() {
   const [detailCred, setDetailCred] = useState<Credential | null>(null);
   const [transferCred, setTransferCred] = useState<Credential | null>(null);
   const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [showPerf, setShowPerf] = useState(false);
 
   // ── QR transfer import ─────────────────────────────────────────────────────
 
@@ -176,12 +183,26 @@ function HolderInner() {
           <a href="/presets" className="btn btn-secondary">
             Presets
           </a>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPerf((v) => !v)}
+            title="Proving performance &amp; telemetry debug view"
+            aria-expanded={showPerf}
+          >
+            <IconChartBar size={14} />
+            {showPerf ? "Hide perf" : "Perf"}
+          </button>
           <WalletButton />
         </div>
       </div>
 
       <ConfigBanner />
       <SponsorBanner />
+
+      {/* Proving performance & telemetry debug view (GitHub #432). Lazily
+          loaded so it stays out of the holder route's initial bundle. Rendered
+          above the credential list when opened. */}
+      {showPerf && <ProofPerfPanel />}
 
       {isPreview && (
         <div
@@ -388,10 +409,24 @@ function HolderInner() {
                 >
                   <IconDownload size={14} /> Export backup
                 </button>
+                <GuardianRecoveryControl
+                  hasCredentials={creds.length > 0}
+                  onRestored={(recovered) => {
+                    reloadCreds();
+                    toast.success(
+                      `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
+                    );
+                  }}
+                />
               </div>
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
-                Credentials live only in this browser (localStorage). Export a backup before clearing site data.{" "}
-                <Link href="/docs#storage" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                Credentials live only in this browser (localStorage) — export a backup
+                or set up <strong>Guardian recovery</strong> (Shamir Secret Sharing) before
+                clearing site data or switching devices.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
                   Where your credentials live
                 </Link>
               </p>
@@ -419,6 +454,7 @@ function HolderInner() {
           onClose={() => setImportPayload(null)}
         />
       )}
+
     </>
   );
 }

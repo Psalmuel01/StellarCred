@@ -2,10 +2,14 @@
  * ingester.ts — Poll Horizon for ProofRegistry contract events and write them
  * into the local DB.
  *
- * ProofRegistry emits two kinds of events:
+ * All emitted event topics and payload schemas are documented authoritatively in
+ * `EVENTS.md` (and `docs/EVENTS.md`).
  *
- *   Verified  topics: ["proof", "verified"]  value: expiry (u64)
- *   Revoked   topics: ["revoked"]            value: (holder, cred_type, issuer, ts)
+ * ProofRegistry event topics follow the tuple convention:
+ *   Submitted: ("proof_reg", "submitted", <credential_type>) -> EventProofSubmitted
+ *   Revoked:   ("proof_reg", "revoked", <credential_type>)   -> EventProofRevoked
+ *   Paused:    ("proof_reg", "paused")                       -> EventPaused
+ *   Unpaused:  ("proof_reg", "unpaused")                     -> EventUnpaused
  *
  * Horizon's /effects and /transactions endpoints don't surface Soroban contract
  * events natively, so we use the dedicated
@@ -190,7 +194,10 @@ function decodeScVal(b64: string): unknown {
     }
     return native;
   } catch {
-    return null;
+    // Not valid base64 XDR — treat the raw value as a literal string so that
+    // already-decoded / plain-string topics (e.g. "proof", "verified") still
+    // match parseEvent's topic comparisons instead of silently becoming null.
+    return b64;
   }
 }
 
@@ -504,43 +511,6 @@ export function createIngester(config: Config, db: Db): Ingester {
 
     // Filter out events beyond the finality boundary
     return records.filter((ev) => {
-      const evLedger = typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
-    // Fetch head ledger (best-effort) so lag is visible in /health.
-    // We fire this in parallel with the events fetch so we don't add
-    // serial latency to every tick.
-    const [, page] = await Promise.all([
-      fetchHeadLedger(),
-      (async () => {
-        health.fetchAttempts++;
-        try {
-          return await fetchEventsWithRetry(
-            url.toString(),
-            AbortSignal.timeout(15_000)
-          );
-        } catch (err) {
-          // All retries exhausted — record the error but do NOT advance cursor.
-          health.lastError = (err as Error).message;
-          health.lastErrorTime = Date.now();
-          health.consecutiveErrors++;
-          health.fetchFailures++;
-          throw err;
-        }
-      })(),
-    ]);
-
-    const records = page._embedded?.records ?? [];
-    if (records.length === 0) {
-      // Successful empty fetch — reset error state and update lag.
-      health.consecutiveErrors = 0;
-      health.lastError = null;
-      health.headLedger = cachedHeadLedger;
-      health.lag =
-        cachedHeadLedger > 0 ? cachedHeadLedger - (await db.getLastLedger()) : -1;
-      return [];
-    }
-
-    // Filter out events beyond the finality boundary
-    return records.filter((ev) => {
       const evLedger =
         typeof ev.ledger === "string" ? parseInt(ev.ledger, 10) : ev.ledger;
       return evLedger <= maxLedger;
@@ -576,7 +546,7 @@ export function createIngester(config: Config, db: Db): Ingester {
   // ── Core ingestion tick ──────────────────────────────────────────────────
 
   let lastTickDurationSec = 0;
-let lastTickEnd = Date.now();
+  let lastTickEnd = Date.now();
 
   async function tick(): Promise<number> {
     const tickStart = Date.now();
@@ -617,17 +587,6 @@ let lastTickEnd = Date.now();
       return 0;
     }
 
-    // 2. Detect potential reorg: if our cursor claims to have ingested
-    //    a ledger that is now beyond the network head, the chain was
-    //    likely reorged past our last checkpoint.
-    if (lastLedger > headLedger) {
-      console.warn(
-        `[indexer] REORG DETECTED: cursor=${lastLedger} > head=${headLedger}. ` +
-          `Rolling back to head and re-scanning.`
-      );
-      return reconcile(headLedger);
-    }
-
     // 3. Build the Horizon cursor. For a fresh start with startLedger
     //    configured, begin there; otherwise resume from lastLedger.
     const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
@@ -643,27 +602,11 @@ let lastTickEnd = Date.now();
     try {
       events = await fetchEvents(cursor, finalityCeiling);
     } catch (err) {
-      console.warn("[indexer] Horizon fetch error:", (err as Error).message);
-      return 0;
-    }
-
-    }
-
-    // 3. Build the Horizon cursor. For a fresh start with startLedger
-    //    configured, begin there; otherwise resume from lastLedger.
-    const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
-    const cursor =
-      config.startLedger > 0 && lastLedger === 0
-        ? String(config.startLedger * 100_000)
-        : cursorNum > 0
-        ? String(cursorNum)
-        : undefined;
-
-    // 4. Fetch events up to the finality ceiling.
-    let events: HorizonContractEvent[];
-    try {
-      events = await fetchEvents(cursor, finalityCeiling);
-    } catch (err) {
+      // Record the error but do NOT advance the cursor — we'll retry next tick.
+      health.lastError = (err as Error).message;
+      health.lastErrorTime = Date.now();
+      health.consecutiveErrors++;
+      health.fetchFailures++;
       console.warn("[indexer] Horizon fetch error:", (err as Error).message);
       fetchErrorsTotal++;
       return 0;
@@ -671,9 +614,9 @@ let lastTickEnd = Date.now();
 
     if (events.length === 0) {
       // Successful empty fetch — update lag only.
-      const lag = cachedHeadLedger > 0 ? cachedHeadLedger - (await db.getLastLedger()) : -1;
+      const lag = headLedger > 0 ? headLedger - (await db.getLastLedger()) : -1;
       health.lastSuccessLedger = lastLedger;
-      health.headLedger = cachedHeadLedger;
+      health.headLedger = headLedger;
       health.lag = lag;
       health.consecutiveErrors = 0;
       health.lastError = null;
@@ -696,13 +639,11 @@ let lastTickEnd = Date.now();
 
     const tickEnd = Date.now();
     const dbWriteLatencySec = (tickEnd - tickStart) / 1000;
-    // Store latest DB write latency for metrics exposure.
-    // (updated after db.setLastLedger above, the latency includes the write)
 
     // Update health on success.
-    const lag = cachedHeadLedger > 0 ? cachedHeadLedger - maxLedger : -1;
+    const lag = headLedger > 0 ? headLedger - maxLedger : -1;
     health.lastSuccessLedger = maxLedger;
-    health.headLedger = cachedHeadLedger;
+    health.headLedger = headLedger;
     health.lag = lag;
     health.consecutiveErrors = 0;
     health.lastError = null;

@@ -1,10 +1,8 @@
-#![cfg(test)]
-
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Events as _, MockAuth, MockAuthInvoke},
     vec, Address, Bytes, BytesN, Env, IntoVal, Symbol,
 };
 
@@ -451,6 +449,104 @@ fn metadata_logo_over_limit_panics() {
         &None,
         &Some(str_of_len(&env, 257)),
     );
+}
+
+// ── Event schema & drift tests (Issue #429) ──────────────────────────────────
+
+#[test]
+fn register_issuer_emits_expected_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    let types = vec![&env, symbol_short!("kyc"), symbol_short!("age")];
+
+    client.register_issuer(&issuer, &pubkey, &types);
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&client.address),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (symbol_short!("iss_reg"), symbol_short!("register")).into_val(&env),
+                EventIssuerRegistered {
+                    issuer: issuer.clone(),
+                    pubkey: pubkey.clone(),
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn revoke_issuer_emits_expected_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    // Drain the register event
+    let _ = env.events().all();
+
+    client.revoke_issuer(&issuer);
+
+    let all_events = env.events().all().filter_by_contract(&client.address);
+    assert_eq!(
+        all_events,
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (symbol_short!("iss_reg"), symbol_short!("revoked")).into_val(&env),
+                EventIssuerRevoked {
+                    issuer,
+                }
+                .into_val(&env),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn set_issuer_metadata_emits_no_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_admin, client) = setup(&env);
+
+    let issuer = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 64]);
+    client.register_issuer(&issuer, &pubkey, &vec![&env, symbol_short!("kyc")]);
+
+    let expected = vec![
+        &env,
+        (
+            client.address.clone(),
+            (symbol_short!("iss_reg"), symbol_short!("register")).into_val(&env),
+            EventIssuerRegistered {
+                issuer: issuer.clone(),
+                pubkey,
+            }
+            .into_val(&env),
+        ),
+    ];
+    assert_eq!(env.events().all().filter_by_contract(&client.address), expected);
+
+    client.set_issuer_metadata(
+        &issuer,
+        &Some(String::from_str(&env, "Acme Corp")),
+        &Some(String::from_str(&env, "https://acme.org")),
+        &None,
+    );
+
+    // Setting metadata updates persistent storage directly and does not emit new events
+    assert_eq!(env.events().all().filter_by_contract(&client.address), vec![&env]);
 }
 
 // ── RBAC tests (Issue #123) ─────────────────────────────────────────────────
