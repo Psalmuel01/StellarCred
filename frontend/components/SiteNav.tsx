@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { IconBook2, IconCode, IconMenu2, IconX, IconHelp } from "@tabler/icons-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { resetOnboarding } from "@/lib/onboarding";
 
 const LINKS = [
@@ -100,12 +101,11 @@ export function SiteNav() {
         <div id="mobile-nav-right" className="nav-right">
           <button
             type="button"
-            className="seg-link"
+            className="seg-link nav-reset-btn"
             onClick={() => {
               resetOnboarding();
             }}
             title="Replay onboarding tour"
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
           >
             <IconHelp size={14} stroke={1.8} />
             Tour
@@ -125,6 +125,7 @@ export function SiteNav() {
             Developers
           </Link>
           <ThemeToggle />
+          <LanguageSwitcher />
         </div>
       </div>
     </header>
