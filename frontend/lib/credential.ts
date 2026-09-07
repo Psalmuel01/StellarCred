@@ -270,7 +270,7 @@ export async function unlockCredentialStore(passphrase: string): Promise<void> {
       typeof parsed.ciphertext === "string"
     ) {
       const salt = fromBase64(parsed.salt);
-      const key = await deriveAtRestKey(passphrase, salt.buffer.slice(0));
+      const key = await deriveAtRestKey(passphrase, salt.buffer.slice(0) as ArrayBuffer);
 
       // Verify the passphrase by attempting decryption.
       const iv = fromBase64(parsed.iv);

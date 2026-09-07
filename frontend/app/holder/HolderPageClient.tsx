@@ -470,6 +470,7 @@ function HolderInner() {
             Presets
           </a>
           <WalletButton />
+        </div>
       </div>
 
       <ConfigBanner />
