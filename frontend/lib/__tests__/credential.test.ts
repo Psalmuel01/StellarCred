@@ -2,21 +2,22 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   loadCredentials,
   saveCredential,
+  unlockCredentialStore,
   type Credential,
 } from "@/lib/credential";
 
 describe("credential store encryption", () => {
   beforeEach(() => {
     localStorage.clear();
-    sessionStorage.clear();
   });
 
   afterEach(() => {
     localStorage.clear();
-    sessionStorage.clear();
   });
 
   it("stores credential data encrypted and restores it on load", async () => {
+    await unlockCredentialStore("test-passphrase-123");
+
     const cred: Credential = {
       type: "kyc",
       title: "KYC Complete",

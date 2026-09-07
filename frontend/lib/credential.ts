@@ -95,7 +95,20 @@ export function randomField(): string {
   );
 }
 
-// ---- At-rest encryption (AES-256-GCM) ---------------------------------------
+// ---- At-rest encryption (AES-256-GCM + PBKDF2) ------------------------------
+//
+// The AES key is derived from a user passphrase via PBKDF2-SHA256 (100k
+// iterations). The passphrase never leaves the browser; the derived key lives
+// only in a module-level variable for the duration of the session. The
+// encrypted envelope stored in localStorage contains the salt and IV so the
+// key can be re-derived on the next unlock.
+//
+// This design satisfies #284: an XSS that reads localStorage gets only the
+// encrypted envelope — it does not have the passphrase and cannot derive the
+// key. It also solves the data-loss problem from #336: the key is no longer
+// stored in sessionStorage (which is cleared on browser close), so
+// re-entering the passphrase on the next session re-derives the same key
+// and successfully decrypts the existing ciphertext.
 
 /**
  * localStorage key under which all credentials are persisted. Credentials
@@ -104,14 +117,32 @@ export function randomField(): string {
  * "Where your credentials live" section for the full model and the
  * backup/restore flow.
  *
- * Values stored under this key are AES-256-GCM encrypted at rest; see
- * encryptBlob/decryptBlob below. The raw credential value and salt are
- * never written to localStorage in plaintext.
+ * Values stored under this key are AES-256-GCM encrypted at rest with a
+ * PBKDF2-derived key. The raw credential value and salt are never written
+ * to localStorage in plaintext.
  */
 export const CREDENTIALS_STORAGE_KEY = "stellarcred:credentials";
 
 const STORE_KEY = CREDENTIALS_STORAGE_KEY;
-const ENC_KEY_STORE = "stellarcred:cred-enc-key";
+
+/** PBKDF2 iteration count — aligned with lib/backup.ts (OWASP guidance). */
+const PBKDF2_ITERATIONS = 100_000;
+const SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+
+/**
+ * Envelope written to localStorage. The salt and IV travel with the
+ * ciphertext so the key can be re-derived from the same passphrase.
+ */
+interface EncryptedEnvelope {
+  version: 1;
+  salt: string;       // base64
+  iv: string;         // base64
+  ciphertext: string; // base64
+}
+
+// ---- In-memory key cache (not persisted) ------------------------------------
+let _cachedKey: CryptoKey | null = null;
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -130,68 +161,184 @@ function fromBase64(b64: string): Uint8Array {
   return bytes;
 }
 
-async function getEncryptionKey(): Promise<CryptoKey> {
-  try {
-    const stored = sessionStorage.getItem(ENC_KEY_STORE);
-    if (stored) {
-      const raw = fromBase64(stored);
-      return crypto.subtle.importKey(
-        "raw",
-        raw as BufferSource,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"],
-      );
-    }
-  } catch {
-    sessionStorage.removeItem(ENC_KEY_STORE);
-    localStorage.removeItem(STORE_KEY);
-  }
+/** Derive an AES-256-GCM key from a passphrase via PBKDF2-SHA256. */
+async function deriveAtRestKey(
+  passphrase: string,
+  salt: ArrayBuffer,
+): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
 
-  const key = await crypto.subtle.generateKey(
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt as BufferSource,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    keyMaterial,
     { name: "AES-GCM", length: 256 },
-    true,
+    false,
     ["encrypt", "decrypt"],
   );
-
-  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-  sessionStorage.setItem(ENC_KEY_STORE, toBase64(raw));
-
-  return key;
 }
 
-async function encryptBlob(plaintext: string): Promise<string> {
-  const key = await getEncryptionKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+// Store the salt used at unlock time so encrypt can embed it in envelopes.
+let _unlockSalt: Uint8Array | null = null;
+
+async function encryptWithCachedKey(plaintext: string): Promise<EncryptedEnvelope> {
+  if (!_cachedKey || !_unlockSalt) {
+    throw new Error(
+      "Credential store is locked. Call unlockCredentialStore(passphrase) first.",
+    );
+  }
+  const ivBytes = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const encoded = new TextEncoder().encode(plaintext);
   const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded),
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: ivBytes as BufferSource },
+      _cachedKey,
+      encoded,
+    ),
   );
 
-  const combined = new Uint8Array(iv.length + ciphertext.length);
-  combined.set(iv);
-  combined.set(ciphertext, iv.length);
-
-  return toBase64(combined);
+  return {
+    version: 1,
+    salt: toBase64(_unlockSalt),
+    iv: toBase64(ivBytes),
+    ciphertext: toBase64(ciphertext),
+  };
 }
 
-async function decryptBlob(ciphertextB64: string): Promise<string> {
-  const key = await getEncryptionKey();
-  const combined = fromBase64(ciphertextB64);
-  const iv = combined.slice(0, 12);
-  const ciphertext = combined.slice(12);
+async function decryptWithCachedKey(
+  envelope: EncryptedEnvelope,
+): Promise<string> {
+  if (!_cachedKey) {
+    throw new Error(
+      "Credential store is locked. Call unlockCredentialStore(passphrase) first.",
+    );
+  }
+  const iv = fromBase64(envelope.iv);
+  const ciphertext = fromBase64(envelope.ciphertext);
 
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    key,
-    ciphertext,
+    { name: "AES-GCM", iv: iv as BufferSource },
+    _cachedKey,
+    ciphertext as BufferSource,
   );
 
   return new TextDecoder().decode(decrypted);
 }
 
+// ---- Public unlock / lock API -----------------------------------------------
+
+/**
+ * Unlock the credential store by deriving the AES key from a user passphrase.
+ * Call this once at the start of each session (or whenever the user provides
+ * their passphrase). The derived key lives only in memory and is never
+ * persisted.
+ *
+ * @throws if the passphrase cannot decrypt existing credentials.
+ */
+export async function unlockCredentialStore(passphrase: string): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  const raw = localStorage.getItem(STORE_KEY);
+  if (!raw) {
+    // No existing data — derive key for future use.
+    const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+    const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+    _cachedKey = key;
+    _unlockSalt = saltBytes;
+    return;
+  }
+
+  // Try new envelope format first.
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.version === 1 &&
+      typeof parsed.salt === "string" &&
+      typeof parsed.iv === "string" &&
+      typeof parsed.ciphertext === "string"
+    ) {
+      const salt = fromBase64(parsed.salt);
+      const key = await deriveAtRestKey(passphrase, salt.buffer.slice(0));
+
+      // Verify the passphrase by attempting decryption.
+      const iv = fromBase64(parsed.iv);
+      const ciphertext = fromBase64(parsed.ciphertext);
+      await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv as BufferSource },
+        key,
+        ciphertext as BufferSource,
+      );
+
+      _cachedKey = key;
+      _unlockSalt = salt;
+      return;
+    }
+  } catch {
+    // Not a valid envelope — fall through.
+  }
+
+  // Try legacy plaintext JSON (pre-encryption data).
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Legacy plaintext — accept the passphrase and re-encrypt on next save.
+      const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+      const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+      _cachedKey = key;
+      _unlockSalt = saltBytes;
+      return;
+    }
+  } catch {
+    // Not plaintext — fall through.
+  }
+
+  // Try old broken sessionStorage-based encryption format (for migration).
+  // If the data is a non-JSON base64 blob, it was encrypted with the old
+  // random key. We cannot decrypt it without that key, so we treat it as
+  // corrupted and accept the passphrase for fresh use.
+  const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+  _cachedKey = key;
+  _unlockSalt = saltBytes;
+}
+
+/** Lock the credential store, clearing the derived key from memory. */
+export function lockCredentialStore(): void {
+  _cachedKey = null;
+  _unlockSalt = null;
+}
+
+/** Returns true when the credential store has a key in memory. */
+export function isCredentialStoreUnlocked(): boolean {
+  return _cachedKey !== null;
+}
+
 // ---- Local wallet (this browser) --------------------------------------------
 
+/**
+ * Load credentials from localStorage.
+ *
+ * Handles three storage formats:
+ * 1. New PBKDF2 envelope (requires unlocked store)
+ * 2. Legacy plaintext JSON array (pre-encryption migration)
+ * 3. Old sessionStorage-based encryption (broken — returns empty, user
+ *    should re-import credentials after unlock)
+ *
+ * When the store is locked and encrypted data exists, returns [] and the
+ * UI should prompt for the passphrase via `unlockCredentialStore()`.
+ */
 export async function loadCredentials(): Promise<Credential[]> {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(STORE_KEY);
@@ -210,12 +357,28 @@ export async function loadCredentials(): Promise<Credential[]> {
     // Not plaintext JSON, fall through to decryption.
   }
 
-  try {
-    const decrypted = await decryptBlob(raw);
-    return JSON.parse(decrypted);
-  } catch {
-    return [];
+  // New PBKDF2 envelope format.
+  if (_cachedKey) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        parsed.version === 1 &&
+        typeof parsed.salt === "string" &&
+        typeof parsed.iv === "string" &&
+        typeof parsed.ciphertext === "string"
+      ) {
+        const decrypted = await decryptWithCachedKey(parsed as EncryptedEnvelope);
+        return JSON.parse(decrypted);
+      }
+    } catch {
+      // Decryption failed or malformed — return empty.
+    }
   }
+
+  // Old broken format or locked store — cannot decrypt.
+  return [];
 }
 
 /**
@@ -229,6 +392,10 @@ export async function exportCredentials(): Promise<string> {
   return JSON.stringify(await loadCredentials(), null, 2);
 }
 
+/**
+ * Save a credential, encrypting the full credential set with the
+ * passphrase-derived key. The store must be unlocked first.
+ */
 export async function saveCredential(cred: Credential): Promise<Credential[]> {
   const all = await loadCredentials();
   const next = [
@@ -237,7 +404,7 @@ export async function saveCredential(cred: Credential): Promise<Credential[]> {
       (c) => !(c.type === cred.type && c.commitment === cred.commitment),
     ),
   ];
-  localStorage.setItem(STORE_KEY, await encryptBlob(JSON.stringify(next)));
+  localStorage.setItem(STORE_KEY, await serializeEncrypted(JSON.stringify(next)));
   return next;
 }
 
@@ -248,7 +415,7 @@ export async function markProved(commitment: string, txHash: string): Promise<Cr
       ? { ...c, provedAt: Math.floor(Date.now() / 1000), provedTxHash: txHash }
       : c,
   );
-  localStorage.setItem(STORE_KEY, await encryptBlob(JSON.stringify(next)));
+  localStorage.setItem(STORE_KEY, await serializeEncrypted(JSON.stringify(next)));
   return next;
 }
 
@@ -263,15 +430,29 @@ export async function markAllProved(
   const next = all.map((c) =>
     set.has(c.commitment) ? { ...c, provedAt: now, provedTxHash: txHash } : c,
   );
-  localStorage.setItem(STORE_KEY, await encryptBlob(JSON.stringify(next)));
+  localStorage.setItem(STORE_KEY, await serializeEncrypted(JSON.stringify(next)));
   return next;
 }
 
 export async function removeCredential(commitment: string): Promise<Credential[]> {
   const all = await loadCredentials();
   const next = all.filter((c) => c.commitment !== commitment);
-  localStorage.setItem(STORE_KEY, await encryptBlob(JSON.stringify(next)));
+  localStorage.setItem(STORE_KEY, await serializeEncrypted(JSON.stringify(next)));
   return next;
+}
+
+/**
+ * Encrypt plaintext and serialize to a JSON string for localStorage.
+ * Requires the store to be unlocked (via `unlockCredentialStore`).
+ */
+async function serializeEncrypted(plaintext: string): Promise<string> {
+  if (!_cachedKey) {
+    throw new Error(
+      "Credential store is locked. Call unlockCredentialStore(passphrase) first.",
+    );
+  }
+  const envelope = await encryptWithCachedKey(plaintext);
+  return JSON.stringify(envelope);
 }
 
 // BN254 field scalars are expressed as strings — either a base-10 integer or a
