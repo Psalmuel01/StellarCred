@@ -406,7 +406,17 @@ export function createPostgresDb(config: Config): Db {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Pool } = require("pg") as typeof import("pg");
+  const pg = require("pg") as typeof import("pg");
+  const { Pool } = pg;
+
+  // pg returns INT8/BIGINT and INT4/INTEGER columns as strings by default,
+  // which would make ClaimRow's numeric fields (verified_at, expiry,
+  // ledger_sequence, threshold, revoked) come back as strings on Postgres but
+  // numbers on SQLite. Force them to JS numbers so both backends expose
+  // identical row shapes.
+  pg.types.setTypeParser(20, Number); // INT8 / BIGINT
+  pg.types.setTypeParser(23, Number); // INT4 / INTEGER
+
   const pool = new Pool({ connectionString: config.databaseUrl });
 
   return {
