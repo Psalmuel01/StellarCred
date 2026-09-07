@@ -1,11 +1,8 @@
-import type { Metadata } from "next";
-import { Suspense } from "react";
-import { getProtocol } from "@/lib/protocols";
 "use client";
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams, notFound } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   IconLock,
   IconCheck,
@@ -41,6 +38,7 @@ function ProtocolDetailBody({
   const { state, statuses, retry, eligible, checking } = useProtocolAccessCheck(
     protocol.requirements,
     activeWallet,
+    // Preview mode is "!address"; don't auto-grant when disconnected — match /apps list cards.
     { isPreview: isPreview && Boolean(activeWallet), networkKey },
   );
   const [inputValue, setInputValue] = useState(protocol.inputDefault);
@@ -194,6 +192,7 @@ function ProtocolDetailBody({
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
+                aria-label="Scan to verify on another device"
                 title="Scan to verify on another device"
                 onClick={() => setShowQr(true)}
               >
@@ -285,52 +284,45 @@ function ProtocolDetailBody({
   );
 }
 
-function ProtocolDetailInner() {
-  const { id } = useParams<{ id: string }>();
+function ProtocolDetailInner({ id }: { id: string }) {
   const { address, networkMismatch } = useWallet();
   const searchParams = useSearchParams();
 
   const scVerified = searchParams.get("sc_verified") === "true";
   const scWallet = searchParams.get("sc_wallet");
+  // `address` is "" when disconnected — use || so we fall through to scWallet/null.
   const activeWallet = address || scWallet || null;
   const isPreview = usePreviewMode();
   const networkKey = networkMismatch ? "mismatch" : "ok";
 
-export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  const { id } = await params;
   const protocol = getProtocol(id);
+
   if (!protocol) {
-    return {
-      title: "StellarCred — Protocol not found",
-      description: "The requested StellarCred protocol could not be found.",
-    };
-    notFound();
+    return (
+      <div style={{ textAlign: "center", padding: "4rem 0" }}>
+        <p className="muted">Protocol not found.</p>
+        <Link href="/apps" className="btn btn-secondary btn-sm" style={{ marginTop: "1rem" }}>
+          <IconArrowLeft size={14} /> Back to Apps
+        </Link>
+      </div>
+    );
   }
 
-  return {
-    title: `StellarCred — ${protocol.name}`,
-    description: protocol.tagline,
-    openGraph: {
-      title: `StellarCred — ${protocol.name}`,
-      description: protocol.tagline,
-      siteName: "StellarCred",
-      type: "website",
-    },
-    twitter: {
-      card: "summary",
-      title: `StellarCred — ${protocol.name}`,
-      description: protocol.tagline,
-    },
-  };
+  return (
+    <ProtocolDetailBody
+      protocol={protocol}
+      activeWallet={activeWallet}
+      networkKey={networkKey}
+      isPreview={isPreview}
+      scVerified={scVerified}
+    />
+  );
 }
 
-import ProtocolDetailClient from "./ProtocolDetailClient";
-
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default function ProtocolDetailPage({ id }: { id: string }) {
   return (
     <Suspense fallback={null}>
-      <ProtocolDetailClient id={id} />
+      <ProtocolDetailInner id={id} />
     </Suspense>
   );
 }
