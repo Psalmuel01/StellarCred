@@ -164,7 +164,7 @@ function fromBase64(b64: string): Uint8Array {
 /** Derive an AES-256-GCM key from a passphrase via PBKDF2-SHA256. */
 async function deriveAtRestKey(
   passphrase: string,
-  salt: ArrayBuffer,
+  salt: Uint8Array,
 ): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -174,10 +174,15 @@ async function deriveAtRestKey(
     ["deriveKey"],
   );
 
+  // Ensure we pass a proper ArrayBuffer, not SharedArrayBuffer.
+  const saltBuf = salt.buffer instanceof ArrayBuffer
+    ? salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength)
+    : new Uint8Array(salt).buffer;
+
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: salt as BufferSource,
+      salt: saltBuf,
       iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
@@ -252,7 +257,7 @@ export async function unlockCredentialStore(passphrase: string): Promise<void> {
   if (!raw) {
     // No existing data — derive key for future use.
     const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-    const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+    const key = await deriveAtRestKey(passphrase, saltBytes);
     _cachedKey = key;
     _unlockSalt = saltBytes;
     return;
@@ -270,7 +275,7 @@ export async function unlockCredentialStore(passphrase: string): Promise<void> {
       typeof parsed.ciphertext === "string"
     ) {
       const salt = fromBase64(parsed.salt);
-      const key = await deriveAtRestKey(passphrase, salt.buffer.slice(0) as ArrayBuffer);
+      const key = await deriveAtRestKey(passphrase, salt);
 
       // Verify the passphrase by attempting decryption.
       const iv = fromBase64(parsed.iv);
@@ -295,7 +300,7 @@ export async function unlockCredentialStore(passphrase: string): Promise<void> {
     if (Array.isArray(parsed)) {
       // Legacy plaintext — accept the passphrase and re-encrypt on next save.
       const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-      const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+      const key = await deriveAtRestKey(passphrase, saltBytes);
       _cachedKey = key;
       _unlockSalt = saltBytes;
       return;
@@ -309,7 +314,7 @@ export async function unlockCredentialStore(passphrase: string): Promise<void> {
   // random key. We cannot decrypt it without that key, so we treat it as
   // corrupted and accept the passphrase for fresh use.
   const saltBytes = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const key = await deriveAtRestKey(passphrase, saltBytes.buffer.slice(0));
+  const key = await deriveAtRestKey(passphrase, saltBytes);
   _cachedKey = key;
   _unlockSalt = saltBytes;
 }
