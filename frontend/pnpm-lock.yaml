@@ -105,6 +105,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@5.4.21(@types/node@20.19.43))
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       eslint:
         specifier: ^8.57.1
         version: 8.57.1
@@ -10736,4 +10739,7 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
+  zod@4.4.3: {}
+
   zod@4.5.4: {}
+
