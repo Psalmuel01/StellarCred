@@ -174,10 +174,8 @@ async function deriveAtRestKey(
     ["deriveKey"],
   );
 
-  // Ensure we pass a proper ArrayBuffer, not SharedArrayBuffer.
-  const saltBuf = salt.buffer instanceof ArrayBuffer
-    ? salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength)
-    : new Uint8Array(salt).buffer;
+  // Convert to a clean ArrayBuffer that Web Crypto APIs accept.
+  const saltBuf = new Uint8Array(salt).buffer;
 
   return crypto.subtle.deriveKey(
     {
