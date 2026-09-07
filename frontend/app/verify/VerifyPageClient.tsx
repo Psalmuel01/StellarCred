@@ -1,13 +1,5 @@
-import type { Metadata } from "next";
-import VerifyPageClient from "./VerifyPageClient";
+"use client";
 
-export const metadata: Metadata = {
-  title: "StellarCred — Verify a claim",
-  description: "Issue a zero-knowledge credential from a trusted issuer and prove your eligibility on Stellar.",
-};
-
-export default function Page() {
-  return <VerifyPageClient />;
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,12 +9,10 @@ import {
   IconBuildingBank,
   IconQrcode,
 } from "@tabler/icons-react";
-import { VerifyLinkError } from "@/app/verify/VerifyLinkError";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/lib/wallet-context";
 import { saveCredential, TYPE_META, type Credential } from "@/lib/credential";
 import type { CredentialType } from "@/lib/stellar";
-import { parseVerifyParams, type VerifyError } from "@/lib/verifyParams";
 import { useToast } from "@/components/Toast";
 import { validateVerifyParams } from "@/lib/verifyParams";
 import { QrScanner } from "@/components/QrScanner";
@@ -57,23 +47,14 @@ const VALID_CLAIMS = TYPES.map(([k]) => k);
 function getOrCreateRequestId(): string {
   if (typeof window === "undefined") return "";
   const KEY = "sc_request_id";
-  try {
-    let id = sessionStorage.getItem(KEY);
-    if (!id) {
-      id = window.crypto?.randomUUID
-        ? window.crypto.randomUUID()
-        : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-      sessionStorage.setItem(KEY, id);
-    }
-    return id;
-  } catch {
-    // storage unavailable (private mode / blocked) — return a one-shot id
-    // that won't be persisted; correlation across the Persona redirect won't
-    // work but the issuance flow itself is unaffected
-    return window.crypto?.randomUUID
+  let id = sessionStorage.getItem(KEY);
+  if (!id) {
+    id = window.crypto?.randomUUID
       ? window.crypto.randomUUID()
       : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem(KEY, id);
   }
+  return id;
 }
 
 function VerifyInner() {
@@ -92,21 +73,6 @@ function VerifyInner() {
   const requiredClaim =
     claimParam && VALID_CLAIMS.includes(claimParam) ? claimParam : null;
   const locked = !!requiredClaim;
-
-  // Parse and validate every verification-link parameter up front. If the link
-  // is malformed (bad claim type / bad threshold / missing return URL), render
-  // an explicit invalid-link screen instead of a blank page, a stuck spinner,
-  // or a silent proceed.
-  const verification = parseVerifyParams({
-    return_url: searchParams.get("return_url"),
-    claim: searchParams.get("claim"),
-    threshold_years: searchParams.get("threshold_years"),
-    threshold: searchParams.get("threshold"),
-    min_threshold: searchParams.get("min_threshold"),
-    restricted: searchParams.get("restricted"),
-    inquiry_id: searchParams.get("inquiry-id"),
-  });
-  const linkError: VerifyError | null = verification.ok ? null : (verification.error ?? null);
 
   // Validate all query params up-front; block the flow on any invalid value.
   const paramValidation = validateVerifyParams({
@@ -324,8 +290,8 @@ function VerifyInner() {
           credentials: import("@/lib/credential").Credential[];
         }>;
       })
-      .then(({ credentials }) => {
-        credentials.forEach((c) => saveCredential(c));
+      .then(async ({ credentials }) => {
+        await Promise.all(credentials.map((c) => saveCredential(c)));
         justIssuedClaims.current = credentials.map((c) => c.type).filter((t) => VALID_CLAIMS.includes(t as CredentialType));
 
         setDone(true);
@@ -344,10 +310,6 @@ function VerifyInner() {
       .finally(() => setBusy(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personaInquiryId, address]);
-
-  const handleBack = () => {
-    router.push("/");
-  };
 
   function setAttr(key: string, val: string) {
     setAttributes((a: Record<string, string>) => ({ ...a, [key]: val }));
@@ -453,7 +415,7 @@ function VerifyInner() {
       const { credentials } = (await res.json()) as {
         credentials: Credential[];
       };
-      credentials.forEach((c) => saveCredential(c));
+      await Promise.all(credentials.map((c) => saveCredential(c)));
       justIssuedClaims.current = credentials.map((c) => c.type).filter((t) => VALID_CLAIMS.includes(t as CredentialType));
       setDone(true);
       toast.success(
@@ -507,9 +469,7 @@ function VerifyInner() {
         )}
 
         <div className="card">
-          {linkError ? (
-            <VerifyLinkError error={linkError} onBack={handleBack} />
-          ) : !address ? (
+          {!address ? (
             <div style={{ textAlign: "center", padding: "2rem 0" }}>
               <p
                 className="muted"
@@ -649,9 +609,6 @@ function VerifyInner() {
                       role="radio"
                       aria-checked={on}
                       aria-label={m.title}
-                      aria-disabled={locked}
-                      aria-controls={on ? `panel-${key}` : undefined}
-                      aria-expanded={on}
                       tabIndex={on ? 0 : -1}
                       style={{
                         padding: "0.75rem 0.9rem",
@@ -1056,5 +1013,13 @@ function VerifyInner() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function VerifyPageClient() {
+  return (
+    <Suspense fallback={null}>
+      <VerifyInner />
+    </Suspense>
   );
 }

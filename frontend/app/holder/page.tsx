@@ -1,5 +1,14 @@
-"use client";
+import type { Metadata } from "next";
+import HolderPageClient from "./HolderPageClient";
 
+export const metadata: Metadata = {
+  title: "StellarCred — Your credentials",
+  description: "Manage verified zero-knowledge credentials held in your wallet and prove them on-chain.",
+};
+
+export default function Page() {
+  return <HolderPageClient />;
+}
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";

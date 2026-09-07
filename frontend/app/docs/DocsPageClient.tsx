@@ -1,15 +1,21 @@
-import type { Metadata } from "next";
-import DocsPageClient from "./DocsPageClient";
+﻿"use client";
 
-export const metadata: Metadata = {
-  title: "StellarCred — Docs",
-  description:
-    "Learn the architecture, privacy model, and protocol flow behind zero-knowledge credentials on Stellar.",
-};
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import Link from "next/link";
 
-export default function Page() {
-  return <DocsPageClient />;
-// ── Table of contents ────────────────────────────────────────────────────────
+import {
+  IconArrowRight,
+  IconShieldCheck,
+  IconFingerprint,
+  IconBolt,
+  IconCloudUpload,
+  IconLock,
+  IconCode,
+  IconDatabase,
+  IconSearch,
+  IconX,
+  IconHash,
+} from "@tabler/icons-react";
 
 interface TocItem {
   id: string;
@@ -24,53 +30,18 @@ const INITIAL_TOC: TocItem[] = [
   { id: "credentials", label: "Credential types", level: 2, content: "" },
   { id: "zk-proofs", label: "ZK proof system", level: 2, content: "" },
   { id: "contracts", label: "Smart contracts", level: 2, content: "" },
-  { id: "privacy",     label: "Privacy model", level: 2, content: "" },
-  { id: "storage",     label: "Where your credentials live", level: 2, content: "" },
-  { id: "toolchain",   label: "Toolchain", level: 2, content: "" },
+  { id: "privacy", label: "Privacy model", level: 2, content: "" },
+  { id: "storage", label: "Where your credentials live", level: 2, content: "" },
+  { id: "toolchain", label: "Toolchain", level: 2, content: "" },
   { id: "get-started", label: "Get started", level: 2, content: "" },
 ];
 
-// ── Small components ─────────────────────────────────────────────────────────
-
 function SectionHeading({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <h2
-      id={id}
-      className="heading-group"
-      style={{
-        scrollMarginTop: "80px",
-        fontSize: "1.35rem",
-        marginBottom: "1rem",
-        paddingBottom: "0.75rem",
-        borderBottom: "1px solid var(--border)",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.6rem",
-        position: "relative",
-      }}
-    >
-      <a
-        href={`#${id}`}
-        aria-label={typeof children === "string" ? `Link to section: ${children}` : `Link to section: ${id}`}
-        style={{
-          color: "inherit",
-          textDecoration: "none",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "0.6rem",
-        }}
-      >
+    <h2 id={id} className="heading-group" style={{ scrollMarginTop: "80px", fontSize: "1.35rem", marginBottom: "1rem", paddingBottom: "0.75rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "0.6rem", position: "relative" }}>
+      <a href={`#${id}`} aria-label={typeof children === "string" ? `Link to section: ${children}` : `Link to section: ${id}`} style={{ color: "inherit", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.6rem" }}>
         {children}
-        <span
-          style={{
-            color: "var(--accent)",
-            display: "inline-flex",
-            alignItems: "center",
-            marginLeft: "0.2rem",
-          }}
-          className="anchor-link-icon"
-          title={`Deep link to #${id}`}
-        >
+        <span style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", marginLeft: "0.2rem" }} className="anchor-link-icon" title={`Deep link to #${id}`}>
           <IconHash size={18} stroke={2} />
         </span>
       </a>
@@ -79,52 +50,13 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 }
 
 function SubHeading({ id, children }: { id?: string; children: React.ReactNode }) {
-  const autoId =
-    id ||
-    (typeof children === "string"
-      ? children.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-      : undefined);
-
+  const autoId = id || (typeof children === "string" ? children.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : undefined);
   return (
-    <h3
-      id={autoId}
-      className="heading-group"
-      style={{
-        scrollMarginTop: "80px",
-        fontSize: "1rem",
-        fontWeight: 600,
-        marginBottom: "0.5rem",
-        marginTop: "1.75rem",
-        color: "var(--text)",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.5rem",
-        position: "relative",
-      }}
-    >
+    <h3 id={autoId} className="heading-group" style={{ scrollMarginTop: "80px", fontSize: "1rem", fontWeight: 600, marginBottom: "0.5rem", marginTop: "1.75rem", color: "var(--text)", display: "flex", alignItems: "center", gap: "0.5rem", position: "relative" }}>
       {autoId ? (
-        <a
-          href={`#${autoId}`}
-          aria-label={`Link to section: ${autoId}`}
-          style={{
-            color: "inherit",
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.5rem",
-          }}
-        >
+        <a href={`#${autoId}`} aria-label={`Link to section: ${autoId}`} style={{ color: "inherit", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
           {children}
-          <span
-            style={{
-              color: "var(--accent)",
-              display: "inline-flex",
-              alignItems: "center",
-              marginLeft: "0.2rem",
-            }}
-            className="anchor-link-icon"
-            title={`Deep link to #${autoId}`}
-          >
+          <span style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", marginLeft: "0.2rem" }} className="anchor-link-icon" title={`Deep link to #${autoId}`}>
             <IconHash size={15} stroke={2} />
           </span>
         </a>
@@ -137,45 +69,20 @@ function SubHeading({ id, children }: { id?: string; children: React.ReactNode }
 
 function P({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <p
-      style={{
-        color: "var(--muted)",
-        lineHeight: 1.75,
-        marginBottom: "0.9rem",
-        fontSize: "0.9375rem",
-        ...style,
-      }}
-    >
+    <p style={{ color: "var(--muted)", lineHeight: 1.75, marginBottom: "0.9rem", fontSize: "0.9375rem", ...style }}>
       {children}
     </p>
   );
 }
 
-function Callout({
-  variant = "info",
-  children,
-}: {
-  variant?: "info" | "warn" | "accent";
-  children: React.ReactNode;
-}) {
+function Callout({ variant = "info", children }: { variant?: "info" | "warn" | "accent"; children: React.ReactNode }) {
   const colors = {
-    info:   { border: "rgba(255,255,255,0.1)",  bg: "rgba(255,255,255,0.03)", color: "var(--muted)" },
-    warn:   { border: "rgba(227,179,65,0.25)",  bg: "rgba(227,179,65,0.06)", color: "var(--warn)" },
-    accent: { border: "rgba(62,207,142,0.25)",  bg: "rgba(62,207,142,0.06)", color: "var(--accent)" },
+    info: { border: "rgba(255,255,255,0.1)", bg: "rgba(255,255,255,0.03)", color: "var(--muted)" },
+    warn: { border: "rgba(227,179,65,0.25)", bg: "rgba(227,179,65,0.06)", color: "var(--warn)" },
+    accent: { border: "rgba(62,207,142,0.25)", bg: "rgba(62,207,142,0.06)", color: "var(--accent)" },
   }[variant];
   return (
-    <div
-      style={{
-        border: `1px solid ${colors.border}`,
-        background: colors.bg,
-        borderRadius: "var(--radius)",
-        padding: "0.9rem 1.1rem",
-        marginBottom: "1rem",
-        fontSize: "0.875rem",
-        color: colors.color,
-        lineHeight: 1.65,
-      }}
-    >
+    <div style={{ border: `1px solid ${colors.border}`, background: colors.bg, borderRadius: "var(--radius)", padding: "0.9rem 1.1rem", marginBottom: "1rem", fontSize: "0.875rem", color: colors.color, lineHeight: 1.65 }}>
       {children}
     </div>
   );
@@ -183,17 +90,7 @@ function Callout({
 
 function Code({ children }: { children: React.ReactNode }) {
   return (
-    <code
-      style={{
-        fontFamily: "var(--font-mono), monospace",
-        fontSize: "0.8rem",
-        background: "rgba(255,255,255,0.06)",
-        border: "1px solid var(--border)",
-        borderRadius: "4px",
-        padding: "0.15em 0.4em",
-        color: "var(--accent)",
-      }}
-    >
+    <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.8rem", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)", borderRadius: "4px", padding: "0.15em 0.4em", color: "var(--accent)" }}>
       {children}
     </code>
   );
@@ -201,21 +98,7 @@ function Code({ children }: { children: React.ReactNode }) {
 
 function CodeBlock({ children }: { children: string }) {
   return (
-    <pre
-      style={{
-        fontFamily: "var(--font-mono), monospace",
-        fontSize: "0.8rem",
-        background: "var(--bg-raised)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
-        padding: "1rem 1.25rem",
-        overflowX: "auto",
-        lineHeight: 1.7,
-        color: "var(--muted)",
-        marginBottom: "1rem",
-        whiteSpace: "pre",
-      }}
-    >
+    <pre style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.8rem", background: "var(--bg-raised)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1rem 1.25rem", overflowX: "auto", lineHeight: 1.7, color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre" }}>
       <code style={{ color: "var(--text)" }}>{children}</code>
     </pre>
   );
@@ -223,113 +106,32 @@ function CodeBlock({ children }: { children: string }) {
 
 function ContractRow({ name, role }: { name: string; role: string }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "0.9rem",
-        padding: "0.8rem 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <code
-        style={{
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: "0.78rem",
-          color: "var(--accent)",
-          background: "rgba(62,207,142,0.08)",
-          border: "1px solid rgba(62,207,142,0.2)",
-          borderRadius: "4px",
-          padding: "0.15em 0.5em",
-          whiteSpace: "nowrap",
-          marginTop: "1px",
-          flexShrink: 0,
-        }}
-      >
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.9rem", padding: "0.8rem 0", borderBottom: "1px solid var(--border)" }}>
+      <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.78rem", color: "var(--accent)", background: "rgba(62,207,142,0.08)", border: "1px solid rgba(62,207,142,0.2)", borderRadius: "4px", padding: "0.15em 0.5em", whiteSpace: "nowrap", marginTop: "1px", flexShrink: 0 }}>
         {name}
       </code>
-      <span style={{ color: "var(--muted)", fontSize: "0.875rem", lineHeight: 1.6 }}>
-        {role}
-      </span>
+      <span style={{ color: "var(--muted)", fontSize: "0.875rem", lineHeight: 1.6 }}>{role}</span>
     </div>
   );
 }
 
-function CredRow({
-  type,
-  title,
-  claim,
-  attribute,
-  private: priv,
-}: {
-  type: string;
-  title: string;
-  claim: string;
-  attribute: string;
-  private: string;
-}) {
+function CredRow({ type, title, claim, attribute, private: priv }: { type: string; title: string; claim: string; attribute: string; private: string }) {
   return (
-    <div
-      className="card"
-      style={{ padding: "1rem 1.25rem", marginBottom: "0.75rem" }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "0.4rem",
-          gap: "0.75rem",
-          flexWrap: "wrap",
-        }}
-      >
+    <div className="card" style={{ padding: "1rem 1.25rem", marginBottom: "0.75rem" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem", gap: "0.75rem", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-          <code
-            style={{
-              fontFamily: "var(--font-mono), monospace",
-              fontSize: "0.72rem",
-              color: "var(--accent)",
-              background: "rgba(62,207,142,0.08)",
-              border: "1px solid rgba(62,207,142,0.2)",
-              borderRadius: "4px",
-              padding: "0.1em 0.45em",
-            }}
-          >
-            {type}
-          </code>
+          <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.72rem", color: "var(--accent)", background: "rgba(62,207,142,0.08)", border: "1px solid rgba(62,207,142,0.2)", borderRadius: "4px", padding: "0.1em 0.45em" }}>{type}</code>
           <strong style={{ fontSize: "0.9rem" }}>{title}</strong>
         </div>
-        <span
-          style={{
-            fontSize: "0.75rem",
-            color: "var(--accent)",
-            background: "rgba(62,207,142,0.08)",
-            border: "1px solid rgba(62,207,142,0.18)",
-            borderRadius: "999px",
-            padding: "0.15rem 0.6rem",
-          }}
-        >
-          {claim}
-        </span>
+        <span style={{ fontSize: "0.75rem", color: "var(--accent)", background: "rgba(62,207,142,0.08)", border: "1px solid rgba(62,207,142,0.18)", borderRadius: "999px", padding: "0.15rem 0.6rem" }}>{claim}</span>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "0.5rem",
-          marginTop: "0.6rem",
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginTop: "0.6rem" }}>
         <div>
-          <div style={{ fontSize: "0.7rem", color: "var(--faint)", marginBottom: "0.15rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Attribute
-          </div>
+          <div style={{ fontSize: "0.7rem", color: "var(--faint)", marginBottom: "0.15rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Attribute</div>
           <div style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>{attribute}</div>
         </div>
         <div>
-          <div style={{ fontSize: "0.7rem", color: "var(--faint)", marginBottom: "0.15rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Kept private
-          </div>
+          <div style={{ fontSize: "0.7rem", color: "var(--faint)", marginBottom: "0.15rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Kept private</div>
           <div style={{ fontSize: "0.8125rem", color: "var(--muted)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
             <IconLock size={11} />
             {priv}
@@ -340,16 +142,13 @@ function CredRow({
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
-export default function DocsPage() {
+export default function DocsPageClient() {
   const [active, setActive] = useState("overview");
   const [toc, setToc] = useState<TocItem[]>(INITIAL_TOC);
   const [filterQuery, setFilterQuery] = useState("");
   const observerRef = useRef<IntersectionObserver | null>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Auto-generate TOC from section headings in the DOM
   useEffect(() => {
     const headingElements = Array.from(
       document.querySelectorAll("article h2, article h3")
@@ -378,7 +177,6 @@ export default function DocsPage() {
     }
   }, []);
 
-  // Scroll-spy observer for active section highlight
   useEffect(() => {
     if (toc.length === 0) return;
     observerRef.current?.disconnect();
@@ -413,7 +211,6 @@ export default function DocsPage() {
     };
   }, [toc]);
 
-  // Deep link to section on load or on hash change
   useEffect(() => {
     const handleHashChange = () => {
       if (window.location.hash) {
@@ -439,7 +236,6 @@ export default function DocsPage() {
     };
   }, []);
 
-  // Filter and search logic
   const filteredToc = useMemo(() => {
     if (!filterQuery.trim()) return toc;
     const lower = filterQuery.trim().toLowerCase();
@@ -489,7 +285,6 @@ export default function DocsPage() {
 
   return (
     <div style={{ maxWidth: "var(--maxw)", margin: "0 auto" }}>
-      {/* page header */}
       <div className="reveal" style={{ marginBottom: "3.5rem", paddingTop: "0.5rem" }}>
         <span
           className="eyebrow row"
@@ -525,7 +320,6 @@ export default function DocsPage() {
           alignItems: "start",
         }}
       >
-        {/* ── Sidebar ── */}
         <aside
           className="docs-sidebar"
           style={{
@@ -677,16 +471,12 @@ export default function DocsPage() {
           )}
         </aside>
 
-        {/* ── Content ── */}
         <article style={{ minWidth: 0 }}>
-
-          {/* Overview ──────────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="overview">
               <IconShieldCheck size={20} color="var(--accent)" stroke={1.8} />
               Overview
             </SectionHeading>
-
             <P>
               StellarCred is a zero-knowledge credential system built on Stellar. It lets a
               trusted issuer sign claims about a holder — KYC status, age, income, jurisdiction
@@ -699,7 +489,6 @@ export default function DocsPage() {
               (Noir 1.0.0-beta.9 / Barretenberg 0.87.0). The Stellar chain stores only a
               compact verification record — no personal data touches the ledger.
             </P>
-
             <Callout variant="accent">
               <strong>Core guarantee:</strong> A verifier reading <Code>ProofRegistry.is_verified</Code>{" "}
               learns that a holder satisfies a claim, and nothing else. Not their name, date of
@@ -707,13 +496,11 @@ export default function DocsPage() {
             </Callout>
           </section>
 
-          {/* How it works ──────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="how-it-works">
               <IconBolt size={20} color="var(--accent)" stroke={1.8} />
               How it works
             </SectionHeading>
-
             {[
               {
                 n: "01",
@@ -812,7 +599,6 @@ export default function DocsPage() {
             ))}
           </section>
 
-          {/* Credential types ──────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="credentials">
               <IconFingerprint size={20} color="var(--accent)" stroke={1.8} />
@@ -823,7 +609,6 @@ export default function DocsPage() {
               claim using the commitment, the issuer&apos;s signature, and optional public
               parameters — all without revealing the underlying attribute.
             </P>
-
             <CredRow
               type="kyc"
               title="KYC Complete"
@@ -868,13 +653,11 @@ export default function DocsPage() {
             />
           </section>
 
-          {/* ZK proof system ────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="zk-proofs">
               <IconCode size={20} color="var(--accent)" stroke={1.8} />
               ZK proof system
             </SectionHeading>
-
             <SubHeading id="ultrahonk">UltraHonk</SubHeading>
             <P>
               StellarCred uses the <strong style={{color:"var(--text)"}}>UltraHonk</strong> proving
@@ -887,7 +670,6 @@ export default function DocsPage() {
               (served from <Code>/bb/index.js</Code>), avoiding any dependency on
               webpack for the heavy proving machinery.
             </P>
-
             <SubHeading id="poseidon2-commitment">Poseidon2 commitment</SubHeading>
             <P>
               The credential stores a <strong style={{color:"var(--text)"}}>Poseidon2 hash</strong>{" "}
@@ -899,7 +681,6 @@ export default function DocsPage() {
               being collision-resistant. The salt prevents dictionary attacks on the
               commitment even for low-entropy values like country codes.
             </P>
-
             <SubHeading id="secp256k1-issuer-signature">secp256k1 issuer signature</SubHeading>
             <P>
               After computing the commitment, the issuer signs it with a{" "}
@@ -908,7 +689,6 @@ export default function DocsPage() {
               message digest directly. Each Noir circuit verifies this signature inside the
               proof, binding the claim to a specific registered issuer public key.
             </P>
-
             <Callout variant="warn">
               The demo issuer&rsquo;s signing key lives only in the Next.js server process — never in
               the browser. In production, each issuer would hold their own secret key in a hardware
@@ -916,7 +696,6 @@ export default function DocsPage() {
             </Callout>
           </section>
 
-          {/* Smart contracts ────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="contracts">
               <IconDatabase size={20} color="var(--accent)" stroke={1.8} />
@@ -927,7 +706,6 @@ export default function DocsPage() {
               time and communicate through typed contract clients (no shared library
               dependencies between them).
             </P>
-
             <div style={{ marginBottom: "0.25rem" }}>
               <ContractRow
                 name="IssuerRegistry"
@@ -946,7 +724,6 @@ export default function DocsPage() {
                 role="Demo protocol. Reads ProofRegistry.is_verified(holder, kyc|age|income) before allowing a deposit. Shows how any protocol can gate actions on ZK proofs without owning the verification logic."
               />
             </div>
-
             <SubHeading id="public-input-layout">Public-input layout</SubHeading>
             <P>
               Each circuit outputs the following public inputs (32 bytes per field, big-endian):
@@ -961,13 +738,11 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </P>
           </section>
 
-          {/* Privacy model ──────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="privacy">
               <IconLock size={20} color="var(--accent)" stroke={1.8} />
               Privacy model
             </SectionHeading>
-
             <div
               style={{
                 display: "grid",
@@ -1057,7 +832,6 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
                 ))}
               </div>
             </div>
-
             <Callout variant="info">
               The commitment that appears in the public inputs is a hash — it reveals nothing
               about the underlying value without the salt. Even if the chain is public, an
@@ -1066,13 +840,11 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </Callout>
           </section>
 
-          {/* Where your credentials live ────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="storage">
               <IconDatabase size={20} color="var(--accent)" stroke={1.8} />
               Where your credentials live
             </SectionHeading>
-
             <P>
               Your credentials — including the raw attribute value (date of birth, income,
               balance…) and its random salt — are stored <strong style={{color:"var(--text)"}}>only in
@@ -1081,14 +853,12 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               server-side credential database: the credential JSON exists only on the device
               that received it.
             </P>
-
             <Callout variant="warn">
               <strong>Credentials are browser-specific and can be lost permanently.</strong>{" "}
               Clearing site data, switching to a different browser or device, or browsing in
               private/incognito mode erases them — there is no server-side copy to recover
               them from. Back up (below) before any of those happen.
             </Callout>
-
             <SubHeading>Back up and restore</SubHeading>
             <P>
               Open the <strong style={{color:"var(--text)"}}>Holder</strong> page and click{" "}
@@ -1096,7 +866,8 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               file containing every credential. Keep that file somewhere safe: it contains the
               raw sensitive attribute values, so treat it like a password. To restore — on a new
               browser, a new device, or after clearing site data — open the Holder page there,
-              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and pastethe file&apos;s contents. Restored credentials generate and submit proofs exactly like
+              click <strong style={{color:"var(--text)"}}>Import credential JSON</strong>, and paste the
+              file&apos;s contents. Restored credentials generate and submit proofs exactly like
               newly issued ones.
             </P>
             <P>
@@ -1108,23 +879,6 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
               before it ever becomes a QR code, so the code alone reveals nothing. On the other
               device, scan the QR and enter the same passphrase to import.
             </P>
-
-            <SubHeading>Guardian Secret Sharing (Social & Device Recovery)</SubHeading>
-            <P>
-              Beyond a single passphrase or plain JSON backup, StellarCred offers{" "}
-              <strong style={{color:"var(--text)"}}>Guardian recovery</strong> using Shamir Secret Sharing
-              over GF(256) (see <Code>lib/shamir.ts</Code> and <Code>lib/guardian.ts</Code>).
-              A holder can split their 256-bit AES credential encryption key among <Code>N</Code> chosen
-              guardians (friends, family, or secondary hardware devices) such that any <Code>K</Code>{" "}
-              (threshold) shares can restore the key and decrypt their credentials.
-            </P>
-            <P>
-              The entire process runs client-side. Guardians receive only their assigned key shares
-              (as JSON files, armored share codes, or QR codes) and never see any credential data.
-              During recovery, entering any <Code>K</Code> guardian shares reconstructs the encryption key,
-              authenticates against the encrypted backup, and safely restores credentials back into local storage.
-            </P>
-
             <SubHeading>What is stored, and where</SubHeading>
             <div
               style={{
@@ -1228,21 +982,19 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
             </P>
           </section>
 
-          {/* Toolchain ──────────────────────────────────────────── */}
           <section style={{ marginBottom: "3.5rem" }}>
             <SectionHeading id="toolchain">
               <IconCode size={20} color="var(--accent)" stroke={1.8} />
               Toolchain
             </SectionHeading>
-
             <div style={{ marginBottom: "1.25rem" }}>
               {[
-                { name: "Noir",             ver: "1.0.0-beta.9", role: "Circuit language & compiler" },
-                { name: "Barretenberg",     ver: "0.87.0",       role: "UltraHonk prover / verifier (bb CLI + bb.js)" },
-                { name: "Stellar CLI",      ver: "26+",          role: "Contract deploy & invoke (Protocol 22 / BN254 host fns)" },
-                { name: "soroban-sdk",      ver: "22",           role: "Rust contract framework" },
-                { name: "@stellar/stellar-sdk", ver: "13.3.0",   role: "TypeScript client" },
-                { name: "Next.js",          ver: "14.2",         role: "Frontend framework (App Router)" },
+                { name: "Noir", ver: "1.0.0-beta.9", role: "Circuit language & compiler" },
+                { name: "Barretenberg", ver: "0.87.0", role: "UltraHonk prover / verifier (bb CLI + bb.js)" },
+                { name: "Stellar CLI", ver: "26+", role: "Contract deploy & invoke (Protocol 22 / BN254 host fns)" },
+                { name: "soroban-sdk", ver: "22", role: "Rust contract framework" },
+                { name: "@stellar/stellar-sdk", ver: "13.3.0", role: "TypeScript client" },
+                { name: "Next.js", ver: "14.2", role: "Frontend framework (App Router)" },
               ].map((row, i) => (
                 <div
                   key={row.name}
@@ -1284,21 +1036,18 @@ fields 33–64  issuer_y   (secp256k1 Y, one byte per field in low byte)`}</Code
                 </div>
               ))}
             </div>
-
             <SubHeading id="build-circuits">Build circuits</SubHeading>
             <CodeBlock>{`# From repo root
 cd circuits
 bash scripts/build.sh          # compiles all 5 circuits + commit helper
                                # outputs *.json to frontend/public/circuits/
                                # outputs VKs to fixtures/*/vk`}</CodeBlock>
-
             <SubHeading id="deploy-contracts">Deploy contracts</SubHeading>
             <CodeBlock>{`stellar keys generate --global deployer --network testnet --fund
 SOURCE=deployer ./scripts/deploy.sh
 # Copy the printed NEXT_PUBLIC_* vars into frontend/.env.local`}</CodeBlock>
           </section>
 
-          {/* Get started ────────────────────────────────────────── */}
           <section style={{ marginBottom: "2rem" }}>
             <SectionHeading id="get-started">
               <IconBolt size={20} color="var(--accent)" stroke={1.8} />
