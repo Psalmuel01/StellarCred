@@ -9,3 +9,437 @@ export const metadata: Metadata = {
 export default function Page() {
   return <HolderPageClient />;
 }
+import { Suspense, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  IconArrowRight,
+  IconCertificate,
+  IconPlus,
+  IconDownload,
+  IconChartBar,
+} from "@tabler/icons-react";
+import SubmissionHistory from "@/components/SubmissionHistory";
+import { saveSubmission } from "@/lib/history";
+import { WalletButton } from "@/components/WalletButton";
+import { useWallet, usePreviewMode } from "@/lib/wallet-context";
+import { ConfigBanner } from "@/components/ConfigBanner";
+import { type Credential } from "@/lib/credential";
+import { PREVIEW_CREDENTIALS } from "@/lib/preview-fixtures";
+import CredentialDetailModal from "@/components/CredentialDetailModal";
+import { useToast } from "@/components/Toast";
+import { IMPORT_PARAM } from "@/lib/transfer";
+import dynamic from "next/dynamic";
+
+const TransferExportModal = dynamic(
+  () => import("@/components/TransferExportModal").then((m) => m.TransferExportModal),
+  { ssr: false },
+);
+const TransferImportModal = dynamic(
+  () => import("@/components/TransferImportModal").then((m) => m.TransferImportModal),
+  { ssr: false },
+);
+const ProofPerfPanel = dynamic(
+  () => import("@/components/ProofPerfPanel").then((m) => m.ProofPerfPanel),
+  { ssr: false },
+);
+import { useCredentialStore } from "@/lib/hooks/useCredentialStore";
+import { useBatchSelection } from "@/lib/hooks/useBatchSelection";
+import { useImportExport } from "@/lib/hooks/useImportExport";
+import {
+  proofStatus,
+  isExpiringSoon,
+  daysRemaining,
+} from "@/lib/proof-helpers";
+import { SectionLabel } from "@/components/holder/SectionLabel";
+import { CredCard } from "@/components/holder/CredCard";
+import { BatchBar } from "@/components/holder/BatchBar";
+import { ImportPanel } from "@/components/holder/ImportPanel";
+import { ProofFlowView } from "@/components/holder/ProofFlowView";
+import { BatchProofFlowView } from "@/components/holder/BatchProofFlowView";
+import { SponsorBanner } from "@/components/holder/SponsorBanner";
+import { GuardianRecoveryControl } from "@/components/holder/GuardianRecoveryControl";
+import { isSponsorAvailable, submitSponsoredProof } from "@/lib/sponsor";
+import { submitProof } from "@/lib/contracts";
+
+type PageView =
+  | { kind: "list" }
+  | { kind: "single"; cred: Credential }
+  | { kind: "batch"; creds: Credential[] };
+
+function HolderInner() {
+  const { address, connect } = useWallet();
+  const isPreview = usePreviewMode();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const toast = useToast();
+
+  const {
+    creds,
+    reload: reloadCreds,
+    save: saveCred,
+    remove: removeCred,
+    markCredentialProved,
+    markCredentialsProved,
+  } = useCredentialStore();
+
+  const { downloadBackup } = useImportExport();
+
+  const handleError = useCallback(
+    (message: string) => toast.error(message),
+    [toast],
+  );
+
+  const unprovedAll = isPreview
+    ? PREVIEW_CREDENTIALS.filter((c) => proofStatus(c) !== "proved")
+    : creds.filter((c) => proofStatus(c) !== "proved");
+
+  const {
+    selectedCreds,
+    atBatchLimit,
+    canBatch,
+    canSubmitBatch,
+    selectEligible,
+    clearSelection,
+  } = useBatchSelection(unprovedAll, address, handleError);
+
+  const [view, setView] = useState<PageView>({ kind: "list" });
+  const [importing, setImporting] = useState(false);
+  const [detailCred, setDetailCred] = useState<Credential | null>(null);
+  const [transferCred, setTransferCred] = useState<Credential | null>(null);
+  const [importPayload, setImportPayload] = useState<string | null>(null);
+  const [showPerf, setShowPerf] = useState(false);
+
+  useEffect(() => {
+    const payload = searchParams.get(IMPORT_PARAM);
+    if (!payload) return;
+    setImportPayload(payload);
+    router.replace("/holder");
+  }, [searchParams, router]);
+
+  const displayCreds = isPreview ? PREVIEW_CREDENTIALS : creds;
+  const unproved = displayCreds.filter((c) => proofStatus(c) === "unproved");
+  const expiringSoon = displayCreds
+    .filter((c) => proofStatus(c) === "proved" && isExpiringSoon(c, 7))
+    .sort((a, b) => daysRemaining(a) - daysRemaining(b));
+  const activeProved = displayCreds.filter((c) => proofStatus(c) === "proved" && !isExpiringSoon(c, 7));
+  const expired = displayCreds.filter((c) => proofStatus(c) === "expired");
+
+  const singleSubmitFn = isSponsorAvailable() ? submitSponsoredProof : submitProof;
+
+  const handleProveSingle = useCallback(
+    (cred: Credential) => setView({ kind: "single", cred }),
+    [],
+  );
+
+  const handleSingleProved = useCallback(
+    (txHash: string) => {
+      if (view.kind === "single") {
+        markCredentialProved(view.cred.commitment, txHash);
+        saveSubmission({
+          credentialType: view.cred.type,
+          timestamp: Date.now(),
+          txHash,
+          status: "confirmed",
+        });
+      }
+      setView({ kind: "list" });
+    },
+    [view, markCredentialProved],
+  );
+
+  const handleProveBatch = useCallback(
+    () => setView({ kind: "batch", creds: selectedCreds }),
+    [selectedCreds],
+  );
+
+  const handleBatchProved = useCallback(
+    (txHash: string, commitments: string[]) => {
+      markCredentialsProved(commitments, txHash);
+      setView({ kind: "list" });
+    },
+    [markCredentialsProved],
+  );
+
+  return (
+    <>
+      <div className="between" style={{ marginBottom: "2.5rem" }}>
+        <div>
+          <span className="eyebrow">Holder</span>
+          <h1 style={{ fontSize: "2rem", marginTop: "0.35rem" }}>Your credentials</h1>
+        </div>
+        <div className="row" style={{ gap: "0.75rem" }}>
+          <a href="/presets" className="btn btn-secondary">
+            Presets
+          </a>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPerf((v) => !v)}
+            title="Proving performance &amp; telemetry debug view"
+            aria-expanded={showPerf}
+          >
+            <IconChartBar size={14} />
+            {showPerf ? "Hide perf" : "Perf"}
+          </button>
+          <WalletButton />
+        </div>
+      </div>
+
+      <ConfigBanner />
+      <SponsorBanner />
+
+      {showPerf && <ProofPerfPanel />}
+
+      {isPreview && (
+        <div
+          style={{
+            padding: "0.85rem 1rem",
+            borderRadius: "var(--radius)",
+            background: "rgba(62,207,142,0.1)",
+            border: "1px solid rgba(62,207,142,0.3)",
+            color: "var(--text)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "1.5rem",
+          }}
+        >
+          <span style={{ fontSize: "0.875rem", fontWeight: 500 }}>
+            Connect wallet to use your real credentials
+          </span>
+          <button className="btn btn-primary btn-sm" onClick={connect}>
+            Connect Wallet
+          </button>
+        </div>
+      )}
+
+      {view.kind === "single" ? (
+        <ProofFlowView
+          cred={view.cred}
+          holder={address}
+          onBack={() => setView({ kind: "list" })}
+          onProved={handleSingleProved}
+          submitFn={singleSubmitFn}
+        />
+      ) : view.kind === "batch" ? (
+        <BatchProofFlowView
+          creds={view.creds}
+          holder={address}
+          onBack={() => setView({ kind: "list" })}
+          onProved={handleBatchProved}
+        />
+      ) : (
+        <div className="stack reveal" style={{ gap: "1.5rem" }}>
+          {(expiringSoon.length > 0 || expired.length > 0) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="card"
+              style={{
+                padding: "0.85rem 1.15rem",
+                backgroundColor: expired.length > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(234, 179, 8, 0.08)",
+                borderColor: expired.length > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(234, 179, 8, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <div className="row" style={{ gap: "0.6rem", alignItems: "center" }}>
+                <span
+                  style={{
+                    color: expired.length > 0 ? "var(--danger)" : "var(--warn)",
+                    fontSize: "1rem",
+                    flexShrink: 0,
+                  }}
+                >
+                  ⚠
+                </span>
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {expired.length > 0
+                    ? `${expired.length} proof${expired.length > 1 ? "s have" : " has"} expired and ${expired.length > 1 ? "need" : "needs"} re-proving.`
+                    : `${expiringSoon.length} proof${expiringSoon.length > 1 ? "s are" : " is"} expiring within 7 days.`}
+                </span>
+              </div>
+              <span className="mono faint" style={{ fontSize: "0.75rem" }}>
+                One-click re-prove available below
+              </span>
+            </div>
+          )}
+
+          {creds.length === 0 && !importing && (
+            <div className="card" style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}>
+              <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
+              <h3 style={{ margin: "1rem 0 0.4rem" }}>No credentials yet</h3>
+              <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 340, margin: "0 auto 1.5rem" }}>
+                Get a credential from a trusted issuer, then generate a zero-knowledge proof to verify it on-chain.
+              </p>
+              <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
+                Get a credential <IconArrowRight size={14} />
+              </a>
+              <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}>
+                Credentials are stored only in this browser&apos;s local storage.{" "}
+                <Link href="/docs#storage" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                  Where your credentials live
+                </Link>
+              </p>
+            </div>
+          )}
+
+          {expiringSoon.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expiring soon &middot; Re-prove recommended</SectionLabel>
+              {expiringSoon.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => handleProveSingle(c)}
+                  onRemove={() => removeCred(c.commitment)}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {expired.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Expired proofs &middot; Re-prove required</SectionLabel>
+              {expired.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => handleProveSingle(c)}
+                  onRemove={() => removeCred(c.commitment)}
+                  onInspect={() => setDetailCred(c)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {unproved.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>Ready to prove</SectionLabel>
+              {unproved.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => handleProveSingle(c)}
+                  onRemove={() => removeCred(c.commitment)}
+                  isPreview={isPreview}
+                />
+              ))}
+              {canBatch && (
+                <BatchBar
+                  selectedCount={selectedCreds.length}
+                  atBatchLimit={atBatchLimit}
+                  canSubmitBatch={canSubmitBatch}
+                  onProveBatch={handleProveBatch}
+                  onClear={clearSelection}
+                  onSelectEligible={selectEligible}
+                />
+              )}
+            </div>
+          )}
+
+          {activeProved.length > 0 && (
+            <div className="stack" style={{ gap: "0.6rem" }}>
+              <SectionLabel>On-chain &middot; active proofs</SectionLabel>
+              {activeProved.map((c) => (
+                <CredCard
+                  key={c.commitment}
+                  c={c}
+                  address={address}
+                  onProve={() => handleProveSingle(c)}
+                  onRemove={() => removeCred(c.commitment)}
+                  isPreview={isPreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {!address && creds.length > 0 && (
+            <p className="faint" style={{ fontSize: "0.8125rem" }}>
+              Connect a wallet to generate and submit proofs.
+            </p>
+          )}
+
+          <SubmissionHistory />
+
+          {importing ? (
+            <ImportPanel
+              onImport={(c) => { saveCred(c); setImporting(false); }}
+              onCancel={() => setImporting(false)}
+            />
+          ) : (
+            <div className="stack" style={{ gap: "0.55rem" }}>
+              <div className="row" style={{ gap: "0.6rem", flexWrap: "wrap" }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setImporting(true)}>
+                  <IconPlus size={14} /> Import credential JSON
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={downloadBackup}
+                  disabled={creds.length === 0}
+                  title={creds.length === 0 ? "No credentials to back up" : "Download a JSON backup"}
+                >
+                  <IconDownload size={14} /> Export backup
+                </button>
+                <GuardianRecoveryControl
+                  hasCredentials={creds.length > 0}
+                  onRestored={(recovered) => {
+                    reloadCreds();
+                    toast.success(
+                      `Successfully restored ${recovered.length} credential${recovered.length === 1 ? "" : "s"}`,
+                    );
+                  }}
+                />
+              </div>
+              <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
+                Credentials live only in this browser (localStorage) — export a backup
+                or set up <strong>Guardian recovery</strong> (Shamir Secret Sharing) before
+                clearing site data or switching devices.{" "}
+                <Link
+                  href="/docs#storage"
+                  style={{ color: "var(--accent)", textDecoration: "underline" }}
+                >
+                  Where your credentials live
+                </Link>
+              </p>
+              <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: "0.5rem 0 0" }}>
+                Backups are encrypted with PBKDF2 (600k iterations). Decryption
+                may take a few seconds on slower devices.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {detailCred && (
+        <CredentialDetailModal
+          credential={detailCred as any}
+          onClose={() => setDetailCred(null)}
+          onTransfer={(c) => { setDetailCred(null); setTransferCred(c as Credential); }}
+        />
+      )}
+      {transferCred && <TransferExportModal cred={transferCred} onClose={() => setTransferCred(null)} />}
+      {importPayload && (
+        <TransferImportModal
+          payload={importPayload}
+          onImported={(c) => { saveCred(c); setImportPayload(null); toast.success(`Imported ${c.title}`); }}
+          onClose={() => setImportPayload(null)}
+        />
+      )}
+
+    </>
+  );
+}
+
+export default function HolderPage() {
+  return <Suspense fallback={null}><HolderInner /></Suspense>;
+}
